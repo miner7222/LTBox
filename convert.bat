@@ -217,11 +217,13 @@ if not defined ALGORITHM (
 echo.
 
 echo Re-signing vbmeta.img by reading from backup...
+set "PADDING_SIZE=8192"
 
 "%PYTHON%" "%PY_AVBTOOL%" make_vbmeta_image ^
 	--output vbmeta.img ^
 	--key "%~dp0!KEY_FILE!" ^
 	--algorithm !ALGORITHM! ^
+	--padding_size !PADDING_SIZE! ^
 	--include_descriptors_from_image vbmeta.bak.img ^
 	--include_descriptors_from_image vendor_boot_prc.img
 
