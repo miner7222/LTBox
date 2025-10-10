@@ -11,7 +11,6 @@ set "PYTHON=%~dp0python3\python.exe"
 
 echo --- Checking for required tools ---
 echo.
-
 if not exist "%TOOLS_DIR%" mkdir "%TOOLS_DIR%"
 
 echo [*] Checking for Python in local 'python3' folder...
@@ -23,7 +22,6 @@ if not exist "%PYTHON%" (
 )
 echo [+] Python found at: %PYTHON%
 echo.
-
 echo [*] Checking for magiskboot.exe...
 if exist "%TOOLS_DIR%magiskboot.exe" (
     echo [+] magiskboot.exe is present.
@@ -33,7 +31,6 @@ if exist "%TOOLS_DIR%magiskboot.exe" (
     if exist "%TOOLS_DIR%magiskboot.exe" (echo [+] Download successful.) else (echo [!] Download failed. Aborting. & pause & exit /b)
 )
 echo.
-
 set "PATH=%TOOLS_DIR%;%PATH%"
 
 if not exist "boot.img" (
@@ -48,7 +45,6 @@ copy "%CURRENT_DIR%boot.img" "%CURRENT_DIR%boot.bak.img"
 
 echo --- Starting boot.img patching process ---
 echo.
-
 set "WORK_DIR=%~dp0patch_work"
 if exist "%WORK_DIR%" rd /s /q "%WORK_DIR%"
 mkdir "%WORK_DIR%"
@@ -85,7 +81,7 @@ if !errorlevel! neq 0 (
     echo Script will now abort to prevent damage.
     goto cleanup_and_abort
 )
-echo [+] Kernel version matches. Proceeding...
+echo [+] Kernel version matches.
 echo.
 
 echo [3/6] Downloading GKI Kernel...
@@ -111,7 +107,6 @@ echo [5/6] Replacing original kernel with the new one...
 move /y "extracted_kernel\Image" "kernel" >nul
 echo [+] Kernel replaced.
 echo.
-
 echo [6/6] Repacking boot image...
 magiskboot.exe repack boot.img
 if not exist "new-boot.img" (
@@ -137,7 +132,6 @@ echo  Patched image has been saved as:
 echo  %CURRENT_DIR%boot.root.img
 echo =============================================================
 echo.
-echo Now running convert.bat...
+echo --- Handing over to convert.bat ---
 echo.
-
 call convert.bat with_boot
