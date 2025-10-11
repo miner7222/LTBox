@@ -419,7 +419,7 @@ def root_boot_only():
         print("\n--- Finalizing ---")
         final_boot_img = OUTPUT_ROOT_DIR / "boot.img"
         
-        print("[*] Adding hash footer to the patched boot image...")
+        print("\n[*] Verifying boot image key...")
         key_map = {
             "2597c218aae470a130f61162feaae70afd97f011": AVB_DIR / "testkey_rsa4096.pem",
             "cdbb77177f731920bbe0a0f94f84d9038ae0617d": AVB_DIR / "testkey_rsa2048.pem"
@@ -445,7 +445,6 @@ def root_boot_only():
 
 def process_boot_image(key_map, image_to_process):
     """Adds a hash footer to a boot image."""
-    print("--- Processing boot image ---")
     boot_bak_img = BASE_DIR / "boot.bak.img"
     boot_info = extract_image_avb_info(boot_bak_img)
     
@@ -460,7 +459,8 @@ def process_boot_image(key_map, image_to_process):
         print(f"[!] Public key SHA1 '{boot_pubkey}' from boot.img did not match known keys. Cannot add footer.")
         sys.exit(1)
 
-    print(f"\n[*] Adding new hash footer to '{image_to_process.name}' using key {key_file.name}...")
+    print(f"[+] Matched {key_file.name}.")
+    print(f"\n[*] Adding new hash footer to '{image_to_process.name}'...")
     add_footer_cmd = [
         str(PYTHON_EXE), str(AVBTOOL_PY), "add_hash_footer",
         "--image", str(image_to_process), 
@@ -513,7 +513,6 @@ def edit_devinfo_persist():
         
     print(f"\n[*] Final images have been moved to '{OUTPUT_DP_DIR.name}' folder.")
     
-    # Clean up original files after successful backup and modification
     print("[*] Cleaning up original image files...")
     devinfo_img.unlink(missing_ok=True)
     persist_img.unlink(missing_ok=True)
