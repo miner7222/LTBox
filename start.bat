@@ -76,16 +76,17 @@ echo     4. Write devinfo/persist to device
 echo     5. Detect Anti-Rollback from device
 echo     6. Patch rollback indices in ROM
 echo     7. Write Anti-Anti-Rollback to device
-echo     8. Modify xml to update without wiping data
-echo     9. Flash ROM to device
+echo     8. Convert x files to xml (WIPE DATA)
+echo     9. Convert x files to xml & Modify (NO WIPE)
+echo     10. Flash ROM to device
 echo.
-echo     10. Clean workspace
+echo     11. Clean workspace
 echo     m. Back to Main
 echo.
 echo   ==========================================================
 echo.
 set "ADV_CHOICE="
-set /p "ADV_CHOICE=    Enter your choice (1-10, m): "
+set /p "ADV_CHOICE=    Enter your choice (1-11, m): "
 
 if "%ADV_CHOICE%"=="1" call :run_task convert "Convert PRC to ROW in ROM"
 if "%ADV_CHOICE%"=="2" call :run_task read_edl "Dump devinfo/persist from device"
@@ -94,10 +95,11 @@ if "%ADV_CHOICE%"=="4" call :run_task write_edl "Write devinfo/persist to device
 if "%ADV_CHOICE%"=="5" call :run_task read_anti_rollback "Detect Anti-Rollback from device"
 if "%ADV_CHOICE%"=="6" call :run_task patch_anti_rollback "Patch rollback indices in ROM"
 if "%ADV_CHOICE%"=="7" call :run_task write_anti_rollback "Write Anti-Anti-Rollback to device"
-if "%ADV_CHOICE%"=="8" call :run_task modify_xml "Modify xml to update without wiping data"
-if "%ADV_CHOICE%"=="9" call :run_task flash_edl "Flash ROM to device"
+if "%ADV_CHOICE%"=="8" call :run_task modify_xml_wipe "Convert x files to xml (WIPE DATA)"
+if "%ADV_CHOICE%"=="9" call :run_task modify_xml "Convert & Modify x files to xml (NO WIPE)"
+if "%ADV_CHOICE%"=="10" call :run_task flash_edl "Flash ROM to device"
 
-if "%ADV_CHOICE%"=="10" (
+if "%ADV_CHOICE%"=="11" (
     cls
   
     echo ==========================================================
@@ -118,7 +120,7 @@ if "%ADV_CHOICE%"=="10" (
 if /I "%ADV_CHOICE%"=="m" goto :main_menu
 
 echo.
-echo     [!] Invalid choice. Please enter a number from 1-10, or m.
+echo     [!] Invalid choice. Please enter a number from 1-11, or m.
 pause
 goto :advanced_menu
 

@@ -966,9 +966,10 @@ def flash_edl(skip_reset=False, skip_reset_edl=False):
     raw_xmls = list(IMAGE_DIR.glob("rawprogram*.xml"))
     patch_xmls = list(IMAGE_DIR.glob("patch*.xml"))
     
-    if not raw_xmls:
-        print(f"[!] No 'rawprogram*.xml' files found in '{IMAGE_DIR.name}'. Cannot flash.")
-        raise FileNotFoundError(f"No rawprogram*.xml found in {IMAGE_DIR.name}")
+    if not raw_xmls or not patch_xmls:
+        print(f"[!] Error: 'rawprogram*.xml' or 'patch*.xml' files not found in '{IMAGE_DIR.name}'.")
+        print(f"[!] Cannot flash. Please run XML modification first.")
+        raise FileNotFoundError(f"Missing essential XML flash files in {IMAGE_DIR.name}")
         
     cmd = [
         str(edl_ng_exe), 

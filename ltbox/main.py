@@ -31,7 +31,10 @@ def main():
     subparsers.add_parser("patch_anti_rollback", help="Patch firmware images to bypass Anti-Rollback.")
     subparsers.add_parser("write_anti_rollback", help="Flash patched Anti-Rollback images via EDL.")
     subparsers.add_parser("clean", help="Remove downloaded tools, I/O folders, and temp files.")
-    subparsers.add_parser("modify_xml", help="Modify XML files from RSA firmware for flashing.")
+    
+    subparsers.add_parser("modify_xml_wipe", help="Modify XML files from RSA firmware for flashing (WIPE DATA).")
+    subparsers.add_parser("modify_xml", help="Modify XML files from RSA firmware for flashing (NO WIPE).")
+    
     subparsers.add_parser("flash_edl", help="Flash the entire modified firmware via EDL.")
     subparsers.add_parser("patch_all", help="Run the full automated ROW flashing process (NO WIPE).")
     subparsers.add_parser("patch_all_wipe", help="Run the full automated ROW flashing process (WIPE DATA).")
@@ -60,7 +63,9 @@ def main():
         elif args.command == "clean":
             actions.clean_workspace()
         elif args.command == "modify_xml":
-            actions.modify_xml()
+            actions.modify_xml(wipe=0)
+        elif args.command == "modify_xml_wipe":
+            actions.modify_xml(wipe=1)
         elif args.command == "flash_edl":
             actions.flash_edl()
         elif args.command == "patch_all":
