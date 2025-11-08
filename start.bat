@@ -23,7 +23,6 @@ if not exist "%PYTHON_EXE%" (
 )
 if not exist "%MAIN_PY%" (
     echo [!] Main script not found at: %MAIN_PY%
-   
     pause
     goto :eof
 )
@@ -39,7 +38,8 @@ echo.
 echo     1. Install ROW firmware to PRC device (WIPE DATA)
 echo     2. Update ROW firmware on PRC device (NO WIPE)
 echo     3. Disable OTA
-echo     4. Create rooted boot.img
+echo     4. Root device
+echo     5. Unroot device
 echo.
 echo     a. Advanced
 echo     x. Exit
@@ -52,7 +52,8 @@ set /p "CHOICE=    Enter your choice: "
 if /I "%CHOICE%"=="1" call :run_task patch_all_wipe "Install ROW firmware (WIPE DATA)"
 if /I "%CHOICE%"=="2" call :run_task patch_all "Update ROW firmware (NO WIPE)"
 if /I "%CHOICE%"=="3" call :run_task disable_ota "Disable OTA"
-if /I "%CHOICE%"=="4" call :run_task root "Root boot.img"
+if /I "%CHOICE%"=="4" call :run_task root_device "Root device"
+if /I "%CHOICE%"=="5" call :run_task unroot_device "Unroot device"
 if /I "%CHOICE%"=="a" goto :advanced_menu
 if /I "%CHOICE%"=="x" goto :cleanup
 
@@ -103,7 +104,6 @@ if "%ADV_CHOICE%"=="10" call :run_task flash_edl "Flash firmware to device"
 
 if "%ADV_CHOICE%"=="11" (
     cls
-  
     echo ==========================================================
     echo  Starting Task: [Workspace Cleanup]...
     echo ==========================================================
@@ -149,7 +149,8 @@ pause > nul
 if "%1"=="patch_all_wipe" goto :main_menu
 if "%1"=="patch_all" goto :main_menu
 if "%1"=="disable_ota" goto :main_menu
-if "%1"=="root" goto :main_menu
+if "%1"=="root_device" goto :main_menu
+if "%1"=="unroot_device" goto :main_menu
 
 :: Stay in advanced menu for advanced tasks
 goto :advanced_menu

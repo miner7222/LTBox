@@ -886,3 +886,155 @@ def flash_edl(skip_reset=False, skip_reset_edl=False):
 
     if not skip_reset:
         print("\n--- Full EDL Flash Process Finished ---")
+
+
+def root_device():
+    print("--- Starting Root Device Process ---")
+    
+    print(f"[*] Cleaning up old '{OUTPUT_ROOT_DIR.name}' and '{WORKING_BOOT_DIR.name}' folders...")
+    if OUTPUT_ROOT_DIR.exists():
+        shutil.rmtree(OUTPUT_ROOT_DIR)
+    if WORKING_BOOT_DIR.exists():
+        shutil.rmtree(WORKING_BOOT_DIR)
+    
+    OUTPUT_ROOT_DIR.mkdir(exist_ok=True)
+    WORKING_BOOT_DIR.mkdir(exist_ok=True)
+    BACKUP_BOOT_DIR.mkdir(exist_ok=True)
+
+    utils.check_dependencies()
+    
+    magiskboot_exe = utils.get_platform_executable("magiskboot")
+    fetch_exe = utils.get_platform_executable("fetch")
+    
+    if not fetch_exe.exists():
+         print(f"[!] '{fetch_exe.name}' not found. Please run install.bat")
+         sys.exit(1)
+    downloader._ensure_magiskboot(fetch_exe, magiskboot_exe)
+
+    print("\n--- [STEP 1/6] Waiting for ADB Connection ---")
+    device.wait_for_adb()
+    
+    print("\n--- [STEP 2/6] Rebooting to EDL Mode ---")
+    device.reboot_to_edl()
+    print("[*] Waiting for 10 seconds for device to enter EDL mode...")
+    time.sleep(10)
+
+    print(f"--- Waiting for EDL Loader File ---")
+    required_files = [EDL_LOADER_FILENAME]
+    prompt = (
+        f"[STEP 1] Place the EDL loader file ('{EDL_LOADER_FILENAME}')\n"
+        f"         into the '{IMAGE_DIR.name}' folder to proceed."
+    )
+    utils.wait_for_files(IMAGE_DIR, required_files, prompt)
+    print(f"[+] Loader file '{EDL_LOADER_FILE.name}' found in '{IMAGE_DIR.name}'.")
+
+    device.wait_for_edl()
+
+    print("\n--- [STEP 3/6] Dumping boot_a partition ---")
+    dumped_boot_img = WORKING_BOOT_DIR / "boot.img"
+    backup_boot_img = BACKUP_BOOT_DIR / "boot.img"
+    base_boot_bak = BASE_DIR / "boot.bak.img"
+
+    try:
+        device.edl_read_part(EDL_LOADER_FILE, "boot_a", dumped_boot_img)
+        print(f"[+] Successfully read 'boot_a' to '{dumped_boot_img}'.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[!] Failed to read 'boot_a': {e}", file=sys.stderr)
+        raise
+
+    print(f"[*] Backing up original boot.img to '{backup_boot_img.parent.name}' folder...")
+    shutil.copy(dumped_boot_img, backup_boot_img)
+    print(f"[*] Creating temporary backup for AVB processing...")
+    shutil.copy(dumped_boot_img, base_boot_bak)
+    print("[+] Backups complete.")
+
+    print("\n--- [STEP 4/6] Patching dumped boot.img ---")
+    patched_boot_path = imgpatch.patch_boot_with_root_algo(WORKING_BOOT_DIR, magiskboot_exe, fetch_exe)
+
+    if not (patched_boot_path and patched_boot_path.exists()):
+        print("[!] Patched boot image was not created. An error occurred.", file=sys.stderr)
+        base_boot_bak.unlink(missing_ok=True)
+        sys.exit(1)
+
+    print("\n--- [STEP 5/6] Processing AVB Footer ---")
+    try:
+        imgpatch.process_boot_image_avb(patched_boot_path)
+    except Exception as e:
+        print(f"[!] Failed to process AVB footer: {e}", file=sys.stderr)
+        base_boot_bak.unlink(missing_ok=True)
+        raise
+
+    final_boot_img = OUTPUT_ROOT_DIR / "boot.img"
+    shutil.move(patched_boot_path, final_boot_img)
+    print(f"[+] Patched boot image saved to '{final_boot_img.parent.name}' folder.")
+
+    print("\n--- [STEP 6/6] Flashing patched boot.img to boot_a ---")
+    try:
+        device.edl_write_part(EDL_LOADER_FILE, "boot_a", final_boot_img)
+        print("[+] Successfully wrote patched 'boot.img' to 'boot_a'.")
+        
+        print("\n[*] Operations complete. Resetting device...")
+        device.edl_reset(EDL_LOADER_FILE)
+        print("[+] Device reset command sent.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[!] An error occurred during the EDL write/reset operation: {e}", file=sys.stderr)
+        raise
+    finally:
+        base_boot_bak.unlink(missing_ok=True)
+
+    print("\n--- Root Device Process Finished ---")
+
+
+def unroot_device():
+    print("--- Starting Unroot Device Process ---")
+    
+    backup_boot_file = BACKUP_BOOT_DIR / "boot.img"
+    BACKUP_BOOT_DIR.mkdir(exist_ok=True)
+
+    print("\n--- [STEP 1/5] Waiting for ADB Connection ---")
+    device.wait_for_adb()
+    
+    print("\n--- [STEP 2/5] Rebooting to EDL Mode ---")
+    device.reboot_to_edl()
+    print("[*] Waiting for 10 seconds for device to enter EDL mode...")
+    time.sleep(10)
+
+    print(f"--- Waiting for EDL Loader File ---")
+    required_files = [EDL_LOADER_FILENAME]
+    prompt = (
+        f"[STEP 1] Place the EDL loader file ('{EDL_LOADER_FILENAME}')\n"
+        f"         into the '{IMAGE_DIR.name}' folder to proceed."
+    )
+    utils.wait_for_files(IMAGE_DIR, required_files, prompt)
+    print(f"[+] Loader file '{EDL_LOADER_FILE.name}' found in '{IMAGE_DIR.name}'.")
+
+    device.wait_for_edl()
+    
+    print("\n--- [STEP 3/5] Checking for backup boot.img ---")
+    if not backup_boot_file.exists():
+        prompt = (
+            "[!] Backup file 'boot.img' not found.\n"
+            f"    Please place your stock 'boot.img' (from your current firmware)\n"
+            f"    into the '{BACKUP_BOOT_DIR.name}' folder."
+        )
+        utils.wait_for_files(BACKUP_BOOT_DIR, ["boot.img"], prompt)
+    
+    print("[+] Stock backup 'boot.img' found.")
+
+    print("\n--- [STEP 4/5] Flashing stock boot.img to boot_a ---")
+    try:
+        device.edl_write_part(EDL_LOADER_FILE, "boot_a", backup_boot_file)
+        print("[+] Successfully wrote stock 'boot.img' to 'boot_a'.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[!] An error occurred during the EDL write operation: {e}", file=sys.stderr)
+        raise
+
+    print("\n--- [STEP 5/5] Resetting device ---")
+    try:
+        device.edl_reset(EDL_LOADER_FILE)
+        print("[+] Device reset command sent.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[!] An error occurred during the EDL reset operation: {e}", file=sys.stderr)
+        raise
+
+    print("\n--- Unroot Device Process Finished ---")

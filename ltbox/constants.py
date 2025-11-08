@@ -15,6 +15,10 @@ OUTPUT_DP_DIR = BASE_DIR / "output_dp"
 BACKUP_DIR = BASE_DIR / "backup"
 WORK_DIR = BASE_DIR / "patch_work"
 
+# --- New/Modified Root/Unroot Dirs ---
+BACKUP_BOOT_DIR = BASE_DIR / "backup_boot"
+WORKING_BOOT_DIR = BASE_DIR / "working_boot"
+
 # --- Input Directories ---
 INPUT_CURRENT_DIR = BASE_DIR / "input_current"
 INPUT_NEW_DIR = BASE_DIR / "input_new"

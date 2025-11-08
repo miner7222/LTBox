@@ -23,7 +23,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
 
     subparsers.add_parser("convert", help="Convert vendor_boot region and remake vbmeta.")
-    subparsers.add_parser("root", help="Patch boot.img with KernelSU.")
+    subparsers.add_parser("root_device", help="Root the device via EDL.")
+    subparsers.add_parser("unroot_device", help="Unroot the device via EDL.")
     subparsers.add_parser("disable_ota", help="Disable OTA updates via ADB.")
     subparsers.add_parser("edit_dp", help="Edit devinfo and persist images.")
     subparsers.add_parser("read_edl", help="Read devinfo and persist images via EDL.")
@@ -41,12 +42,20 @@ def main():
     subparsers.add_parser("patch_all_wipe", help="Run the full automated ROW flashing process (WIPE DATA).")
     parser_info = subparsers.add_parser("info", help="Display AVB info for image files or directories.")
     parser_info.add_argument("files", nargs='+', help="Image file(s) or folder(s) to inspect.")
+    
+    # Keep old "root" command pointing to old function for advanced menu or compatibility
+    subparsers.add_parser("root", help="Patch boot.img with KernelSU (offline).")
+
 
     args = parser.parse_args()
 
     try:
         if args.command == "convert":
             actions.convert_images()
+        elif args.command == "root_device":
+            actions.root_device()
+        elif args.command == "unroot_device":
+            actions.unroot_device()
         elif args.command == "root":
             actions.root_boot_only()
         elif args.command == "disable_ota":
