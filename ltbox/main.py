@@ -4,8 +4,8 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from datetime import datetime
 
-# Add project root to sys.path to allow 'ltbox' package imports
 sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 
 try:
@@ -17,6 +17,25 @@ except ImportError as e:
     if platform.system() == "Windows":
         os.system("pause")
     sys.exit(1)
+
+class Tee:
+    def __init__(self, original_stream, log_file):
+        self.original_stream = original_stream
+        self.log_file = log_file
+
+    def write(self, message):
+        try:
+            self.original_stream.write(message)
+            self.log_file.write(message)
+        except Exception as e:
+            self.original_stream.write(f"\n[!] Logging Error: {e}\n")
+
+    def flush(self):
+        try:
+            self.original_stream.flush()
+            self.log_file.flush()
+        except Exception:
+            pass
 
 def main():
     parser = argparse.ArgumentParser(description="Android Image Patcher and AVB Tool.")
@@ -43,11 +62,34 @@ def main():
     parser_info = subparsers.add_parser("info", help="Display AVB info for image files or directories.")
     parser_info.add_argument("files", nargs='+', help="Image file(s) or folder(s) to inspect.")
     
-    # Keep old "root" command pointing to old function for advanced menu or compatibility
     subparsers.add_parser("root", help="Patch boot.img with KernelSU (offline).")
 
 
     args = parser.parse_args()
+    
+    log_file_handle = None
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    if args.command in ["patch_all", "patch_all_wipe"]:
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = f"log_{timestamp}.txt"
+            
+            log_file_handle = open(log_filename, 'w', encoding='utf-8')
+            
+            sys.stdout = Tee(original_stdout, log_file_handle)
+            sys.stderr = Tee(original_stderr, log_file_handle)
+            
+            print(f"--- Logging enabled. Output will be saved to {log_filename} ---")
+            print(f"--- Command: {args.command} ---")
+        except Exception as e:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            if log_file_handle:
+                log_file_handle.close()
+            print(f"[!] Failed to initialize logger: {e}", file=sys.stderr)
+            log_file_handle = None
     
     skip_adb = os.environ.get('SKIP_ADB', '0') == '1'
 
@@ -99,6 +141,13 @@ def main():
 
     finally:
         print()
+        
+        if log_file_handle:
+            print(f"--- Logging finished. Output saved to {log_file_handle.name} ---")
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            log_file_handle.close()
+
         if platform.system() == "Windows":
             os.system("pause")
 
