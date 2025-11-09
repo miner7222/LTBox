@@ -163,8 +163,11 @@ def show_image_info(files):
         try:
             process = run_command(
                 [str(PYTHON_EXE), str(AVBTOOL_PY), "info_image", "--image", str(file_path)],
+                capture=True
             )
-            output_lines.append(process.stdout.strip())
+            output_text = process.stdout.strip()
+            print(output_text)
+            output_lines.append(output_text)
         except (subprocess.CalledProcessError) as e:
             error_message = f"Failed to get info from {file_path.name}"
             print(error_message, file=sys.stderr)
