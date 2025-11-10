@@ -467,13 +467,6 @@ def read_edl(skip_adb=False):
     BACKUP_DIR.mkdir(exist_ok=True)
     devinfo_out = BACKUP_DIR / "devinfo.img"
     persist_out = BACKUP_DIR / "persist.img"
-        
-    print("\n[*] Attempting to read 'devinfo' partition...")
-    try:
-        device.edl_read_part(EDL_LOADER_FILE, "devinfo", devinfo_out)
-        print(f"[+] Successfully read 'devinfo' to '{devinfo_out}'.")
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"[!] Failed to read 'devinfo': {e}", file=sys.stderr)
 
     print("\n[*] Attempting to read 'persist' partition...")
     try:
@@ -481,6 +474,13 @@ def read_edl(skip_adb=False):
         print(f"[+] Successfully read 'persist' to '{persist_out}'.")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"[!] Failed to read 'persist': {e}", file=sys.stderr)
+
+    print("\n[*] Attempting to read 'devinfo' partition...")
+    try:
+        device.edl_read_part(EDL_LOADER_FILE, "devinfo", devinfo_out)
+        print(f"[+] Successfully read 'devinfo' to '{devinfo_out}'.")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[!] Failed to read 'devinfo': {e}", file=sys.stderr)
 
     devinfo_size = os.path.getsize(devinfo_out) if devinfo_out.exists() else 0
     persist_size = os.path.getsize(persist_out) if persist_out.exists() else 0
