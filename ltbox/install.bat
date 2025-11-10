@@ -31,7 +31,8 @@ if not exist "%PYTHON_DIR%\python.exe" (
     echo [*] Python not found. Downloading...
     curl -L "%PYTHON_ZIP_URL%" -o "%PYTHON_ZIP_PATH%" || exit /b 1
     echo [*] Extracting Python...
-    powershell -Command "Expand-Archive -Path '%PYTHON_ZIP_PATH%' -DestinationPath '%PYTHON_DIR%' -Force"
+    mkdir "%PYTHON_DIR%"
+    tar -xf "%PYTHON_ZIP_PATH%" -C "%PYTHON_DIR%"
     del "%PYTHON_ZIP_PATH%"
     if exist "%PYTHON_PTH_FILE_SRC%" copy "%PYTHON_PTH_FILE_SRC%" "%PYTHON_PTH_FILE_DST%"
 )
