@@ -1,3 +1,4 @@
+import os
 import platform
 import subprocess
 import sys
@@ -5,6 +6,7 @@ import time
 import zipfile
 import shutil
 import serial.tools.list_ports
+from pathlib import Path
 
 from ltbox.constants import *
 from ltbox import utils, downloader
@@ -266,13 +268,22 @@ def load_firehose_programmer(loader_path, port):
 def fh_loader_read_part(port, output_filename, lun, start_sector, num_sectors, memory_name="UFS"):
     if not FH_LOADER_EXE.exists():
         raise FileNotFoundError(f"fh_loader.exe not found at {FH_LOADER_EXE}")
+    
+    dest_file = Path(output_filename).resolve()
+    dest_dir = dest_file.parent
+    dest_filename = dest_file.name
+    
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env['PATH'] = str(TOOLS_DIR) + os.pathsep + str(DOWNLOAD_DIR) + os.pathsep + env['PATH']
 
     port_str = f"\\\\.\\{port}"
     cmd_fh = [
         str(FH_LOADER_EXE),
         f"--port={port_str}",
         "--convertprogram2read",
-        f"--sendimage={output_filename}",
+        f"--sendimage={dest_filename}",
         f"--lun={lun}",
         f"--start_sector={start_sector}",
         f"--num_sectors={num_sectors}",
@@ -282,7 +293,12 @@ def fh_loader_read_part(port, output_filename, lun, start_sector, num_sectors, m
     ]
     
     print(f"[*] Dumping -> LUN:{lun}, Start:{start_sector}, Num:{num_sectors}...")
-    utils.run_command(cmd_fh)
+    
+    try:
+        subprocess.run(cmd_fh, cwd=dest_dir, env=env, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[!] Error executing fh_loader: {e}", file=sys.stderr)
+        raise
 
 def edl_rawprogram(loader_path, memory_type, raw_xmls, patch_xmls, port):
     if not QSAHARASERVER_EXE.exists() or not FH_LOADER_EXE.exists():
