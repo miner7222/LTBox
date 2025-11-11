@@ -75,7 +75,20 @@ def patch_all(wipe=0, skip_adb=False):
         print("\n" + "="*61)
         print("  STEP 6/9: Dumping devinfo/persist for patching (fh_loader)")
         print("="*61)
-        dump_status = actions.read_edl_fhloader(skip_adb=skip_adb, skip_reset=True)
+
+        extra_dumps = None
+        is_slot_b = (active_slot_suffix == "_b")
+        
+        if is_slot_b:
+            print("[*] Slot B detected. Scheduling extra dumps for ARB check...")
+            extra_dumps = ["boot_b", "vbmeta_system_b"]
+        
+        dump_status = actions.read_edl_fhloader(
+            skip_adb=skip_adb, 
+            skip_reset=True, 
+            additional_targets=extra_dumps
+        )
+
         if dump_status == "SKIP_DP":
             skip_dp_workflow = True
             print("[!] Skipping devinfo/persist patching and flashing steps.")
@@ -97,7 +110,31 @@ def patch_all(wipe=0, skip_adb=False):
         print("\n" + "="*61)
         print("  STEP 8/9: Checking and Patching Anti-Rollback")
         print("="*61)
-        arb_status_result = actions.read_anti_rollback(fastboot_output=fastboot_output)
+        
+        arb_status_result = None
+        
+        if is_slot_b:
+            print("[*] Using Dumped Images for ARB Check (Slot B Mode)...")
+            dumped_boot = BACKUP_DIR / "boot_b.img"
+            dumped_vbmeta = BACKUP_DIR / "vbmeta_system_b.img"
+            
+            arb_status_result = actions.read_anti_rollback(
+                fastboot_output=None,
+                dumped_boot_path=dumped_boot,
+                dumped_vbmeta_path=dumped_vbmeta
+            )
+        else:
+            print("[*] Using Fastboot Output for ARB Check (Slot A Mode)...")
+            arb_status_result = actions.read_anti_rollback(fastboot_output=fastboot_output)
+        
+        if arb_status_result[0] == 'ERROR':
+            print("\n" + "!"*61)
+            print("  CRITICAL ERROR: Anti-Rollback check failed!")
+            print("  Could not determine device security version.")
+            print("  Aborting process to prevent bricking.")
+            print("!"*61)
+            sys.exit(1)
+
         actions.patch_anti_rollback(comparison_result=arb_status_result)
         print("\n--- [STEP 8/9] Anti-Rollback Check/Patch SUCCESS ---")
         

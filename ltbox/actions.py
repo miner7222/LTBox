@@ -609,7 +609,7 @@ def disable_ota(skip_adb=False):
 
     print("\n--- Disable OTA Process Finished ---")
 
-def read_edl(skip_adb=False, skip_reset=False):
+def read_edl(skip_adb=False, skip_reset=False, additional_targets=None):
     print("--- Starting Dump Process (fh_loader) ---")
     
     port = device.setup_edl_connection(skip_adb=skip_adb)
@@ -623,6 +623,10 @@ def read_edl(skip_adb=False, skip_reset=False):
     BACKUP_DIR.mkdir(exist_ok=True)
     
     targets = ["devinfo", "persist"]
+
+    if additional_targets:
+        targets.extend(additional_targets)
+        print(f"[*] Extended dump targets: {', '.join(targets)}")
     
     for target in targets:
         out_file = BACKUP_DIR / f"{target}.img"
@@ -659,8 +663,8 @@ def read_edl(skip_adb=False, skip_reset=False):
     print(f"\n--- Dump Process Finished ---")
     print(f"[*] Files saved to: {BACKUP_DIR.name}")
 
-def read_edl_fhloader(skip_adb=False, skip_reset=False):
-    return read_edl(skip_adb, skip_reset=skip_reset)
+def read_edl_fhloader(skip_adb=False, skip_reset=False, additional_targets=None):
+    return read_edl(skip_adb, skip_reset=skip_reset, additional_targets=additional_targets)
 
 def write_edl(skip_reset=False, skip_reset_edl=False):
     print("--- Starting Write Process (Fastboot) ---")
@@ -746,42 +750,75 @@ def write_edl(skip_reset=False, skip_reset_edl=False):
 
     print("\n--- Write Process Finished ---")
 
-def read_anti_rollback(fastboot_output=None):
+def read_anti_rollback(fastboot_output=None, dumped_boot_path=None, dumped_vbmeta_path=None):
     print("--- Anti-Rollback Status Check ---")
     utils.check_dependencies()
-    
-    if not fastboot_output:
-        print("[!] Fastboot output was not provided. Skipping ARB check.")
-        print(f"\n--- Status Check Complete: ERROR ---")
-        return 'ERROR', 0, 0
-
-    print("\n--- [STEP 1] Parsing Rollback Indices from Fastboot ---")
     
     current_boot_rb = 0
     current_vbmeta_rb = 0
     
-    try:
-        boot_rb_match = re.search(r"\(bootloader\)\s*stored_rollback_index:2\s*=\s*(\S+)", fastboot_output, re.MULTILINE)
-        vbmeta_rb_match = re.search(r"\(bootloader\)\s*stored_rollback_index:3\s*=\s*(\S+)", fastboot_output, re.MULTILINE)
-        
-        if not boot_rb_match:
-            raise ValueError("Could not find 'stored_rollback_index:2' (boot) in fastboot output.")
-        if not vbmeta_rb_match:
-            raise ValueError("Could not find 'stored_rollback_index:3' (vbmeta_system) in fastboot output.")
-        
-        current_boot_rb_hex = boot_rb_match.group(1)
-        current_vbmeta_rb_hex = vbmeta_rb_match.group(1)
+    if dumped_boot_path and dumped_vbmeta_path:
+        print("\n--- [STEP 1] Parsing Rollback Indices from DUMPED IMAGES (Slot B) ---")
+        try:
+            if not dumped_boot_path.exists() or not dumped_vbmeta_path.exists():
+                raise FileNotFoundError("Dumped boot/vbmeta images not found.")
+            
+            print(f"[*] Reading from: {dumped_boot_path.name}")
+            boot_info = imgpatch.extract_image_avb_info(dumped_boot_path)
+            current_boot_rb = int(boot_info.get('rollback', '0'))
+            
+            print(f"[*] Reading from: {dumped_vbmeta_path.name}")
+            vbmeta_info = imgpatch.extract_image_avb_info(dumped_vbmeta_path)
+            current_vbmeta_rb = int(vbmeta_info.get('rollback', '0'))
+            
+        except Exception as e:
+            print(f"[!] Error extracting AVB info from dumps: {e}", file=sys.stderr)
+            print(f"\n--- Status Check Complete: ERROR ---")
+            return 'ERROR', 0, 0
 
-        current_boot_rb = int(current_boot_rb_hex, 16)
-        current_vbmeta_rb = int(current_vbmeta_rb_hex, 16)
-        
-    except Exception as e:
-        print(f"[!] Error parsing fastboot output: {e}", file=sys.stderr)
+    elif fastboot_output:
+        print("\n--- [STEP 1] Parsing Rollback Indices from Fastboot ---")
+        try:
+            boot_rb_match = re.search(r"stored_rollback_index:2\s*[:=]\s*(\S+)", fastboot_output, re.MULTILINE)
+            vbmeta_rb_match = re.search(r"stored_rollback_index:3\s*[:=]\s*(\S+)", fastboot_output, re.MULTILINE)
+            
+            if not boot_rb_match:
+                print("\n[DEBUG] --- FASTBOOT GETVAR ALL OUTPUT START ---")
+                print(fastboot_output.strip())
+                print("[DEBUG] --- FASTBOOT GETVAR ALL OUTPUT END ---\n")
+                
+                possible_matches = re.findall(r"(.*rollback.*)", fastboot_output, re.IGNORECASE)
+                if possible_matches:
+                    print("[DEBUG] Found similar variables:")
+                    for m in possible_matches:
+                        print(f"  > {m.strip()}")
+
+                raise ValueError("Could not find 'stored_rollback_index:2' (boot) in fastboot output.")
+
+            if not vbmeta_rb_match:
+                print("\n[DEBUG] --- FASTBOOT GETVAR ALL OUTPUT START ---")
+                print(fastboot_output.strip())
+                print("[DEBUG] --- FASTBOOT GETVAR ALL OUTPUT END ---\n")
+                raise ValueError("Could not find 'stored_rollback_index:3' (vbmeta_system) in fastboot output.")
+            
+            current_boot_rb_hex = boot_rb_match.group(1)
+            current_vbmeta_rb_hex = vbmeta_rb_match.group(1)
+
+            current_boot_rb = int(current_boot_rb_hex, 16)
+            current_vbmeta_rb = int(current_vbmeta_rb_hex, 16)
+            
+        except Exception as e:
+            print(f"[!] Error parsing fastboot output: {e}", file=sys.stderr)
+            print(f"\n--- Status Check Complete: ERROR ---")
+            return 'ERROR', 0, 0
+
+    else:
+        print("[!] Neither Fastboot output nor Dumped images provided.")
         print(f"\n--- Status Check Complete: ERROR ---")
         return 'ERROR', 0, 0
 
-    print(f"  > Current ROM's Boot Index (from fastboot): {current_boot_rb} (Hex: {current_boot_rb_hex})")
-    print(f"  > Current ROM's VBMeta System Index (from fastboot): {current_vbmeta_rb} (Hex: {current_vbmeta_rb_hex})")
+    print(f"  > Current Device Boot Index: {current_boot_rb}")
+    print(f"  > Current Device VBMeta System Index: {current_vbmeta_rb}")
 
     print("\n--- [STEP 2] Comparing New ROM Indices ---")
     print("\n[*] Extracting new ROM's rollback indices (from 'image' folder)...")
