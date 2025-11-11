@@ -957,12 +957,9 @@ def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
     if copied_count == 0:
         print("[*] No 'output*' folders found. Proceeding with files already in 'image' folder.")
 
-    print("\n--- [STEP 1] Flashing all images via rawprogram (fh_loader) ---")
-
     port = device.setup_edl_connection(skip_adb=skip_adb)
 
     print("[*] Ensuring clean EDL state via System Reboot loop...")
-    
     try:
         device.fh_loader_reset(port)
     except Exception as e:
@@ -1009,6 +1006,8 @@ def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
         print(f"[!] Cannot flash. Please run XML modification first.")
         raise FileNotFoundError(f"Missing essential XML flash files in {IMAGE_DIR.name}")
         
+    print("\n--- [STEP 1] Flashing all images via rawprogram (fh_loader) ---")
+    
     try:
         device.edl_rawprogram(loader_path, "UFS", raw_xmls, patch_xmls, port)
     except (subprocess.CalledProcessError, FileNotFoundError) as e:

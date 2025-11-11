@@ -219,11 +219,18 @@ def wait_for_edl():
     return port_name
 
 def setup_edl_connection(skip_adb=False):
-    print("\n--- [EDL Setup] Rebooting to EDL Mode ---")
-    reboot_to_edl(skip_adb=skip_adb)
-    if not skip_adb:
-        print("[*] Waiting for 10 seconds for device to enter EDL mode...")
-        time.sleep(10)
+    if check_edl_device(silent=True):
+        print("[+] Device is already in EDL mode. Skipping ADB reboot.")
+    else:
+        if not skip_adb:
+            wait_for_adb(skip_adb=False)
+        
+        print("\n--- [EDL Setup] Rebooting to EDL Mode ---")
+        reboot_to_edl(skip_adb=skip_adb)
+        
+        if not skip_adb:
+            print("[*] Waiting for 10 seconds for device to enter EDL mode...")
+            time.sleep(10)
 
     print(f"--- [EDL Setup] Waiting for EDL Loader File ---")
     required_files = [EDL_LOADER_FILENAME]
@@ -251,7 +258,16 @@ def load_firehose_programmer(loader_path, port):
         "-p", port_str,
         "-s", f"13:{loader_path}"
     ]
-    utils.run_command(cmd_sahara, check=False)
+    
+    try:
+        utils.run_command(cmd_sahara, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"\n[!] FATAL ERROR: Failed to load Firehose programmer.", file=sys.stderr)
+        print(f"[!] Possible causes:", file=sys.stderr)
+        print(f"    1. Connection instability (Try a different USB cable/port).", file=sys.stderr)
+        print(f"    2. Driver issue (Check Qualcomm HS-USB QDLoader 9008 in Device Manager).", file=sys.stderr)
+        print(f"    3. Device is hung (Hold Power+Vol- for 10s to force reboot, then try again).", file=sys.stderr)
+        raise e
 
 def fh_loader_read_part(port, output_filename, lun, start_sector, num_sectors, memory_name="UFS"):
     if not FH_LOADER_EXE.exists():
