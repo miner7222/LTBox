@@ -718,12 +718,12 @@ def read_anti_rollback(fastboot_output=None):
     print(f"  > New ROM's Boot Index: {new_boot_rb}")
     print(f"  > New ROM's VBMeta System Index: {new_vbmeta_rb}")
 
-    if new_boot_rb < current_boot_rb or new_vbmeta_rb < current_vbmeta_rb:
-        print("\n[!] Downgrade detected! Anti-Rollback patching is REQUIRED.")
-        status = 'NEEDS_PATCH'
-    else:
-        print("\n[+] Indices are same or higher. No Anti-Rollback patch needed.")
+    if new_boot_rb == current_boot_rb and new_vbmeta_rb == current_vbmeta_rb:
+        print("\n[+] Indices are identical. No Anti-Rollback patch needed.")
         status = 'MATCH'
+    else:
+        print("\n[*] Indices are different (higher or lower). Patching is REQUIRED.")
+        status = 'NEEDS_PATCH'
     
     print(f"\n--- Status Check Complete: {status} ---")
     return status, current_boot_rb, current_vbmeta_rb
