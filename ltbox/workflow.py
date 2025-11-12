@@ -100,7 +100,7 @@ def patch_all(wipe: int = 0, skip_adb: bool = False) -> None:
         
         dump_status = actions.read_edl_fhloader(
             skip_adb=skip_adb, 
-            skip_reset=True, 
+            skip_reset=False, 
             additional_targets=extra_dumps
         )
 
