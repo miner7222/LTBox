@@ -5,8 +5,6 @@ import sys
 import zipfile
 import tarfile
 import requests
-import io
-import os
 import re
 from pathlib import Path
 
@@ -17,6 +15,49 @@ from ltbox import utils
 
 class ToolError(Exception):
     pass
+
+def download_resource(url, dest_path):
+    print(f"[*] Downloading {dest_path.name}...")
+    try:
+        with requests.get(url, stream=True, allow_redirects=True) as response:
+            response.raise_for_status()
+            with open(dest_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        print(f"[+] Downloaded {dest_path.name} successfully.")
+    except Exception as e:
+        print(f"[!] Failed to download {url}: {e}", file=sys.stderr)
+        if dest_path.exists():
+            dest_path.unlink()
+        raise ToolError(f"Download failed for {dest_path.name}")
+
+def extract_archive_files(archive_path, extract_map):
+    print(f"[*] Extracting files from {archive_path.name}...")
+    try:
+        is_tar = archive_path.suffix == '.gz' or archive_path.suffix == '.tar'
+        
+        if is_tar:
+            with tarfile.open(archive_path, "r:*") as tf:
+                for member in tf:
+                    if member.name in extract_map:
+                        target_path = extract_map[member.name]
+                        f = tf.extractfile(member)
+                        if f:
+                            with open(target_path, "wb") as target:
+                                shutil.copyfileobj(f, target)
+                            print(f"  > Extracted {target_path.name}")
+        else:
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                for member in zf.infolist():
+                    if member.filename in extract_map:
+                        target_path = extract_map[member.filename]
+                        with zf.open(member) as source, open(target_path, "wb") as target:
+                            shutil.copyfileobj(source, target)
+                        print(f"  > Extracted {target_path.name}")
+                        
+    except Exception as e:
+        print(f"[!] Failed to extract archive {archive_path.name}: {e}", file=sys.stderr)
+        raise ToolError(f"Extraction failed for {archive_path.name}")
 
 def _run_fetch_command(args):
     fetch_exe = DOWNLOAD_DIR / "fetch.exe"
@@ -94,7 +135,6 @@ def ensure_fetch():
     if tool_exe.exists():
         return tool_exe
     
-    print("[!] 'fetch.exe' not found. Downloading...")
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     
     asset_patterns = {
@@ -108,17 +148,8 @@ def ensure_fetch():
          raise ToolError(f"Unsupported architecture for fetch: {arch}")
 
     url = f"{FETCH_REPO_URL}/releases/download/{FETCH_VERSION}/{asset_name}"
-    
-    try:
-        response = requests.get(url, allow_redirects=True)
-        response.raise_for_status()
-        with open(tool_exe, 'wb') as f:
-            f.write(response.content)
-        print("[+] fetch.exe downloaded successfully.")
-        return tool_exe
-    except Exception as e:
-        print(f"[!] Failed to download fetch.exe: {e}", file=sys.stderr)
-        raise ToolError("Failed to download fetch.exe")
+    download_resource(url, tool_exe)
+    return tool_exe
 
 def ensure_platform_tools():
     if ADB_EXE.exists() and FASTBOOT_EXE.exists():
@@ -128,13 +159,9 @@ def ensure_platform_tools():
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     temp_zip_path = DOWNLOAD_DIR / "platform-tools.zip"
     
+    download_resource(PLATFORM_TOOLS_ZIP_URL, temp_zip_path)
+    
     try:
-        with requests.get(PLATFORM_TOOLS_ZIP_URL, stream=True, allow_redirects=True) as response:
-            response.raise_for_status()
-            with open(temp_zip_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
         with zipfile.ZipFile(temp_zip_path) as zf:
             for member in zf.infolist():
                 if member.is_dir():
@@ -147,11 +174,13 @@ def ensure_platform_tools():
                         shutil.copyfileobj(source, target)
                         
         temp_zip_path.unlink()
-        print("[+] platform-tools downloaded and extracted successfully.")
+        print("[+] platform-tools extracted successfully.")
         
     except Exception as e:
-        print(f"[!] Failed to download or extract platform-tools: {e}", file=sys.stderr)
-        raise ToolError("Failed to download platform-tools")
+        print(f"[!] Failed to extract platform-tools: {e}", file=sys.stderr)
+        if temp_zip_path.exists():
+            temp_zip_path.unlink()
+        raise ToolError("Failed to process platform-tools")
 
 def ensure_avb_tools():
     key1 = DOWNLOAD_DIR / "testkey_rsa4096.pem"
@@ -164,35 +193,17 @@ def ensure_avb_tools():
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     temp_tar_path = DOWNLOAD_DIR / "avb.tar.gz"
     
+    download_resource(AVB_ARCHIVE_URL, temp_tar_path)
+
     files_to_extract = {
         "avbtool.py": AVBTOOL_PY,
         "test/data/testkey_rsa4096.pem": key1,
         "test/data/testkey_rsa2048.pem": key2,
     }
 
-    try:
-        with requests.get(AVB_ARCHIVE_URL, stream=True, allow_redirects=True) as response:
-            response.raise_for_status()
-            with open(temp_tar_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-        with tarfile.open(temp_tar_path, "r:gz") as tf:
-            for member in tf:
-                if member.name in files_to_extract:
-                    target_path = files_to_extract[member.name]
-                    f = tf.extractfile(member)
-                    if f:
-                        with open(target_path, "wb") as target:
-                            shutil.copyfileobj(f, target)
-                        print(f"[+] Extracted {target_path.name}")
-                        
-        temp_tar_path.unlink()
-        print("[+] avbtool and keys downloaded successfully.")
-
-    except Exception as e:
-        print(f"[!] Failed to download or extract avbtool: {e}", file=sys.stderr)
-        raise ToolError("Failed to download avbtool")
+    extract_archive_files(temp_tar_path, files_to_extract)
+    temp_tar_path.unlink()
+    print("[+] avbtool and keys ready.")
 
 def ensure_magiskboot():
     asset_patterns = {
