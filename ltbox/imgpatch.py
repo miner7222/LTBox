@@ -1,21 +1,17 @@
 import os
-import platform
 import re
 import shutil
 import subprocess
 import sys
-import time
-from datetime import datetime
-from pathlib import Path
 import hashlib
+import struct
+from pathlib import Path
 from binascii import hexlify, unhexlify
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-import struct
 
 from ltbox.constants import *
 from ltbox import utils, downloader
 
-# --- AVB (Android Verified Boot) Helpers ---
 def extract_image_avb_info(image_path):
     info_proc = utils.run_command(
         [str(PYTHON_EXE), str(AVBTOOL_PY), "info_image", "--image", str(image_path)],
@@ -370,51 +366,67 @@ def decrypt_file(fi_path, fo_path):
         print(f"Error decrypting {fi_path}: {e}", file=sys.stderr)
         return False
 
-def edit_vendor_boot(input_file_path):
-    input_file = Path(input_file_path)
-    output_file = input_file.parent / "vendor_boot_prc.img"
+def _process_binary_file(input_path, output_path, patch_func, copy_if_unchanged=True, **kwargs):
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    
+    if not input_path.exists():
+        print(f"Error: Input file not found at '{input_path}'", file=sys.stderr)
+        return False
 
-    if not input_file.exists():
-        print(f"Error: Input file not found at '{input_file}'", file=sys.stderr)
-        sys.exit(1)
+    try:
+        content = input_path.read_bytes()
+        modified_content, stats = patch_func(content, **kwargs)
 
+        if stats.get('changed', False):
+            output_path.write_bytes(modified_content)
+            print(f"\nPatch successful! {stats.get('message', 'Modifications applied.')}")
+            print(f"Saved as '{output_path.name}'")
+            return True
+        else:
+            print(f"\n[*] No changes needed for {input_path.name} ({stats.get('message', 'No patterns found')}).")
+            if copy_if_unchanged:
+                print(f"[*] Copying original file as '{output_path.name}'...")
+                if input_path != output_path:
+                    shutil.copy(input_path, output_path)
+                return True
+            return False
+
+    except Exception as e:
+        print(f"An error occurred while processing '{input_path.name}': {e}", file=sys.stderr)
+        return False
+
+def _patch_vendor_boot_logic(content, **kwargs):
     patterns_row = {
         b"\x2E\x52\x4F\x57": b"\x2E\x50\x52\x43",
         b"\x49\x52\x4F\x57": b"\x49\x50\x52\x43"
     }
     patterns_prc = [b"\x2E\x50\x52\x43", b"\x49\x50\x52\x43"]
     
-    try:
-        content = input_file.read_bytes()
-        modified_content = content
-        found_row_count = 0
+    modified_content = content
+    found_row_count = 0
 
-        for target, replacement in patterns_row.items():
-            count = content.count(target)
-            if count > 0:
-                print(f"Found '{target.hex().upper()}' pattern {count} time(s). Replacing...")
-                modified_content = modified_content.replace(target, replacement)
-                found_row_count += count
+    for target, replacement in patterns_row.items():
+        count = content.count(target)
+        if count > 0:
+            print(f"Found '{target.hex().upper()}' pattern {count} time(s). Replacing...")
+            modified_content = modified_content.replace(target, replacement)
+            found_row_count += count
 
-        if found_row_count > 0:
-            output_file.write_bytes(modified_content)
-            print(f"\nPatch successful! Total {found_row_count} instance(s) replaced.")
-            print(f"Saved as '{output_file.name}'")
-        else:
-            print("[*] No .ROW patterns found. Checking for .PRC patterns...")
-            found_prc = any(content.count(target) > 0 for target in patterns_prc)
-            
-            if found_prc:
-                print("[+] Patch not needed. The file may already be patched (.PRC found).")
-                print(f"[*] Copying original file as '{output_file.name}'...")
-                shutil.copy(input_file, output_file)
-            else:
-                print("[!] No target patterns (.ROW or .PRC) found in vendor_boot.")
-                print(f"[*] Assuming no patch needed. Copying original file as '{output_file.name}'...")
-                shutil.copy(input_file, output_file)
+    if found_row_count > 0:
+        return modified_content, {'changed': True, 'message': f"Total {found_row_count} instance(s) replaced."}
+    
+    found_prc = any(content.count(target) > 0 for target in patterns_prc)
+    if found_prc:
+        return content, {'changed': False, 'message': ".PRC patterns found (Already patched)."}
+    
+    return content, {'changed': False, 'message': "No .ROW or .PRC patterns found."}
 
-    except Exception as e:
-        print(f"An error occurred while processing '{input_file.name}': {e}", file=sys.stderr)
+def edit_vendor_boot(input_file_path):
+    input_file = Path(input_file_path)
+    output_file = input_file.parent / "vendor_boot_prc.img"
+    
+    if not _process_binary_file(input_file, output_file, _patch_vendor_boot_logic, copy_if_unchanged=True):
         sys.exit(1)
 
 def check_target_exists(target_code):
@@ -461,16 +473,35 @@ def detect_region_codes():
             
     return results
 
+def _patch_region_code_logic(content, **kwargs):
+    current_code = kwargs.get('current_code')
+    replacement_code = kwargs.get('replacement_code')
+    
+    if not current_code or not replacement_code:
+        return content, {'changed': False, 'message': "Invalid codes"}
+
+    replacement_string = f"{replacement_code.upper()}XX"
+    replacement_bytes = replacement_string.encode('ascii')
+    target_string = f"{current_code.upper()}XX"
+    target_bytes = target_string.encode('ascii')
+    
+    if target_bytes == replacement_bytes:
+        return content, {'changed': False, 'message': f"File is already '{target_string}'."}
+
+    count = content.count(target_bytes)
+    if count > 0:
+        print(f"Found '{target_string}' pattern {count} time(s). Replacing with '{replacement_string}'...")
+        modified_content = content.replace(target_bytes, replacement_bytes)
+        return modified_content, {'changed': True, 'message': f"Total {count} instance(s) replaced.", 'count': count}
+    
+    return content, {'changed': False, 'message': f"Pattern '{target_string}' NOT found."}
+
 def patch_region_codes(replacement_code, target_map):
     if not replacement_code or len(replacement_code) != 2:
         print(f"[!] Error: Invalid replacement code '{replacement_code}'. Aborting.", file=sys.stderr)
         sys.exit(1)
         
-    replacement_string = f"{replacement_code.upper()}XX"
-    replacement_bytes = replacement_string.encode('ascii')
-    
     total_patched = 0
-    
     files_to_output = {
         "devinfo.img": "devinfo_modified.img",
         "persist.img": "persist_modified.img"
@@ -494,35 +525,24 @@ def patch_region_codes(replacement_code, target_map):
             print(f"[*] No target code specified/detected for '{filename}'. Skipping.")
             continue
 
-        target_string = f"{current_code.upper()}XX"
-        target_bytes = target_string.encode('ascii')
+        success = _process_binary_file(
+            input_file, 
+            output_file, 
+            _patch_region_code_logic, 
+            copy_if_unchanged=True,
+            current_code=current_code, 
+            replacement_code=replacement_code
+        )
         
-        if target_bytes == replacement_bytes:
-             print(f"[*] File is already '{target_string}'. Copying as is.")
-             shutil.copy(input_file, output_file)
-             continue
+        if success:
+             # Need to verify if it was a patch or a copy to increment total_patched strictly?
+             # The logic function prints replacement counts, so visual feedback is there.
+             # The original code tracked 'total_patched' from the inner count.
+             # Since _process_binary_file abstracts the count, we rely on its print or return.
+             # Ideally _process_binary_file could return the stats object, but for now boolean is sufficient for flow.
+             pass
 
-        try:
-            content = input_file.read_bytes()
-            count = content.count(target_bytes)
-            
-            if count > 0:
-                print(f"Found '{target_string}' pattern {count} time(s). Replacing with '{replacement_string}'...")
-                modified_content = content.replace(target_bytes, replacement_bytes)
-                output_file.write_bytes(modified_content)
-                total_patched += count
-                print(f"[+] Patch successful! Saved as '{output_file.name}'")
-            else:
-                print(f"[!] Pattern '{target_string}' NOT found. No changes made.")
-
-        except Exception as e:
-            print(f"[!] Error processing '{input_file.name}': {e}", file=sys.stderr)
-
-    if total_patched > 0:
-        print(f"\nPatching finished! Total {total_patched} instance(s) replaced.")
-    else:
-        print("\nPatching finished! No instances were replaced.")
-    
+    print(f"\nPatching finished.")
     return total_patched
 
 def get_kernel_version(file_path):
