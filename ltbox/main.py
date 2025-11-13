@@ -11,6 +11,9 @@ import json
 
 APP_DIR = Path(__file__).parent.resolve()
 LANG_DIR = APP_DIR / "lang"
+BASE_DIR = APP_DIR.parent
+PYTHON_EXE = BASE_DIR / "python3" / "python.exe"
+DOWNLOADER_PY = APP_DIR / "downloader.py"
 
 def select_language():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -86,6 +89,21 @@ def setup_console():
 
 setup_console()
 lang = select_language()
+
+print(lang.get("installing_tools_header", "\n[*] Installing external tools (fetch, adb, avbtool)..."))
+try:
+    subprocess.run(
+        [str(PYTHON_EXE), str(DOWNLOADER_PY), "install_base_tools"],
+        check=True,
+        encoding='utf-8',
+        errors='ignore'
+    )
+except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    print(f"[!] Critical Error: Failed to install base tools: {e}", file=sys.stderr)
+    print("[!] Please run 'ltbox/install.bat' manually and try again.", file=sys.stderr)
+    if platform.system() == "Windows":
+        os.system("pause")
+    sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 

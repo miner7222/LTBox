@@ -49,9 +49,5 @@ if not exist "%PYTHON_DIR%\Scripts\pip.exe" (
 echo [*] Installing required Python modules from requirements.txt...
 "%PYTHON_DIR%\Scripts\pip.exe" install -r "%BASE_DIR%requirements.txt"
 
-:: Download all other tools using the downloader script
-echo [*] Installing external tools (fetch, adb, avbtool)...
-"%PYTHON_DIR%\python.exe" "%LTBOX_DIR%downloader.py" install_base_tools
-
 endlocal
 exit /b 0
