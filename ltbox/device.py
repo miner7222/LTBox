@@ -295,6 +295,10 @@ class DeviceController:
             print(get_string("device_cause_3"), file=sys.stderr)
             raise e
 
+    def load_firehose_programmer_with_stability(self, loader_path: Path, port: str) -> None:
+        self.load_firehose_programmer(loader_path, port)
+        time.sleep(2)
+
     def fh_loader_read_part(
         self,
         port: str, 
@@ -409,7 +413,7 @@ class DeviceController:
         search_path = str(loader_path.parent)
 
         print(get_string("device_step1_load"))
-        self.load_firehose_programmer(loader_path, port)
+        self.load_firehose_programmer_with_stability(loader_path, port)
 
         print(get_string("device_step2_flash"))
         raw_xml_str = ",".join([p.name for p in raw_xmls])

@@ -131,8 +131,7 @@ def root_device(skip_adb=False) -> None:
     port = dev.setup_edl_connection()
     
     try:
-        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
-        time.sleep(2)
+        dev.load_firehose_programmer_with_stability(EDL_LOADER_FILE, port)
     except Exception as e:
         print(get_string("act_warn_prog_load").format(e=e))
 
@@ -204,8 +203,7 @@ def root_device(skip_adb=False) -> None:
         port = dev.wait_for_edl()
 
     try:
-        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
-        time.sleep(2)
+        dev.load_firehose_programmer_with_stability(EDL_LOADER_FILE, port)
     except Exception as e:
         print(get_string("act_warn_prog_load").format(e=e))
 
@@ -267,8 +265,7 @@ def unroot_device(skip_adb=False) -> None:
     port = dev.setup_edl_connection()
 
     try:
-        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
-        time.sleep(2)
+        dev.load_firehose_programmer_with_stability(EDL_LOADER_FILE, port)
     except Exception as e:
         print(get_string("act_warn_prog_load").format(e=e))
 

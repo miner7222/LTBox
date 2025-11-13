@@ -37,8 +37,7 @@ def read_edl(skip_adb: bool = False, skip_reset: bool = False, additional_target
     port = dev.setup_edl_connection()
     
     try:
-        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
-        time.sleep(2)
+        dev.load_firehose_programmer_with_stability(EDL_LOADER_FILE, port)
     except Exception as e:
         print(get_string("act_warn_prog_load").format(e=e))
 
@@ -105,8 +104,7 @@ def write_edl(skip_reset: bool = False, skip_reset_edl: bool = False) -> None:
     port = dev.setup_edl_connection()
 
     try:
-        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
-        time.sleep(2)
+        dev.load_firehose_programmer_with_stability(EDL_LOADER_FILE, port)
     except Exception as e:
         print(get_string("act_warn_prog_load").format(e=e))
 
@@ -182,8 +180,7 @@ def write_anti_rollback(skip_reset: bool = False) -> None:
     port = dev.wait_for_edl()
     
     try:
-        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
-        time.sleep(2)
+        dev.load_firehose_programmer_with_stability(EDL_LOADER_FILE, port)
 
         print(get_string("act_arb_write_step3").format(slot=active_slot))
 
