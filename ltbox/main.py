@@ -66,7 +66,7 @@ def select_language():
     try:
         with open(lang_file_path, 'r', encoding='utf-8') as f:
             lang_data = json.load(f)
-        return lang_data
+        return lang_data, selected_lang_code
     except json.JSONDecodeError:
         print(f"[!] Error: Failed to parse language file: {lang_file_path.name}", file=sys.stderr)
     except FileNotFoundError:
@@ -88,12 +88,12 @@ def setup_console():
             print(f"[!] Warning: Failed to set console title: {e}", file=sys.stderr)
 
 setup_console()
-lang = select_language()
+lang, lang_code = select_language()
 
-print(lang.get("installing_tools_header", "\n[*] Installing external tools (fetch, adb, avbtool)..."))
+print(lang.get("dl_base_installing", "\n[*] Installing external tools (fetch, adb, avbtool)..."))
 try:
     subprocess.run(
-        [str(PYTHON_EXE), str(DOWNLOADER_PY), "install_base_tools"],
+        [str(PYTHON_EXE), str(DOWNLOADER_PY), "install_base_tools", "--lang", lang_code],
         check=True,
         encoding='utf-8',
         errors='ignore'

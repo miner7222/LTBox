@@ -6,6 +6,7 @@ import zipfile
 import tarfile
 import requests
 import re
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -14,8 +15,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 from ltbox.constants import *
 from ltbox import utils
 
+APP_DIR = Path(__file__).parent.resolve()
+LANG_DIR = APP_DIR / "lang"
+
 class ToolError(Exception):
     pass
+
+def load_language(lang_code: str) -> Dict[str, str]:
+    if not lang_code:
+        return {}
+    lang_file_path = LANG_DIR / f"{lang_code}.json"
+    if not lang_file_path.exists():
+        print(f"[!] Warning: Language file {lang_file_path.name} not found, falling back to defaults.")
+        return {}
+    try:
+        with open(lang_file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[!] Warning: Failed to load language file {lang_file_path.name}: {e}", file=sys.stderr)
+        return {}
 
 def download_resource(url: str, dest_path: Path, lang: Optional[Dict[str, str]] = None) -> None:
     lang = lang or {}
@@ -284,15 +302,23 @@ def download_ksu_apk(target_dir: Path, lang: Optional[Dict[str, str]] = None) ->
         print(lang.get('dl_ksu_exists', "[+] KernelSU Next Manager (Spoofed) APK already exists. Skipping download."))
     else:
         ksu_apk_command = [
-            "--repo", f"https://github.com/{KSU_APK_REPO}", "--tag", KSU_APK_TAG,
+            "--repo", f"httpsG://github.com/{KSU_APK_REPO}", "--tag", KSU_APK_TAG,
             "--release-asset", ".*spoofed.*\\.apk", str(target_dir)
         ]
         _run_fetch_command(ksu_apk_command, lang)
         print(lang.get('dl_ksu_success', "[+] KernelSU Next Manager (Spoofed) APKs downloaded to the main directory (if found)."))
 
 if __name__ == "__main__":
-    lang = {} 
-    if len(sys.argv) > 1 and sys.argv[1] == "install_base_tools":
+    lang_code = "en" 
+    if "--lang" in sys.argv:
+        try:
+            lang_code = sys.argv[sys.argv.index("--lang") + 1]
+        except (IndexError, ValueError):
+            pass 
+    
+    lang = load_language(lang_code) 
+    
+    if len(sys.argv) > 1 and "install_base_tools" in sys.argv:
         print(lang.get('dl_base_installing', "--- Installing Base Tools ---"))
         DOWNLOAD_DIR.mkdir(exist_ok=True)
         try:
