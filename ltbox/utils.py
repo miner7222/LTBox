@@ -21,30 +21,10 @@ def run_command(
     env = env or os.environ.copy()
     env['PATH'] = str(const.TOOLS_DIR) + os.pathsep + str(const.DOWNLOAD_DIR) + os.pathsep + env['PATH']
 
-    try:
-        process = subprocess.run(
-            command, shell=shell, check=check, capture_output=capture,
-            text=True, encoding='utf-8', errors='ignore', env=env
-        )
-
-        if not capture:
-            if process.stdout:
-                print(process.stdout.strip())
-            if process.stderr:
-                print(process.stderr.strip(), file=sys.stderr)
-        
-        return process
-    except FileNotFoundError as e:
-        print(f"Error: Command not found - {e.filename}", file=sys.stderr)
-        raise
-    except subprocess.CalledProcessError as e:
-        print(f"Error executing command: {' '.join(map(str, command)) if isinstance(command, list) else command}", file=sys.stderr)
-        print(f"Return code: {e.returncode}", file=sys.stderr)
-        if e.stdout:
-            print(f"Stdout:\n{e.stdout.strip()}", file=sys.stderr)
-        if e.stderr:
-            print(f"Stderr:\n{e.stderr.strip()}", file=sys.stderr)
-        raise
+    return subprocess.run(
+        command, shell=shell, check=check, capture_output=capture,
+        text=True, encoding='utf-8', errors='ignore', env=env
+    )
 
 def get_platform_executable(name: str) -> Path:
     system = platform.system()
