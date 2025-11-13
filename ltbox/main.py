@@ -9,8 +9,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
+
+from ltbox import i18n
+
 APP_DIR = Path(__file__).parent.resolve()
-LANG_DIR = APP_DIR / "lang"
 BASE_DIR = APP_DIR.parent
 PYTHON_EXE = BASE_DIR / "python3" / "python.exe"
 DOWNLOADER_PY = APP_DIR / "downloader.py"
@@ -60,53 +63,6 @@ def logging_context(log_filename=None):
             handler.close()
             logger.removeHandler(handler)
 
-def select_language():
-    os.system('cls' if os.name == 'nt' else 'clear')
-    if not LANG_DIR.is_dir():
-        print(f"[!] Critical Error: Language directory not found.", file=sys.stderr)
-        print(f"[!] Expected path: {LANG_DIR}", file=sys.stderr)
-        if platform.system() == "Windows":
-            os.system("pause")
-        sys.exit(1)
-
-    lang_files = sorted(list(LANG_DIR.glob("*.json")))
-    if not lang_files:
-        print(f"[!] Critical Error: No language files (*.json) found in:", file=sys.stderr)
-        print(f"[!] Path: {LANG_DIR}", file=sys.stderr)
-        if platform.system() == "Windows":
-            os.system("pause")
-        sys.exit(1)
-
-    available_languages = {}
-    menu_options = []
-    
-    for i, f in enumerate(lang_files, 1):
-        lang_code = f.stem
-        available_languages[str(i)] = lang_code
-        
-        try:
-            with open(f, 'r', encoding='utf-8') as lang_file:
-                temp_lang = json.load(lang_file)
-                lang_name = temp_lang.get("lang_native_name", lang_code)
-        except Exception:
-            lang_name = lang_code
-        menu_options.append(f"     {i}. {lang_name}")
-
-    print("\n  " + "=" * 58)
-    print("     Select Language")
-    print("  " + "=" * 58 + "\n")
-    print("\n".join(menu_options))
-    print("\n  " + "=" * 58 + "\n")
-
-    choice = ""
-    while choice not in available_languages:
-        prompt = f"    Enter your choice (1-{len(available_languages)}): "
-        choice = input(prompt).strip()
-        if choice not in available_languages:
-            print(f"    [!] Invalid choice. Please enter a number from 1 to {len(available_languages)}.")
-    
-    return available_languages[choice]
-
 def setup_console():
     system = platform.system()
     if system == "Windows":
@@ -117,24 +73,12 @@ def setup_console():
             print(f"[!] Warning: Failed to set console title: {e}", file=sys.stderr)
 
 setup_console()
-lang_code = select_language()
-
-sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
+lang_code = i18n.select_language()
+i18n.load_lang(lang_code)
+from ltbox.i18n import get_string
 
 if platform.system() == "Windows":
     import ctypes
-
-try:
-    from ltbox import i18n
-    i18n.load_lang(lang_code)
-    from ltbox.i18n import get_string
-except ImportError as e:
-    print(f"[!] Error: Failed to import 'ltbox' package.", file=sys.stderr)
-    print(f"[!] Details: {e}", file=sys.stderr)
-    print(f"[!] Please ensure the 'ltbox' folder and its files are present.", file=sys.stderr)
-    if platform.system() == "Windows":
-        os.system("pause")
-    sys.exit(1)
 
 os.system('cls' if os.name == 'nt' else 'clear')
 print(get_string("dl_base_installing"))
