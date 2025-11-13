@@ -6,7 +6,7 @@ import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Callable, Generator, Any, Union
+from typing import List, Optional, Callable, Generator, Any, Union, Dict
 
 from ltbox.constants import *
 
@@ -61,8 +61,10 @@ def _wait_for_resource(
     target_path: Path, 
     check_func: Callable[[Path, Optional[List[str]]], bool], 
     prompt_msg: str, 
-    item_list: Optional[List[str]] = None
+    item_list: Optional[List[str]] = None,
+    lang: Optional[Dict[str, str]] = None
 ) -> bool:
+    lang = lang or {}
     target_path.mkdir(exist_ok=True, parents=True)
     while True:
         if check_func(target_path, item_list):
@@ -73,37 +75,41 @@ def _wait_for_resource(
         else:
             os.system('clear')
             
-        print("--- WAITING FOR RESOURCE ---")
+        print(lang.get('utils_wait_resource', "--- WAITING FOR RESOURCE ---"))
         print(prompt_msg)
         if item_list:
-            print("\nMissing items:")
+            print(lang.get('utils_missing_items', "\nMissing items:"))
             for item in item_list:
                 if not (target_path / item).exists():
                     print(f" - {item}")
         
-        print("\nPress Enter when ready...")
+        print(lang.get('utils_press_enter', "\nPress Enter when ready..."))
         try:
             input()
         except EOFError:
             sys.exit(1)
 
-def wait_for_files(directory: Path, required_files: List[str], prompt_message: str) -> bool:
+def wait_for_files(directory: Path, required_files: List[str], prompt_message: str, lang: Optional[Dict[str, str]] = None) -> bool:
     return _wait_for_resource(
         directory, 
         lambda p, f: all((p / i).exists() for i in (f or [])), 
         prompt_message, 
-        required_files
+        required_files,
+        lang
     )
 
-def wait_for_directory(directory: Path, prompt_message: str) -> bool:
+def wait_for_directory(directory: Path, prompt_message: str, lang: Optional[Dict[str, str]] = None) -> bool:
     return _wait_for_resource(
         directory, 
         lambda p, _: p.is_dir() and any(p.iterdir()), 
-        prompt_message
+        prompt_message,
+        None,
+        lang
     )
 
-def check_dependencies() -> None:
-    print("--- Checking for required files ---")
+def check_dependencies(lang: Optional[Dict[str, str]] = None) -> None:
+    lang = lang or {}
+    print(lang.get('utils_check_deps', "--- Checking for required files ---"))
     dependencies = {
         "Python Environment": PYTHON_EXE,
         "ADB": ADB_EXE,
@@ -117,15 +123,17 @@ def check_dependencies() -> None:
 
     if missing_deps:
         for name in missing_deps:
-            print(f"[!] Error: Dependency '{name}' is missing.")
-        print("Please run one of the main scripts (e.g., root.bat) to install all required files.")
+            print(lang.get('utils_missing_dep', "[!] Error: Dependency '{name}' is missing.").format(name=name))
+        print(lang.get('utils_run_install', "Please run one of the main scripts (e.g., root.bat) to install all required files."))
         sys.exit(1)
 
-    print("[+] All dependencies are present.\n")
+    print(lang.get('utils_deps_found', "[+] All dependencies are present.\n"))
 
 def require_dependencies(func: Callable) -> Callable:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        check_dependencies()
+        # Note: wrapper doesn't easily accept lang unless passed in args. 
+        # Assuming default English if not passed explicitly, or caller handles check_dependencies.
+        check_dependencies() 
         return func(*args, **kwargs)
     return wrapper
 
@@ -152,7 +160,8 @@ def temporary_workspace(path: Path) -> Generator[Path, None, None]:
             except OSError as e:
                 print(f"Warning: Failed to clean up temporary workspace {path}: {e}", file=sys.stderr)
 
-def show_image_info(files: List[str]) -> None:
+def show_image_info(files: List[str], lang: Optional[Dict[str, str]] = None) -> None:
+    lang = lang or {}
     all_files: List[Path] = []
     for f in files:
         path = Path(f)
@@ -162,23 +171,23 @@ def show_image_info(files: List[str]) -> None:
             all_files.append(path)
 
     if not all_files:
-        print("No .img files found in the provided paths.")
+        print(lang.get('scan_no_files', "No .img files found in the provided paths."))
         return
         
     output_lines = [
         "\n" + "=" * 42,
-        "  Sorted and Processing Images...",
+        lang.get('utils_processing_images', "  Sorted and Processing Images..."),
         "=" * 42 + "\n"
     ]
     print("\n".join(output_lines))
 
     for file_path in sorted(all_files):
-        info_header = f"Processing file: {file_path}\n---------------------------------" 
+        info_header = lang.get('utils_processing_file', "Processing file: {file_path}\n---------------------------------").format(file_path=file_path) 
         print(info_header)
         output_lines.append(info_header)
 
         if not file_path.exists():
-            not_found_msg = f"File not found: {file_path}"
+            not_found_msg = lang.get('utils_file_not_found', "File not found: {file_path}").format(file_path=file_path)
             print(not_found_msg)
             output_lines.append(not_found_msg)
             continue
@@ -192,7 +201,7 @@ def show_image_info(files: List[str]) -> None:
             print(output_text)
             output_lines.append(output_text)
         except (subprocess.CalledProcessError) as e:
-            error_message = f"Failed to get info from {file_path.name}"
+            error_message = lang.get('scan_failed', "Failed to get info from {filename}").format(filename=file_path.name, e="")
             print(error_message, file=sys.stderr)
             if e.stderr:
                 print(e.stderr.strip(), file=sys.stderr)
@@ -205,14 +214,14 @@ def show_image_info(files: List[str]) -> None:
         output_filename = BASE_DIR / f"image_info_{timestamp}.txt"
         with open(output_filename, "w", encoding="utf-8") as f:
             f.write("\n".join(output_lines))
-        print(f"[*] Image info saved to: {output_filename}")
+        print(lang.get('scan_saved_to', "[*] Image info saved to: {filename}").format(filename=output_filename))
     except IOError as e:
-        print(f"[!] Error saving info to file: {e}", file=sys.stderr)
+        print(lang.get('utils_save_error', "[!] Error saving info to file: {e}").format(e=e), file=sys.stderr)
 
-def clean_workspace() -> None:
-    print("--- Starting Cleanup Process ---")
-    print("This will remove all input/output folders and temporary files.")
-    print("The 'python3', 'backup', and 'tools/dl' folders will NOT be removed.")
+def clean_workspace(lang: Optional[Dict[str, str]] = None) -> None:
+    lang = lang or {}
+    print(lang.get('utils_cleaning_title', "--- Starting Cleanup Process ---"))
+    print(lang.get('utils_cleaning_warning', "This will remove all input/output folders and temporary files.\nThe 'python3', 'backup', and 'tools/dl' folders will NOT be removed."))
     print("-" * 50)
 
     folders_to_remove = [
@@ -224,18 +233,18 @@ def clean_workspace() -> None:
         OUTPUT_XML_DIR,
     ]
     
-    print("[*] Removing directories...")
+    print(lang.get('utils_removing_dirs', "[*] Removing directories..."))
     for folder in folders_to_remove:
         if folder.exists():
             try:
                 shutil.rmtree(folder)
-                print(f"  > Removed: {folder.name}{os.sep}")
+                print(lang.get('utils_removed', "  > Removed: {name}").format(name=f"{folder.name}{os.sep}"))
             except OSError as e:
-                print(f"[!] Error removing {folder.name}: {e}", file=sys.stderr)
+                print(lang.get('utils_remove_error', "[!] Error removing {name}: {e}").format(name=folder.name, e=e), file=sys.stderr)
         else:
-            print(f"  > Skipping (not found): {folder.name}{os.sep}")
+            print(lang.get('utils_skipping', "  > Skipping (not found): {name}").format(name=f"{folder.name}{os.sep}"))
 
-    print("\n[*] Cleaning up temporary files from 'tools/dl' folder...")
+    print(lang.get('utils_cleaning_dl', "\n[*] Cleaning up temporary files from 'tools/dl' folder..."))
     dl_files_to_remove = [
         "*.zip",
         "*.tar.gz",
@@ -246,16 +255,16 @@ def clean_workspace() -> None:
         for f in DOWNLOAD_DIR.glob(pattern):
             try:
                 f.unlink()
-                print(f"  > Removed temp file: {f.name}")
+                print(lang.get('utils_removed_temp', "  > Removed temp file: {name}").format(name=f.name))
                 cleaned_dl_files += 1
             except OSError as e:
-                print(f"[!] Error removing {f.name}: {e}", file=sys.stderr)
+                print(lang.get('utils_remove_error', "[!] Error removing {name}: {e}").format(name=f.name, e=e), file=sys.stderr)
 
     if cleaned_dl_files == 0:
-        print("  > No temporary archive files found to clean in 'tools/dl'.")
+        print(lang.get('utils_no_temp_dl', "  > No temporary archive files found to clean in 'tools/dl'."))
 
 
-    print("\n[*] Cleaning up temporary files from root directory...")
+    print(lang.get('utils_cleaning_root', "\n[*] Cleaning up temporary files from root directory..."))
     file_patterns_to_remove = [
         "*.bak.img",
         "*.root.img",
@@ -275,12 +284,12 @@ def clean_workspace() -> None:
         for f in BASE_DIR.glob(pattern):
             try:
                 f.unlink()
-                print(f"  > Removed: {f.name}")
+                print(lang.get('utils_removed', "  > Removed: {name}").format(name=f.name))
                 cleaned_root_files += 1
             except OSError as e:
-                print(f"[!] Error removing {f.name}: {e}", file=sys.stderr)
+                print(lang.get('utils_remove_error', "[!] Error removing {name}: {e}").format(name=f.name, e=e), file=sys.stderr)
     
     if cleaned_root_files == 0:
-        print("  > No temporary files found to clean.")
+        print(lang.get('utils_no_temp_root', "  > No temporary files found to clean."))
 
-    print("\n--- Cleanup Finished ---")
+    print(lang.get('utils_clean_complete', "\n--- Cleanup Finished ---"))
