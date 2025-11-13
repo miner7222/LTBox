@@ -903,28 +903,63 @@ def write_anti_rollback(skip_reset: bool = False) -> None:
         raise FileNotFoundError(f"Patched images not found in {OUTPUT_ANTI_ROLLBACK_DIR.name}")
     print(f"[+] Found patched images folder: '{OUTPUT_ANTI_ROLLBACK_DIR.name}'.")
 
-    dev = device.DeviceController(skip_adb=False)
+    dev = device.DeviceController(skip_adb=True)
     
-    if not skip_reset:
-        dev.setup_edl_connection()
+    print("\n--- [STEP 1] Detecting Active Slot via Fastboot ---")
+    print("[!] Please boot your device into FASTBOOT mode.")
+    dev.wait_for_fastboot()
+
+    active_slot = dev.get_active_slot_suffix_from_fastboot()
+    if active_slot:
+        print(f"[+] Active slot confirmed: {active_slot}")
+    else:
+        print("[!] Warning: Active slot detection failed. Defaulting to no slot suffix.")
+        active_slot = ""
+
+    target_boot = f"boot{active_slot}"
+    target_vbmeta = f"vbmeta_system{active_slot}"
+
+    print("\n--- [STEP 2] Rebooting to EDL Mode ---")
+    print("[!] Please manually reboot your device to EDL mode now.")
+    print("(Use Key Combination or Fastboot menu if available)")
+    port = dev.wait_for_edl()
     
     try:
-        print(f"\n[*] Attempting to write 'boot' partition...")
-        dev.edl_write_part(EDL_LOADER_FILE, "boot_a", boot_img)
-        print("[+] Successfully wrote 'boot'.")
+        dev.load_firehose_programmer(EDL_LOADER_FILE, port)
+        time.sleep(2)
 
-        print(f"\n[*] Attempting to write 'vbmeta_system' partition...")
-        dev.edl_write_part(EDL_LOADER_FILE, "vbmeta_system_a", vbmeta_img)
-        print("[+] Successfully wrote 'vbmeta_system'.")
+        print(f"\n--- [STEP 3] Flashing images to slot {active_slot} ---")
+
+        print(f"[*] Attempting to write '{target_boot}' partition...")
+        params_boot = _ensure_params_or_fail(target_boot)
+        print(f"  > Found info: LUN={params_boot['lun']}, Start={params_boot['start_sector']}")
+        dev.fh_loader_write_part(
+            port=port,
+            image_path=boot_img,
+            lun=params_boot['lun'],
+            start_sector=params_boot['start_sector']
+        )
+        print(f"[+] Successfully wrote '{target_boot}'.")
+
+        print(f"\n[*] Attempting to write '{target_vbmeta}' partition...")
+        params_vbmeta = _ensure_params_or_fail(target_vbmeta)
+        print(f"  > Found info: LUN={params_vbmeta['lun']}, Start={params_vbmeta['start_sector']}")
+        dev.fh_loader_write_part(
+            port=port,
+            image_path=vbmeta_img,
+            lun=params_vbmeta['lun'],
+            start_sector=params_vbmeta['start_sector']
+        )
+        print(f"[+] Successfully wrote '{target_vbmeta}'.")
 
         if not skip_reset:
             print("\n[*] Operations complete. Resetting device...")
-            dev.edl_reset(EDL_LOADER_FILE)
+            dev.fh_loader_reset(port)
             print("[+] Device reset command sent.")
         else:
             print("\n[*] Operations complete. Skipping device reset as requested.")
 
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
         print(f"[!] An error occurred during the EDL write operation: {e}", file=sys.stderr)
         raise
     
