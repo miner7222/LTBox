@@ -86,4 +86,6 @@ KEY_MAP = {
     "cdbb77177f731920bbe0a0f94f84d9038ae0617d": DOWNLOAD_DIR / "testkey_rsa2048.pem"
 }
 
+if not _config:
+    load_config()
 COUNTRY_CODES = _config.get("country_codes", {})
