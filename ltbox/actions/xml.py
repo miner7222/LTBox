@@ -203,23 +203,19 @@ def modify_xml(wipe: int = 0, skip_dp: bool = False) -> None:
                 
                 if src_persist_xml.exists():
                     try:
-                        content = src_persist_xml.read_text(encoding='utf-8')
+                        tree = ET.parse(src_persist_xml)
+                        root = tree.getroot()
+                        modified = False
+                        for prog in root.findall('program'):
+                            if prog.get('label', '').lower() == 'persist':
+                                prog.set('filename', 'persist.img')
+                                modified = True
                         
-                        content = re.sub(
-                            r'(<program[^>]*\blabel="persist"[^>]*filename=")[^"]*(".*/>)',
-                            r'\1persist.img\2',
-                            content,
-                            flags=re.IGNORECASE
-                        )
-                        content = re.sub(
-                            r'(<program[^>]*filename=")[^"]*("[^>]*\blabel="persist"[^>]*/>)',
-                            r'\1persist.img\2',
-                            content,
-                            flags=re.IGNORECASE
-                        )
-                        
-                        dest_persist_xml.write_text(content, encoding='utf-8')
-                        print(get_string("act_created_persist_xml").format(name=dest_persist_xml.name, parent=dest_persist_xml.parent.name))
+                        tree.write(dest_persist_xml, encoding='utf-8', xml_declaration=True)
+                        if modified:
+                            print(get_string("act_created_persist_xml").format(name=dest_persist_xml.name, parent=dest_persist_xml.parent.name))
+                        else:
+                            print(f"[!] Warning: 'persist' label not found in {src_persist_xml.name}")
                     except Exception as e:
                         print(get_string("act_err_create_persist_xml").format(name=dest_persist_xml.name, e=e), file=sys.stderr)
                 else:
@@ -230,23 +226,19 @@ def modify_xml(wipe: int = 0, skip_dp: bool = False) -> None:
                 
                 if src_devinfo_xml.exists():
                     try:
-                        content = src_devinfo_xml.read_text(encoding='utf-8')
+                        tree = ET.parse(src_devinfo_xml)
+                        root = tree.getroot()
+                        modified = False
+                        for prog in root.findall('program'):
+                            if prog.get('label', '').lower() == 'devinfo':
+                                prog.set('filename', 'devinfo.img')
+                                modified = True
 
-                        content = re.sub(
-                            r'(<program[^>]*\blabel="devinfo"[^>]*filename=")[^"]*(".*/>)',
-                            r'\1devinfo.img\2',
-                            content,
-                            flags=re.IGNORECASE
-                        )
-                        content = re.sub(
-                            r'(<program[^>]*filename=")[^"]*("[^>]*\blabel="devinfo"[^>]*/>)',
-                            r'\1devinfo.img\2',
-                            content,
-                            flags=re.IGNORECASE
-                        )
-                        
-                        dest_devinfo_xml.write_text(content, encoding='utf-8')
-                        print(get_string("act_created_devinfo_xml").format(name=dest_devinfo_xml.name, parent=dest_devinfo_xml.parent.name))
+                        tree.write(dest_devinfo_xml, encoding='utf-8', xml_declaration=True)
+                        if modified:
+                            print(get_string("act_created_devinfo_xml").format(name=dest_devinfo_xml.name, parent=dest_devinfo_xml.parent.name))
+                        else:
+                            print(f"[!] Warning: 'devinfo' label not found in {src_devinfo_xml.name}")
                     except Exception as e:
                         print(get_string("act_err_create_devinfo_xml").format(name=dest_devinfo_xml.name, e=e), file=sys.stderr)
                 else:
