@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 from .. import constants as const
 from .. import utils, device
 from ..patch.region import edit_vendor_boot, detect_region_codes, patch_region_codes
-from ..patch.avb import extract_image_avb_info
+from ..patch.avb import extract_image_avb_info, _apply_hash_footer
 from ..i18n import get_string
 
 def convert_images(dev: device.DeviceController, device_model: Optional[str] = None) -> None:
@@ -76,31 +76,25 @@ def convert_images(dev: device.DeviceController, device_model: Optional[str] = N
     
     print(get_string("act_add_footer_vb"))
     
-    for key in ['partition_size', 'name', 'rollback', 'salt']:
+    required_keys = ['partition_size', 'name', 'rollback', 'salt', 'pubkey_sha1', 'algorithm']
+    for key in required_keys:
         if key not in vendor_boot_info:
             if key == 'partition_size' and 'data_size' in vendor_boot_info:
                  vendor_boot_info['partition_size'] = vendor_boot_info['data_size']
             else:
                 raise KeyError(get_string("act_err_avb_key_missing").format(key=key, name=vendor_boot_bak.name))
 
-    add_hash_footer_cmd = [
-        str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "add_hash_footer",
-        "--image", str(vendor_boot_prc),
-        "--partition_size", vendor_boot_info['partition_size'],
-        "--partition_name", vendor_boot_info['name'],
-        "--rollback_index", vendor_boot_info['rollback'],
-        "--salt", vendor_boot_info['salt']
-    ]
-    
-    if 'props_args' in vendor_boot_info:
-        add_hash_footer_cmd.extend(vendor_boot_info['props_args'])
-        print(get_string("act_restore_props").format(count=len(vendor_boot_info['props_args']) // 2))
+    vendor_boot_pubkey = vendor_boot_info.get('pubkey_sha1')
+    vendor_boot_key_file = const.KEY_MAP.get(vendor_boot_pubkey)
+    if not vendor_boot_key_file:
+         raise KeyError(get_string("act_err_unknown_key").format(key=vendor_boot_pubkey))
 
-    if 'flags' in vendor_boot_info:
-        add_hash_footer_cmd.extend(["--flags", vendor_boot_info.get('flags', '0')])
-        print(get_string("act_restore_flags").format(flags=vendor_boot_info.get('flags', '0')))
-
-    utils.run_command(add_hash_footer_cmd)
+    _apply_hash_footer(
+        image_path=vendor_boot_prc,
+        image_info=vendor_boot_info,
+        key_file=vendor_boot_key_file,
+        new_rollback_index=vendor_boot_info['rollback']
+    )
     
     vbmeta_pubkey = vbmeta_info.get('pubkey_sha1')
     key_file = const.KEY_MAP.get(vbmeta_pubkey) 
