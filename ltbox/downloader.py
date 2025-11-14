@@ -12,9 +12,9 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 
-from . import constants as const
-from . import utils
-from .i18n import get_string, load_lang as i18n_load_lang
+from ltbox import constants as const
+from ltbox import utils
+from ltbox.i18n import get_string, load_lang as i18n_load_lang
 
 class ToolError(Exception):
     pass
