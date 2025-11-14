@@ -11,6 +11,7 @@ _lang_data = {}
 _fallback_data = {}
 
 def select_language() -> str:
+    load_lang("en")
     os.system('cls' if os.name == 'nt' else 'clear')
     if not LANG_DIR.is_dir():
         print(get_string("err_lang_dir_not_found"), file=sys.stderr)
