@@ -1,90 +1,70 @@
-import hashlib
-import importlib.util
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Optional, Any, List
 
 from .. import constants as const
 from .. import utils
 from ..i18n import get_string
 
-_avbtool_module = None
-
-def _load_avbtool():
-    global _avbtool_module
-    if _avbtool_module:
-        return _avbtool_module
-
-    if not const.AVBTOOL_PY.exists():
-        raise FileNotFoundError(get_string("err_avbtool_not_found").format(path=const.AVBTOOL_PY))
-
-    try:
-        spec = importlib.util.spec_from_file_location("avbtool_lib", const.AVBTOOL_PY)
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            sys.modules["avbtool_lib"] = module
-            spec.loader.exec_module(module)
-            _avbtool_module = module
-            return module
-    except Exception as e:
-        raise RuntimeError(get_string("err_avbtool_load_fail").format(e=e))
-    
-    return _avbtool_module
-
 def extract_image_avb_info(image_path: Path) -> Dict[str, Any]:
-    image_path = Path(image_path)
+    info_proc = utils.run_command(
+        [str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "info_image", "--image", str(image_path)],
+        capture=True
+    )
+    
+    output = info_proc.stdout.strip()
     info: Dict[str, Any] = {}
     props_args: List[str] = []
 
-    if not image_path.exists():
-        return info
+    partition_size_match = re.search(r"^Image size:\s*(\d+)\s*bytes", output, re.MULTILINE)
+    if partition_size_match:
+        info['partition_size'] = partition_size_match.group(1)
     
-    info['partition_size'] = str(image_path.stat().st_size)
+    data_size_match = re.search(r"Original image size:\s*(\d+)\s*bytes", output)
+    if data_size_match:
+        info['data_size'] = data_size_match.group(1)
+    else:
+        desc_size_match = re.search(r"^\s*Image Size:\s*(\d+)\s*bytes", output, re.MULTILINE)
+        if desc_size_match:
+            info['data_size'] = desc_size_match.group(1)
 
-    try:
-        avbtool = _load_avbtool()
-        with open(image_path, 'rb') as f:
-            image_data = f.read()
+    patterns = {
+        'name': r"Partition Name:\s*(\S+)",
+        'salt': r"Salt:\s*([0-9a-fA-F]+)",
+        'algorithm': r"Algorithm:\s*(\S+)",
+        'pubkey_sha1': r"Public key \(sha1\):\s*([0-9a-fA-F]+)",
+    }
+    
+    header_section = output.split('Descriptors:')[0]
+    rollback_match = re.search(r"Rollback Index:\s*(\d+)", header_section)
+    if rollback_match:
+        info['rollback'] = rollback_match.group(1)
         
-        avb = avbtool.Avb(image_data)
+    flags_match = re.search(r"Flags:\s*(\d+)", header_section)
+    if flags_match:
+        info['flags'] = flags_match.group(1)
+        if output: 
+            print(get_string("img_info_flags").format(flags=info['flags']))
+        
+    for key, pattern in patterns.items():
+        if key not in info:
+            match = re.search(pattern, output)
+            if match:
+                info[key] = match.group(1)
 
-        if avb.footer:
-            info['data_size'] = str(avb.footer.original_image_size)
-            info['name'] = avb.footer.partition_name
-        
-        if avb.vbmeta_header:
-            info['algorithm'] = avbtool.get_algorithm_name(avb.vbmeta_header.algorithm_type)
-            info['rollback'] = str(avb.vbmeta_header.rollback_index)
-            info['flags'] = str(avb.vbmeta_header.flags)
+    for line in output.split('\n'):
+        if line.strip().startswith("Prop:"):
+            parts = line.split('->')
+            key = parts[0].split(':')[-1].strip()
+            val = parts[1].strip()[1:-1]
+            info[key] = val
+            props_args.extend(["--prop", f"{key}:{val}"])
             
-            if avb.vbmeta_header.public_key_size > 0:
-                key_data = avb.aux_data[:avb.vbmeta_header.public_key_size]
-                info['pubkey_sha1'] = hashlib.sha1(key_data).hexdigest()
-
-        if avb.descriptors:
-            for desc in avb.descriptors:
-                if isinstance(desc, avbtool.AvbPropertyDescriptor):
-                    info[desc.key] = desc.value
-                    props_args.extend(["--prop", f"{desc.key}:{desc.value}"])
-                elif isinstance(desc, avbtool.AvbHashDescriptor):
-                    info['salt'] = desc.salt.hex()
-                    if 'name' not in info:
-                        info['name'] = desc.partition_name
-                elif isinstance(desc, avbtool.AvbHashtreeDescriptor):
-                    info['salt'] = desc.salt.hex()
-                    if 'name' not in info:
-                        info['name'] = desc.partition_name
-
-    except Exception:
-        pass
-
     info['props_args'] = props_args
-
-    if 'flags' in info:
-        print(get_string("img_info_flags").format(flags=info['flags']))
-    
-    if props_args:
+    if props_args and output: 
         print(get_string("img_info_props").format(count=len(props_args) // 2))
 
     return info
@@ -101,7 +81,7 @@ def _apply_hash_footer(
     print(get_string("img_footer_details").format(part=image_info['name'], rb=rollback_index))
 
     add_footer_cmd = [
-        "add_hash_footer",
+        str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "add_hash_footer",
         "--image", str(image_path), 
         "--key", str(key_file),
         "--algorithm", image_info['algorithm'], 
@@ -116,7 +96,7 @@ def _apply_hash_footer(
         add_footer_cmd.extend(["--flags", image_info.get('flags', '0')])
         print(get_string("img_footer_restore_flags").format(flags=image_info.get('flags', '0')))
 
-    utils.run_command([str(const.PYTHON_EXE), str(const.AVBTOOL_PY)] + add_footer_cmd)
+    utils.run_command(add_footer_cmd)
     print(get_string("img_footer_success").format(name=image_path.name))
 
 def patch_chained_image_rollback(
@@ -187,7 +167,7 @@ def patch_vbmeta_image_rollback(
             raise KeyError(get_string("img_err_unknown_key").format(key=info['pubkey_sha1'], name=new_image_path.name))
 
         remake_cmd = [
-            "make_vbmeta_image",
+            str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "make_vbmeta_image",
             "--output", str(patched_image_path),
             "--key", str(key_file),
             "--algorithm", info['algorithm'],
@@ -196,7 +176,7 @@ def patch_vbmeta_image_rollback(
             "--include_descriptors_from_image", str(new_image_path)
         ]
         
-        utils.run_command([str(const.PYTHON_EXE), str(const.AVBTOOL_PY)] + remake_cmd)
+        utils.run_command(remake_cmd)
         print(get_string("img_patch_success").format(name=image_name))
 
     except (KeyError, subprocess.CalledProcessError, FileNotFoundError) as e:
