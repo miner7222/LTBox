@@ -16,14 +16,15 @@ def run_command(
     shell: bool = False, 
     check: bool = True, 
     env: Optional[dict] = None, 
-    capture: bool = False
+    capture: bool = False,
+    cwd: Optional[Union[str, Path]] = None
 ) -> subprocess.CompletedProcess:
     env = env or os.environ.copy()
     env['PATH'] = str(const.TOOLS_DIR) + os.pathsep + str(const.DOWNLOAD_DIR) + os.pathsep + env['PATH']
 
     return subprocess.run(
         command, shell=shell, check=check, capture_output=capture,
-        text=True, encoding='utf-8', errors='ignore', env=env
+        text=True, encoding='utf-8', errors='ignore', env=env, cwd=cwd
     )
 
 def get_platform_executable(name: str) -> Path:
