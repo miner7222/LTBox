@@ -667,5 +667,6 @@
   "menu_lang_prompt": "    Enter your choice (1-{len}): ",
   "menu_lang_invalid": "    [!] Invalid choice. Please enter a number from 1 to {len}.",
   "err_load_fallback_lang": "[!] Failed to load fallback language en.json: {e}",
-  "err_load_lang": "[!] Failed to load language {lang_code}, using fallback: {e}"
+  "err_load_lang": "[!] Failed to load language {lang_code}, using fallback: {e}",
+  "wf_notice_widevine": "If Widevine appears as L3, please reboot the system once, uninstall and reinstall the streaming app, and then check again."
 }

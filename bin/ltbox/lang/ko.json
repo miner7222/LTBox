@@ -667,5 +667,6 @@
   "menu_lang_prompt": "    선택하세요 (1-{len}): ",
   "menu_lang_invalid": "    [!] 잘못된 선택입니다. 1에서 {len} 사이의 숫자를 입력하세요.",
   "err_load_fallback_lang": "[!] 폴백 언어 en.json 로드 실패: {e}",
-  "err_load_lang": "[!] 언어 {lang_code} 로드 실패, 폴백 사용: {e}"
+  "err_load_lang": "[!] 언어 {lang_code} 로드 실패, 폴백 사용: {e}",
+  "wf_notice_widevine": "만약 Widevine이 L3로 나타난다면, 시스템 재부팅을 한 번 하고 스트리밍 앱을 삭제 및 재설치 후 다시 확인해보세요."
 }

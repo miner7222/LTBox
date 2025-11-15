@@ -199,6 +199,7 @@ def patch_all(dev: device.DeviceController, wipe: int = 0) -> None:
         print("\n" + "=" * 61)
         print(get_string('wf_process_complete'))
         print(get_string('wf_process_complete_info'))
+        print(get_string('wf_notice_widevine'))
         print("=" * 61)
 
     except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, KeyError) as e:
