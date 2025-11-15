@@ -54,30 +54,6 @@ AVBTOOL_PY = DOWNLOAD_DIR / "avbtool.py"
 QSAHARASERVER_EXE = TOOLS_DIR / "Qsaharaserver.exe"
 FH_LOADER_EXE = TOOLS_DIR / "fh_loader.exe"
 
-MAGISKBOOT_REPO_URL = _get_cfg("magiskboot", "repo_url")
-MAGISKBOOT_TAG = _get_cfg("magiskboot", "tag")
-
-KSU_APK_REPO = _get_cfg("kernelsu", "apk_repo")
-KSU_APK_TAG = _get_cfg("kernelsu", "apk_tag")
-RELEASE_OWNER = _get_cfg("kernelsu", "release_owner")
-RELEASE_REPO = _get_cfg("kernelsu", "release_repo")
-RELEASE_TAG = _get_cfg("kernelsu", "release_tag")
-REPO_URL = f"https://github.com/{RELEASE_OWNER}/{RELEASE_REPO}"
-ANYKERNEL_ZIP_FILENAME = _get_cfg("kernelsu", "anykernel_zip")
-
-EDL_LOADER_FILENAME = _get_cfg("edl", "loader_filename")
-EDL_LOADER_FILE = IMAGE_DIR / EDL_LOADER_FILENAME 
-
-FETCH_VERSION = _get_cfg("tools", "fetch_version")
-FETCH_REPO_URL = _get_cfg("tools", "fetch_repo_url")
-PLATFORM_TOOLS_ZIP_URL = _get_cfg("tools", "platform_tools_url")
-AVB_ARCHIVE_URL = _get_cfg("tools", "avb_archive_url")
-
-ROW_PATTERN_DOT = bytes.fromhex(_get_cfg("patterns", "row_dot"))
-PRC_PATTERN_DOT = bytes.fromhex(_get_cfg("patterns", "prc_dot"))
-ROW_PATTERN_I = bytes.fromhex(_get_cfg("patterns", "row_i"))
-PRC_PATTERN_I = bytes.fromhex(_get_cfg("patterns", "prc_i"))
-
 def _build_key_map() -> dict[str, Path]:
     if not _config:
         load_config()
@@ -87,9 +63,54 @@ def _build_key_map() -> dict[str, Path]:
     except KeyError:
          raise RuntimeError(f"[!] Critical Error: Missing configuration section: [key_map]")
 
-KEY_MAP = _build_key_map()
-
-if not _config:
+def _init_lazy_constants():
+    if _config:
+        return
     load_config()
-COUNTRY_CODES = _config.get("country_codes", {})
-SORTED_COUNTRY_CODES = sorted(COUNTRY_CODES.items(), key=lambda item: item[1])
+    
+    g = globals()
+    
+    g["MAGISKBOOT_REPO_URL"] = _get_cfg("magiskboot", "repo_url")
+    g["MAGISKBOOT_TAG"] = _get_cfg("magiskboot", "tag")
+
+    g["KSU_APK_REPO"] = _get_cfg("kernelsu", "apk_repo")
+    g["KSU_APK_TAG"] = _get_cfg("kernelsu", "apk_tag")
+    g["RELEASE_OWNER"] = _get_cfg("kernelsu", "release_owner")
+    g["RELEASE_REPO"] = _get_cfg("kernelsu", "release_repo")
+    g["RELEASE_TAG"] = _get_cfg("kernelsu", "release_tag")
+    g["REPO_URL"] = f"https://github.com/{g['RELEASE_OWNER']}/{g['RELEASE_REPO']}"
+    g["ANYKERNEL_ZIP_FILENAME"] = _get_cfg("kernelsu", "anykernel_zip")
+
+    g["EDL_LOADER_FILENAME"] = _get_cfg("edl", "loader_filename")
+    g["EDL_LOADER_FILE"] = IMAGE_DIR / g["EDL_LOADER_FILENAME"] 
+
+    g["FETCH_VERSION"] = _get_cfg("tools", "fetch_version")
+    g["FETCH_REPO_URL"] = _get_cfg("tools", "fetch_repo_url")
+    g["PLATFORM_TOOLS_ZIP_URL"] = _get_cfg("tools", "platform_tools_url")
+    g["AVB_ARCHIVE_URL"] = _get_cfg("tools", "avb_archive_url")
+
+    g["ROW_PATTERN_DOT"] = bytes.fromhex(_get_cfg("patterns", "row_dot"))
+    g["PRC_PATTERN_DOT"] = bytes.fromhex(_get_cfg("patterns", "prc_dot"))
+    g["ROW_PATTERN_I"] = bytes.fromhex(_get_cfg("patterns", "row_i"))
+    g["PRC_PATTERN_I"] = bytes.fromhex(_get_cfg("patterns", "prc_i"))
+
+    g["KEY_MAP"] = _build_key_map()
+
+    g["COUNTRY_CODES"] = _config.get("country_codes", {})
+    g["SORTED_COUNTRY_CODES"] = sorted(g["COUNTRY_CODES"].items(), key=lambda item: item[1])
+
+def __getattr__(name):
+    lazy_vars = {
+        "MAGISKBOOT_REPO_URL", "MAGISKBOOT_TAG",
+        "KSU_APK_REPO", "KSU_APK_TAG", "RELEASE_OWNER", "RELEASE_REPO", "RELEASE_TAG", "REPO_URL", "ANYKERNEL_ZIP_FILENAME",
+        "EDL_LOADER_FILENAME", "EDL_LOADER_FILE",
+        "FETCH_VERSION", "FETCH_REPO_URL", "PLATFORM_TOOLS_ZIP_URL", "AVB_ARCHIVE_URL",
+        "ROW_PATTERN_DOT", "PRC_PATTERN_DOT", "ROW_PATTERN_I", "PRC_PATTERN_I",
+        "KEY_MAP", "COUNTRY_CODES", "SORTED_COUNTRY_CODES"
+    }
+    
+    if name in lazy_vars:
+        _init_lazy_constants()
+        return globals()[name]
+    
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
