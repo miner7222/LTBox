@@ -11,6 +11,22 @@ from typing import List, Optional, Callable, Generator, Any, Union, Dict, Tuple
 from . import constants as const
 from .i18n import get_string
 
+class ConsoleUI:
+    def echo(self, message: str = "", err: bool = False) -> None:
+        dest = sys.stderr if err else sys.stdout
+        print(message, file=dest)
+
+    def prompt(self, message: str = "") -> str:
+        return input(message)
+
+    def clear(self) -> None:
+        if platform.system() == "Windows":
+            os.system('cls')
+        else:
+            os.system('clear')
+
+ui = ConsoleUI()
+
 _CACHED_ENV = None
 
 def _get_tool_env() -> dict:
@@ -48,12 +64,6 @@ def get_platform_executable(name: str) -> Path:
         raise RuntimeError(get_string("err_unsupported_os").format(system=system))
     return const.DOWNLOAD_DIR / exe_name
 
-def clear_screen() -> None:
-    if platform.system() == "Windows":
-        os.system('cls')
-    else:
-        os.system('clear')
-
 def _wait_for_resource(
     target_path: Path, 
     check_func: Callable[[Path, Optional[List[str]]], bool], 
@@ -65,19 +75,19 @@ def _wait_for_resource(
         if check_func(target_path, item_list):
             return True
         
-        clear_screen()
+        ui.clear()
             
-        print(get_string('utils_wait_resource'))
-        print(prompt_msg)
+        ui.echo(get_string('utils_wait_resource'))
+        ui.echo(prompt_msg)
         if item_list:
-            print(get_string('utils_missing_items'))
+            ui.echo(get_string('utils_missing_items'))
             for item in item_list:
                 if not (target_path / item).exists():
-                    print(f" - {item}")
+                    ui.echo(f" - {item}")
         
-        print(get_string('utils_press_enter'))
+        ui.echo(get_string('utils_press_enter'))
         try:
-            input()
+            ui.prompt()
         except EOFError:
             raise RuntimeError(get_string('process_cancelled'))
 
@@ -98,7 +108,7 @@ def wait_for_directory(directory: Path, prompt_message: str) -> bool:
     )
 
 def check_dependencies() -> None:
-    print(get_string('utils_check_deps'))
+    ui.echo(get_string('utils_check_deps'))
     dependencies = {
         "Python Environment": const.PYTHON_EXE,
         "ADB": const.ADB_EXE,
@@ -114,11 +124,11 @@ def check_dependencies() -> None:
 
     if missing_deps:
         for name in missing_deps:
-            print(get_string('utils_missing_dep').format(name=name))
-        print(get_string('utils_run_install'))
+            ui.echo(get_string('utils_missing_dep').format(name=name))
+        ui.echo(get_string('utils_run_install'))
         raise RuntimeError(get_string('utils_run_install'))
 
-    print(get_string('utils_deps_found'))
+    ui.echo(get_string('utils_deps_found'))
 
 @contextmanager
 def temporary_workspace(path: Path) -> Generator[Path, None, None]:
@@ -132,12 +142,12 @@ def temporary_workspace(path: Path) -> Generator[Path, None, None]:
             try:
                 shutil.rmtree(path)
             except OSError as e:
-                print(get_string("warn_failed_cleanup_workspace").format(path=path, e=e), file=sys.stderr)
+                ui.echo(get_string("warn_failed_cleanup_workspace").format(path=path, e=e), err=True)
 
 def clean_workspace() -> None:
-    print(get_string('utils_cleaning_title'))
-    print(get_string('utils_cleaning_warning'))
-    print("-" * 50)
+    ui.echo(get_string('utils_cleaning_title'))
+    ui.echo(get_string('utils_cleaning_warning'))
+    ui.echo("-" * 50)
 
     folders_to_remove = [
         const.INPUT_CURRENT_DIR, const.INPUT_NEW_DIR,
@@ -148,18 +158,18 @@ def clean_workspace() -> None:
         const.OUTPUT_XML_DIR,
     ]
     
-    print(get_string('utils_removing_dirs'))
+    ui.echo(get_string('utils_removing_dirs'))
     for folder in folders_to_remove:
         if folder.exists():
             try:
                 shutil.rmtree(folder)
-                print(get_string('utils_removed').format(name=f"{folder.name}{os.sep}"))
+                ui.echo(get_string('utils_removed').format(name=f"{folder.name}{os.sep}"))
             except OSError as e:
-                print(get_string('utils_remove_error').format(name=folder.name, e=e), file=sys.stderr)
+                ui.echo(get_string('utils_remove_error').format(name=folder.name, e=e), err=True)
         else:
-            print(get_string('utils_skipping').format(name=f"{folder.name}{os.sep}"))
+            ui.echo(get_string('utils_skipping').format(name=f"{folder.name}{os.sep}"))
 
-    print(get_string('utils_cleaning_dl'))
+    ui.echo(get_string('utils_cleaning_dl'))
     dl_files_to_remove = [
         "*.zip",
         "*.tar.gz",
@@ -170,16 +180,16 @@ def clean_workspace() -> None:
         for f in const.DOWNLOAD_DIR.glob(pattern):
             try:
                 f.unlink()
-                print(get_string('utils_removed_temp').format(name=f.name))
+                ui.echo(get_string('utils_removed_temp').format(name=f.name))
                 cleaned_dl_files += 1
             except OSError as e:
-                print(get_string('utils_remove_error').format(name=f.name, e=e), file=sys.stderr)
+                ui.echo(get_string('utils_remove_error').format(name=f.name, e=e), err=True)
 
     if cleaned_dl_files == 0:
-        print(get_string('utils_no_temp_dl'))
+        ui.echo(get_string('utils_no_temp_dl'))
 
 
-    print(get_string('utils_cleaning_root'))
+    ui.echo(get_string('utils_cleaning_root'))
     file_patterns_to_remove = [
         "*.bak.img",
         "*.root.img",
@@ -199,15 +209,15 @@ def clean_workspace() -> None:
         for f in const.BASE_DIR.glob(pattern):
             try:
                 f.unlink()
-                print(get_string('utils_removed').format(name=f.name))
+                ui.echo(get_string('utils_removed').format(name=f.name))
                 cleaned_root_files += 1
             except OSError as e:
-                print(get_string('utils_remove_error').format(name=f.name, e=e), file=sys.stderr)
+                ui.echo(get_string('utils_remove_error').format(name=f.name, e=e), err=True)
     
     if cleaned_root_files == 0:
-        print(get_string('utils_no_temp_root'))
+        ui.echo(get_string('utils_no_temp_root'))
 
-    print(get_string('utils_clean_complete'))
+    ui.echo(get_string('utils_clean_complete'))
 
 def _process_binary_file(
     input_path: Union[str, Path], 
@@ -220,7 +230,7 @@ def _process_binary_file(
     output_path = Path(output_path)
     
     if not input_path.exists():
-        print(get_string("img_proc_err_not_found").format(path=input_path), file=sys.stderr)
+        ui.echo(get_string("img_proc_err_not_found").format(path=input_path), err=True)
         return False
 
     try:
@@ -229,18 +239,18 @@ def _process_binary_file(
 
         if stats.get('changed', False):
             output_path.write_bytes(modified_content)
-            print(get_string("img_proc_success").format(msg=stats.get('message', 'Modifications applied.')))
-            print(get_string("img_proc_saved").format(name=output_path.name))
+            ui.echo(get_string("img_proc_success").format(msg=stats.get('message', 'Modifications applied.')))
+            ui.echo(get_string("img_proc_saved").format(name=output_path.name))
             return True
         else:
-            print(get_string("img_proc_no_change").format(name=input_path.name, msg=stats.get('message', 'No patterns found')))
+            ui.echo(get_string("img_proc_no_change").format(name=input_path.name, msg=stats.get('message', 'No patterns found')))
             if copy_if_unchanged:
-                print(get_string("img_proc_copying").format(name=output_path.name))
+                ui.echo(get_string("img_proc_copying").format(name=output_path.name))
                 if input_path != output_path:
                     shutil.copy(input_path, output_path)
                 return True
             return False
 
     except Exception as e:
-        print(get_string("img_proc_error").format(name=input_path.name, e=e), file=sys.stderr)
+        ui.echo(get_string("img_proc_error").format(name=input_path.name, e=e), err=True)
         return False
