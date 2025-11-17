@@ -373,7 +373,7 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
                             f"Expected: {expected_size_bytes}B, Got: {actual_size_bytes}B"
                         )
                 except (ValueError, OSError) as e:
-                    print(get_string("act_err_dump").format(part=target_partition, e=f"Size validation error: {e}"), file=sys.stderr)
+                    print(get_string("act_err_dump").format(part=target_partition, e=e), file=sys.stderr)
                     raise
             
             if gki:
@@ -518,9 +518,67 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
 def unroot_device(dev: device.DeviceController) -> None:
     print(get_string("act_start_unroot"))
     
-    backup_boot_file = const.BACKUP_BOOT_DIR / "boot.img"
-    const.BACKUP_BOOT_DIR.mkdir(exist_ok=True)
+    gki_bak_dir = const.BACKUP_BOOT_DIR
+    lkm_bak_dir = const.BACKUP_INIT_BOOT_DIR
     
+    gki_boot_file = gki_bak_dir / "boot.img"
+    lkm_init_boot_file = lkm_bak_dir / "init_boot.img"
+    lkm_vbmeta_file = lkm_bak_dir / "vbmeta.img"
+    
+    gki_bak_dir.mkdir(exist_ok=True)
+    lkm_bak_dir.mkdir(exist_ok=True)
+    
+    gki_exists = gki_boot_file.exists()
+    lkm_exists = lkm_init_boot_file.exists() and lkm_vbmeta_file.exists()
+    
+    unroot_mode: Optional[str] = None
+    
+    if gki_exists and lkm_exists:
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\n  " + "=" * 58)
+        print(get_string("act_unroot_menu_title"))
+        print("  " + "=" * 58 + "\n")
+        print(get_string("act_unroot_menu_1_lkm"))
+        print(get_string("act_unroot_menu_2_gki"))
+        print("\n" + get_string("act_unroot_menu_m"))
+        print("\n  " + "=" * 58 + "\n")
+        
+        while unroot_mode is None:
+            choice = input(get_string("act_unroot_menu_prompt")).strip().lower()
+            if choice == "1":
+                unroot_mode = "lkm"
+            elif choice == "2":
+                unroot_mode = "gki"
+            elif choice == "m":
+                print(get_string("act_op_cancel"))
+                return
+            else:
+                print(get_string("act_unroot_menu_invalid"))
+                
+    elif lkm_exists:
+        print(get_string("act_unroot_lkm_detected"))
+        unroot_mode = "lkm"
+    elif gki_exists:
+        print(get_string("act_unroot_gki_detected"))
+        unroot_mode = "gki"
+    else:
+        prompt = get_string("act_unroot_prompt_all").format(
+            lkm_dir=lkm_bak_dir.name, 
+            gki_dir=gki_bak_dir.name
+        )
+        
+        def check_for_unroot_files(p: Path, f: Optional[list]) -> bool:
+            return gki_boot_file.exists() or (lkm_init_boot_file.exists() and lkm_vbmeta_file.exists())
+        
+        utils._wait_for_resource(const.BASE_DIR, check_for_unroot_files, prompt, None)
+        
+        if lkm_init_boot_file.exists() and lkm_vbmeta_file.exists():
+            unroot_mode = "lkm"
+            print(get_string("act_unroot_lkm_detected"))
+        else:
+            unroot_mode = "gki"
+            print(get_string("act_unroot_gki_detected"))
+
     print(get_string("act_unroot_step1"))
     if not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
          print(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
@@ -528,26 +586,12 @@ def unroot_device(dev: device.DeviceController) -> None:
          prompt = get_string("act_prompt_image")
          utils.wait_for_directory(const.IMAGE_DIR, prompt)
 
-    print(get_string("act_unroot_step2"))
-    if not backup_boot_file.exists():
-        prompt = get_string("act_prompt_backup_boot").format(dir=const.BACKUP_BOOT_DIR.name)
-        utils.wait_for_files(const.BACKUP_BOOT_DIR, ["boot.img"], prompt)
-    
-    print(get_string("act_backup_boot_found"))
-
-    target_partition = "boot"
-
     print(get_string("act_unroot_step3"))
     if not dev.skip_adb:
         dev.wait_for_adb()
     
     active_slot = detect_active_slot_robust(dev)
-    
-    if active_slot:
-        print(get_string("act_slot_confirmed").format(slot=active_slot))
-        target_partition = f"boot{active_slot}"
-    else:
-        print(get_string("act_warn_unroot_slot"))
+    suffix = active_slot if active_slot else ""
 
     port = dev.setup_edl_connection()
 
@@ -556,18 +600,46 @@ def unroot_device(dev: device.DeviceController) -> None:
     except Exception as e:
         print(get_string("act_warn_prog_load").format(e=e))
 
-    print(get_string("act_unroot_step4").format(part=target_partition))
     try:
-        params = ensure_params_or_fail(target_partition)
-        print(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
-        
-        dev.fh_loader_write_part(
-            port=port,
-            image_path=backup_boot_file,
-            lun=params['lun'],
-            start_sector=params['start_sector']
-        )
-        print(get_string("act_flash_stock_boot_ok").format(part=target_partition))
+        if unroot_mode == "lkm":
+            target_init_boot = f"init_boot{suffix}"
+            target_vbmeta = f"vbmeta{suffix}"
+            print(get_string("act_unroot_step4_lkm"))
+
+            params_init = ensure_params_or_fail(target_init_boot)
+            print(get_string("act_found_dump_info").format(xml=params_init['source_xml'], lun=params_init['lun'], start=params_init['start_sector']))
+            dev.fh_loader_write_part(
+                port=port,
+                image_path=lkm_init_boot_file,
+                lun=params_init['lun'],
+                start_sector=params_init['start_sector']
+            )
+            print(get_string("act_flash_stock_init_boot_ok").format(part=target_init_boot))
+
+            params_vbmeta = ensure_params_or_fail(target_vbmeta)
+            print(get_string("act_found_dump_info").format(xml=params_vbmeta['source_xml'], lun=params_vbmeta['lun'], start=params_vbmeta['start_sector']))
+            dev.fh_loader_write_part(
+                port=port,
+                image_path=lkm_vbmeta_file,
+                lun=params_vbmeta['lun'],
+                start_sector=params_vbmeta['start_sector']
+            )
+            print(get_string("act_flash_stock_vbmeta_ok").format(part=target_vbmeta))
+            
+        elif unroot_mode == "gki":
+            target_boot = f"boot{suffix}"
+            print(get_string("act_unroot_step4_gki").format(part=target_boot))
+            
+            params = ensure_params_or_fail(target_boot)
+            print(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
+            
+            dev.fh_loader_write_part(
+                port=port,
+                image_path=gki_boot_file,
+                lun=params['lun'],
+                start_sector=params['start_sector']
+            )
+            print(get_string("act_flash_stock_boot_ok").format(part=target_boot))
         
         print(get_string("act_reset_sys"))
         dev.fh_loader_reset(port)
