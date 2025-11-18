@@ -744,5 +744,13 @@
   "img_avb_warn_key_fallback": "[!] Warning: Original key SHA1 '{key}' not in key_map. Falling back to '{fallback_name}'.",
   "img_avb_warn_algo_override": "[!] Warning: '{name}' algorithm is '{algo}', not 'NONE'. Overriding to NONE.",
   "img_avb_apply_footer": "[*] Applying hash footer for '{name}' with Algorithm={algo}...",
-  "act_err_arb_early_fw": "The required partitions were dumped and checked, but a rollback index was not found. This can happen if the device's firmware is a very early version. Please perform an OTA update once and try again."
+  "act_err_arb_early_fw": "The required partitions were dumped and checked, but a rollback index was not found. This can happen if the device's firmware is a very early version. Please perform an OTA update once and try again.",
+  "err_cmd_stdout_header": "--- STDOUT ---",
+  "err_cmd_stderr_header": "--- STDERR ---",
+  "act_err_dump_size_mismatch": "Dumped file size mismatch for '{target}'. Expected: {expected}B, Got: {actual}B",
+  "act_flashing_target": "[*] Flashing '{target}' via EDL...",
+  "act_dp_list_item": " - {filename}",
+  "act_detect_status_found": "{display_name}: {code}XX",
+  "act_detect_status_null": "{display_name}: null",
+  "utils_missing_item_format": " - {item}"
 }

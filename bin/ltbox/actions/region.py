@@ -217,8 +217,8 @@ def edit_devinfo_persist() -> None:
             print(get_string("act_wait_files_title"))
             print(prompt)
             print(get_string("act_place_one_file").format(dir=const.BACKUP_DIR.name))
-            print(" - devinfo.img")
-            print(" - persist.img")
+            print(get_string("act_dp_list_item").format(filename="devinfo.img"))
+            print(get_string("act_dp_list_item").format(filename="persist.img"))
             print(get_string("utils_press_enter"))
             try:
                 input()
@@ -259,10 +259,10 @@ def edit_devinfo_persist() -> None:
             display_name = Path(fname).stem 
             
             if code:
-                status_messages.append(f"{display_name}: {code}XX")
+                status_messages.append(get_string("act_detect_status_found").format(display_name=display_name, code=code))
                 files_found += 1
             else:
-                status_messages.append(f"{display_name}: null")
+                status_messages.append(get_string("act_detect_status_null").format(display_name=display_name))
     
     print(get_string("act_detect_result").format(res=', '.join(status_messages)))
     

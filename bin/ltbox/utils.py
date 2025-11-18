@@ -83,7 +83,7 @@ def _wait_for_resource(
             ui.echo(get_string('utils_missing_items'))
             for item in item_list:
                 if not (target_path / item).exists():
-                    ui.echo(f" - {item}")
+                    ui.echo(get_string("utils_missing_item_format").format(item=item))
         
         ui.echo(get_string('utils_press_enter'))
         try:

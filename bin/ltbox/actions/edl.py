@@ -56,8 +56,11 @@ def read_edl(dev: device.DeviceController, skip_reset: bool = False, additional_
                     
                     if expected_size_bytes != actual_size_bytes:
                         raise RuntimeError(
-                            f"Dumped file size mismatch for '{target}'. "
-                            f"Expected: {expected_size_bytes}B, Got: {actual_size_bytes}B"
+                            get_string("act_err_dump_size_mismatch").format(
+                                target=target,
+                                expected=expected_size_bytes,
+                                actual=actual_size_bytes
+                            )
                         )
                 except (ValueError, OSError) as e:
                     print(get_string("act_skip_dump").format(target=target, e=f"Size validation error: {e}"))
@@ -110,7 +113,7 @@ def write_edl(dev: device.DeviceController, skip_reset: bool = False, skip_reset
             print(get_string(f"act_skip_{target}"))
             continue
 
-        print(f"[*] Flashing '{target}' via EDL...")
+        print(get_string("act_flashing_target").format(target=target))
 
         try:
             params = ensure_params_or_fail(target)

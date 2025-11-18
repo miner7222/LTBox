@@ -135,9 +135,9 @@ def run_task(command, title, dev, command_map):
         cmd_str = " ".join(e.cmd) if isinstance(e.cmd, list) else e.cmd
         print(get_string("err_cmd_failed").format(cmd=cmd_str), file=sys.stderr)
         if e.stdout:
-            print(f"--- STDOUT ---\n{e.stdout}", file=sys.stderr)
+            print(f"{get_string('err_cmd_stdout_header')}\n{e.stdout}", file=sys.stderr)
         if e.stderr:
-            print(f"--- STDERR ---\n{e.stderr}", file=sys.stderr)
+            print(f"{get_string('err_cmd_stderr_header')}\n{e.stderr}", file=sys.stderr)
         print("!" * 61, file=sys.stderr)
     except (FileNotFoundError, RuntimeError, KeyError) as e:
         if not isinstance(e, SystemExit):
