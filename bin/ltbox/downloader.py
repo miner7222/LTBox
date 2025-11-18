@@ -64,7 +64,7 @@ def extract_archive_files(archive_path: Path, extract_map: Dict[str, Path]) -> N
                             shutil.copyfileobj(source, target)
                         print(get_string("dl_extracted_file").format(filename=target_path.name))
                         
-    except Exception as e:
+    except (zipfile.BadZipFile, tarfile.TarError, OSError, IOError) as e:
         msg_err = get_string("dl_extract_failed").format(filename=archive_path.name, error=e)
         print(msg_err, file=sys.stderr)
         raise ToolError(get_string("dl_err_extract_tool").format(name=archive_path.name))
@@ -144,7 +144,7 @@ def _ensure_tool_from_github_release(
         print(get_string("dl_tool_success").format(tool_name=tool_name))
         return tool_exe
 
-    except Exception as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, zipfile.BadZipFile, OSError, ToolError) as e:
         msg_err = get_string("dl_tool_failed").format(tool_name=tool_name, error=e)
         print(msg_err, file=sys.stderr)
         raise ToolError(msg_err)
@@ -195,7 +195,7 @@ def ensure_platform_tools() -> None:
         temp_zip_path.unlink()
         print(get_string("dl_platform_success"))
         
-    except Exception as e:
+    except (zipfile.BadZipFile, OSError, IOError) as e:
         msg_err = get_string("dl_platform_failed").format(error=e)
         print(msg_err, file=sys.stderr)
         if temp_zip_path.exists():

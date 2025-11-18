@@ -32,9 +32,8 @@ class DeviceController:
             utils.run_command([str(const.ADB_EXE), "wait-for-device"])
             print(get_string("device_adb_connected"))
             self.adb_connected_once = True
-        except Exception as e:
-            print(get_string("device_err_wait_adb").format(e=e), file=sys.stderr)
-            raise
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_wait_adb").format(e=e))
 
     def get_device_model(self) -> Optional[str]:
         self.wait_for_adb()
@@ -46,10 +45,8 @@ class DeviceController:
             if not model:
                 return None
             return model
-        except Exception as e:
-            print(get_string("device_err_get_model").format(e=e), file=sys.stderr)
-            print(get_string("device_ensure_connect"))
-            return None
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_get_model").format(e=e))
 
     def get_active_slot_suffix(self) -> Optional[str]:
         self.wait_for_adb()
@@ -61,10 +58,8 @@ class DeviceController:
             if suffix not in ["_a", "_b"]:
                 return None
             return suffix
-        except Exception as e:
-            print(get_string("device_err_get_slot").format(e=e), file=sys.stderr)
-            print(get_string("device_ensure_connect"))
-            return None
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_get_slot").format(e=e))
 
     def get_active_slot_suffix_from_fastboot(self) -> Optional[str]:
         try:
@@ -80,9 +75,8 @@ class DeviceController:
             
             print(get_string("device_warn_slot_fastboot").format(snippet=output.splitlines()[0] if output else 'None'))
             return None
-        except Exception as e:
-            print(get_string("device_err_get_slot_fastboot").format(e=e), file=sys.stderr)
-            return None
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_get_slot_fastboot").format(e=e))
 
     def reboot_to_edl(self) -> None:
         self.wait_for_adb()
@@ -91,9 +85,8 @@ class DeviceController:
             return
         try:
             utils.run_command([str(const.ADB_EXE), "reboot", "edl"])
-        except Exception as e:
-            print(get_string("device_err_reboot").format(e=e), file=sys.stderr)
-            print(get_string("device_manual_edl_fail"))
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_reboot").format(e=e))
 
     def reboot_to_bootloader(self) -> None:
         self.wait_for_adb()
@@ -101,9 +94,8 @@ class DeviceController:
             return
         try:
             utils.run_command([str(const.ADB_EXE), "reboot", "bootloader"])
-        except Exception as e:
-            print(get_string("device_err_reboot").format(e=e), file=sys.stderr)
-            raise
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_reboot").format(e=e))
 
     def check_fastboot_device(self, silent: bool = False) -> bool:
         if not silent:
@@ -122,7 +114,7 @@ class DeviceController:
                 print(get_string("device_connect_fastboot"))
             return False
         
-        except Exception as e:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             if not silent:
                 print(get_string("device_err_check_fastboot").format(e=e), file=sys.stderr)
             return False
@@ -146,8 +138,8 @@ class DeviceController:
     def fastboot_reboot_system(self) -> None:
         try:
             utils.run_command([str(const.FASTBOOT_EXE), "reboot"])
-        except Exception as e:
-            print(get_string("device_err_reboot").format(e=e), file=sys.stderr)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_reboot").format(e=e))
             
     def get_fastboot_vars(self) -> str:
         print(get_string("device_rollback_header"))
@@ -181,16 +173,16 @@ class DeviceController:
                 print(get_string("device_manual_next_steps"))
             
             return output
-        except Exception as e:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(get_string("device_err_fastboot_vars").format(e=e), file=sys.stderr)
             
             if not self.skip_adb:
                 print(get_string("device_attempt_reboot_sys"))
                 try:
                     self.fastboot_reboot_system()
-                except Exception:
+                except (ToolError, subprocess.CalledProcessError, FileNotFoundError):
                     pass
-            raise
+            raise ToolError(get_string("device_err_fastboot_vars").format(e=e))
 
     def check_edl_device(self, silent: bool = False) -> Optional[str]:
         if not silent:
@@ -212,7 +204,7 @@ class DeviceController:
                 print(get_string("device_connect_edl"))
             return None
         
-        except Exception as e:
+        except serial.SerialException as e:
             if not silent:
                 print(get_string("device_err_check_edl").format(e=e), file=sys.stderr)
             return None
@@ -274,13 +266,14 @@ class DeviceController:
         
         try:
             utils.run_command(cmd_sahara, check=True)
-        except subprocess.CalledProcessError as e:
-            print(get_string("device_fatal_programmer"), file=sys.stderr)
-            print(get_string("device_fatal_causes"), file=sys.stderr)
-            print(get_string("device_cause_1"), file=sys.stderr)
-            print(get_string("device_cause_2"), file=sys.stderr)
-            print(get_string("device_cause_3"), file=sys.stderr)
-            raise e
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            msg = get_string("device_fatal_programmer")
+            msg += f"\n{get_string('device_fatal_causes')}"
+            msg += f"\n{get_string('device_cause_1')}"
+            msg += f"\n{get_string('device_cause_2')}"
+            msg += f"\n{get_string('device_cause_3')}"
+            msg += f"\nError: {e}"
+            raise ToolError(msg)
 
     def load_firehose_programmer_with_stability(self, loader_path: Path, port: str) -> None:
         print(get_string("device_upload_programmer").format(port=port))
@@ -321,9 +314,8 @@ class DeviceController:
         
         try:
             utils.run_command(cmd_fh, cwd=dest_dir, check=True)
-        except subprocess.CalledProcessError as e:
-            print(get_string("device_err_fh_exec").format(e=e), file=sys.stderr)
-            raise
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_fh_exec").format(e=e))
 
     def fh_loader_write_part(
         self,
@@ -356,9 +348,8 @@ class DeviceController:
         try:
             utils.run_command(cmd_fh, cwd=work_dir, check=True)
             print(get_string("device_flash_success").format(filename=filename))
-        except subprocess.CalledProcessError as e:
-            print(get_string("device_err_flash_exec").format(e=e), file=sys.stderr)
-            raise
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(get_string("device_err_flash_exec").format(e=e))
 
     def fh_loader_reset(self, port: str) -> None:
         if not const.FH_LOADER_EXE.exists():
@@ -372,7 +363,10 @@ class DeviceController:
             "--reset",
             "--noprompt"
         ]
-        utils.run_command(cmd_fh)
+        try:
+            utils.run_command(cmd_fh)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(f"Failed to reset device: {e}")
 
     def edl_rawprogram(
         self,
@@ -408,4 +402,8 @@ class DeviceController:
             "--zlpawarehost=1",
             "--noprompt"
         ]
-        utils.run_command(cmd_fh)
+        
+        try:
+            utils.run_command(cmd_fh)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise ToolError(f"EDL Rawprogram flash failed: {e}")

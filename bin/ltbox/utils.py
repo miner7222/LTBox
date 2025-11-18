@@ -255,6 +255,6 @@ def _process_binary_file(
                 return True
             return False
 
-    except Exception as e:
+    except (OSError, IOError) as e:
         ui.echo(get_string("img_proc_error").format(name=input_path.name, e=e), err=True)
         return False
