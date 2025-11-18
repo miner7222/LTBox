@@ -722,7 +722,7 @@
   "wf_err_halted": "  ERROR: Process Halted.",
   "wf_err_halted_script": "  PROCESS HALTED: {e}",
   "wf_err_step_failed": "  [!] {title} - FAILED",
-  "wf_notice_widevine": "If Widevine appears as L3, please reboot the system once, uninstall and reinstall the streaming app, and then check again.",
+  "wf_notice_widevine": "  If Widevine appears as L3, please reboot the system once, uninstall and reinstall the streaming app, and then check again.",
   "wf_nowipe_mode_start": "\n--- [KEEP DATA MODE] Automated Update & Flash Firmware ---",
   "wf_process_complete": "  PROCESS COMPLETE!",
   "wf_process_complete_info": "  Device will reboot with patched firmware.",

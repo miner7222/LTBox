@@ -722,7 +722,7 @@
   "wf_err_halted": "  오류: 프로세스 중지됨",
   "wf_err_halted_script": "  프로세스 중지됨: {e}",
   "wf_err_step_failed": "  [!] {title} - 실패",
-  "wf_notice_widevine": "만약 Widevine이 L3로 나타난다면, 시스템 재부팅을 한 번 하고 스트리밍 앱을 삭제 및 재설치 후 다시 확인해보세요.",
+  "wf_notice_widevine": "  만약 Widevine이 L3로 나타난다면, 시스템 재부팅을 한 번 하고 스트리밍 앱을 삭제 및 재설치 후 다시 확인해보세요.",
   "wf_nowipe_mode_start": "\n--- [데이터 유지 모드] 자동 업데이트 및 펌웨어 플래싱 ---",
   "wf_process_complete": "  프로세스 완료!",
   "wf_process_complete_info": "  기기가 플래싱된 펌웨어로 재부팅됩니다.",
