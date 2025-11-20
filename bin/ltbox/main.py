@@ -234,6 +234,7 @@ def print_advanced_menu():
     print(get_string("menu_adv_11"))
     print(get_string("menu_adv_12"))
     print("\n" + get_string("menu_adv_m"))
+    print(get_string("menu_main_x"))
     print("\n  " + "=" * 58 + "\n")
 
 def advanced_menu(dev, command_map):
@@ -263,6 +264,8 @@ def advanced_menu(dev, command_map):
                 sys.exit()
         elif choice == "m":
             return
+        elif choice == "x":
+            sys.exit()
         else:
             print(get_string("menu_adv_invalid"))
             os.system(f"pause > nul & echo {get_string('press_any_key')}...")
@@ -275,6 +278,7 @@ def print_root_mode_selection_menu():
     print(get_string("menu_root_mode_1"))
     print(get_string("menu_root_mode_2"))
     print("\n" + get_string("menu_root_m"))
+    print(get_string("menu_main_x"))
     print("\n  " + "=" * 58 + "\n")
 
 def root_mode_selection_menu(dev, command_map):
@@ -288,6 +292,8 @@ def root_mode_selection_menu(dev, command_map):
             root_menu(dev, command_map, gki=True)
         elif choice == "m":
             return
+        elif choice == "x":
+            sys.exit()
         else:
             print(get_string("menu_root_mode_invalid"))
             os.system(f"pause > nul & echo {get_string('press_any_key')}...")
@@ -304,6 +310,7 @@ def print_root_menu(gki: bool):
         print(get_string("menu_root_1_lkm"))
         print(get_string("menu_root_2_lkm"))
     print("\n" + get_string("menu_root_m"))
+    print(get_string("menu_main_x"))
     print("\n  " + "=" * 58 + "\n")
 
 def root_menu(dev, command_map, gki: bool):
@@ -327,6 +334,8 @@ def root_menu(dev, command_map, gki: bool):
             run_task(cmd, title, dev, command_map)
         elif choice == "m":
             return
+        elif choice == "x":
+            sys.exit()
         else:
             print(get_string("menu_root_invalid"))
             os.system(f"pause > nul & echo {get_string('press_any_key')}...")
