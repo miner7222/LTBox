@@ -716,6 +716,7 @@
   "warn_set_console_title": "[!] Warning: Failed to set console title: {e}",
   "wf_active_slot": "[+] Active Slot: {slot}",
   "wf_active_slot_unknown": "Unknown",
+  "wf_backup_notice": "  Original devinfo.img and persist.img containing unique device information\n  are saved in the '{dir}' folder. Please keep them safe.\n  If using this tool on multiple devices, manage them by noting the serial number to avoid mixing them up.",
   "wf_device_model": "[+] Model: {model}",
   "wf_err_adb_model": "CRITICAL: Failed to get device model via ADB. Aborting.",
   "wf_err_details": "  Details: {e}",

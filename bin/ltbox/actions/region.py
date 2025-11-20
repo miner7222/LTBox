@@ -195,7 +195,7 @@ def select_country_code(prompt_message: str = "Please select a country from the 
             print(get_string("act_select_cancel"))
             raise KeyboardInterrupt(get_string("act_select_cancel"))
 
-def edit_devinfo_persist() -> None:
+def edit_devinfo_persist() -> Optional[str]:
     print(get_string("act_start_dp_patch"))
     
     print(get_string("act_wait_dp"))
@@ -267,7 +267,7 @@ def edit_devinfo_persist() -> None:
         print(get_string("act_no_codes_skip"))
         devinfo_img.unlink(missing_ok=True)
         persist_img.unlink(missing_ok=True)
-        return
+        return backup_critical_dir.name
 
     print(get_string("act_note_region_code"))
     print(get_string("act_ask_change_code"))
@@ -284,7 +284,7 @@ def edit_devinfo_persist() -> None:
         print(get_string("act_safety_remove"))
         (const.IMAGE_DIR / const.FN_DEVINFO).unlink(missing_ok=True)
         (const.IMAGE_DIR / const.FN_PERSIST).unlink(missing_ok=True)
-        return
+        return backup_critical_dir.name
 
     if choice == 'y':
         target_map = detected_codes.copy()
@@ -308,3 +308,5 @@ def edit_devinfo_persist() -> None:
         print(get_string("act_success"))
         print(get_string("act_dp_ready").format(dir=const.OUTPUT_DP_DIR.name))
         print("=" * 61)
+    
+    return backup_critical_dir.name

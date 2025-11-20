@@ -716,6 +716,7 @@
   "warn_set_console_title": "[!] 경고: 콘솔 제목 설정 실패: {e}",
   "wf_active_slot": "[+] 활성 슬롯: {slot}",
   "wf_active_slot_unknown": "알 수 없음",
+  "wf_backup_notice": "  '{dir}' 폴더에 기기 고유 정보가 담긴\n  원본 devinfo.img, persist.img가 저장되어 있으니 잘 보관하세요.\n  특히 여러 기기에서 이 스크립트를 사용할 경우 섞이지 않게 일련번호를 기재하는 방식으로 관리하세요.",
   "wf_device_model": "[+] 모델: {model}",
   "wf_err_adb_model": "치명적인 오류: ADB를 통해 기기 모델을 확인하지 못했습니다. 중단합니다.",
   "wf_err_details": "  상세: {e}",

@@ -66,9 +66,10 @@ def _dump_images(dev: device.DeviceController, active_slot_suffix: str) -> Tuple
 
     return skip_dp_workflow, boot_target, vbmeta_target
 
-def _patch_devinfo(skip_dp_workflow: bool) -> None:
+def _patch_devinfo(skip_dp_workflow: bool) -> Optional[str]:
     if not skip_dp_workflow:
-        actions.edit_devinfo_persist()
+        return actions.edit_devinfo_persist()
+    return None
 
 def _check_and_patch_arb(boot_target: str, vbmeta_target: str) -> None:
     dumped_boot = const.BACKUP_DIR / f"{boot_target}.img"
@@ -123,7 +124,7 @@ def patch_all(dev: device.DeviceController, wipe: int = 0) -> str:
         skip_dp_workflow, boot_target, vbmeta_target = _dump_images(dev, active_slot_suffix)
         
         utils.ui.echo(get_string('wf_step7_patch_dp'))
-        _patch_devinfo(skip_dp_workflow)
+        backup_dir_name = _patch_devinfo(skip_dp_workflow)
         
         utils.ui.echo(get_string('wf_step8_check_arb'))
         _check_and_patch_arb(boot_target, vbmeta_target)
@@ -133,7 +134,11 @@ def patch_all(dev: device.DeviceController, wipe: int = 0) -> str:
         
         success_msg = get_string('wf_process_complete')
         success_msg += f"\n{get_string('wf_process_complete_info')}"
-        success_msg += f"\n{get_string('wf_notice_widevine')}"
+        
+        if backup_dir_name:
+            success_msg += f"\n\n{get_string('wf_backup_notice').format(dir=backup_dir_name)}"
+
+        success_msg += f"\n\n{get_string('wf_notice_widevine')}"
         return success_msg
 
     except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, KeyError, ToolError) as e:
