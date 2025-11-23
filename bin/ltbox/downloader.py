@@ -232,6 +232,50 @@ def ensure_magiskboot() -> Path:
         asset_patterns=asset_patterns
     )
 
+def ensure_edl() -> None:
+    edl_dir = const.BASE_DIR / "bin" / "tools" / "edl"
+    if (edl_dir / "edlclient").exists():
+        return
+
+    utils.ui.echo(get_string("dl_downloading").format(filename="edl.zip"))
+    const.DOWNLOAD_DIR.mkdir(exist_ok=True)
+    zip_path = const.DOWNLOAD_DIR / "edl.zip"
+    url = "https://github.com/bkerler/edl/archive/refs/heads/master.zip"
+    
+    download_resource(url, zip_path)
+    
+    utils.ui.echo(get_string("dl_extracting").format(filename="edl.zip"))
+    temp_extract = const.DOWNLOAD_DIR / "edl_temp"
+    if temp_extract.exists():
+        shutil.rmtree(temp_extract, ignore_errors=True)
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(temp_extract)
+            
+        src = temp_extract / "edl-master"
+        if not src.exists():
+            src = next(temp_extract.iterdir())
+            
+        if edl_dir.exists():
+            shutil.rmtree(edl_dir, ignore_errors=True)
+        
+        shutil.move(str(src), str(edl_dir))
+        
+        utils.ui.echo("Installing EDL module...")
+        subprocess.run(
+            [str(const.PYTHON_EXE), "-m", "pip", "install", "."],
+            cwd=edl_dir,
+            check=True
+        )
+        utils.ui.echo("EDL module installed.")
+        
+    finally:
+        if zip_path.exists():
+            zip_path.unlink()
+        if temp_extract.exists():
+            shutil.rmtree(temp_extract, ignore_errors=True)
+
 def get_gki_kernel(kernel_version: str, work_dir: Path) -> Path:
     utils.ui.echo(get_string("dl_gki_downloading"))
     asset_pattern = f".*{kernel_version}.*Normal-AnyKernel3.zip"
@@ -350,6 +394,7 @@ def install_base_tools(lang_code: str = "en"):
         ensure_fetch()
         ensure_platform_tools()
         ensure_avb_tools()
+        ensure_edl()
         utils.ui.echo(get_string("dl_base_complete"))
     except Exception as e:
         msg = get_string("dl_base_error").format(error=e)
