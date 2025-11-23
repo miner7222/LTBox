@@ -262,6 +262,18 @@ def ensure_edl() -> None:
         
         shutil.move(str(src), str(edl_dir))
         
+        setup_py = edl_dir / "setup.py"
+        if setup_py.exists():
+            content = setup_py.read_text(encoding="utf-8")
+            content = re.sub(r"['\"]pylzma.*?['\"],?", "", content)
+            setup_py.write_text(content, encoding="utf-8")
+
+        req_txt = edl_dir / "requirements.txt"
+        if req_txt.exists():
+            content = req_txt.read_text(encoding="utf-8")
+            content = re.sub(r"^pylzma.*$", "", content, flags=re.MULTILINE)
+            req_txt.write_text(content, encoding="utf-8")
+
         utils.ui.echo("Installing EDL module...")
         subprocess.run(
             [str(const.PYTHON_EXE), "-m", "pip", "install", "."],
