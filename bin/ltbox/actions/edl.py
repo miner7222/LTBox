@@ -90,6 +90,10 @@ def dump_partitions(dev: device.DeviceController, skip_reset: bool = False, addi
         utils.ui.echo(get_string("act_wait_stability"))
         time.sleep(5)
 
+    utils.ui.echo(get_string("act_dump_ignore_warn"))
+    utils.ui.echo(get_string("act_dump_finish"))
+    utils.ui.echo(get_string("act_dump_saved").format(dir=const.BACKUP_DIR.name))
+
     if not skip_reset:
         utils.ui.echo(get_string("act_reset_sys"))
         utils.ui.echo(get_string("device_resetting"))
@@ -99,10 +103,6 @@ def dump_partitions(dev: device.DeviceController, skip_reset: bool = False, addi
         time.sleep(10)
     else:
         utils.ui.echo(get_string("act_skip_reset"))
-
-    utils.ui.echo(get_string("act_dump_finish"))
-    utils.ui.echo(get_string("act_dump_saved").format(dir=const.BACKUP_DIR.name))
-    utils.ui.echo(get_string("act_dump_ignore_warn"))
 
 def flash_partitions(dev: device.DeviceController, skip_reset: bool = False, skip_reset_edl: bool = False) -> None:
     utils.ui.echo(get_string("act_start_write"))
