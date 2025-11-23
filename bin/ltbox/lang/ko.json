@@ -57,6 +57,7 @@
   "act_dp_moved": "\n[*] 이미지가 '{dir}'로 이동되었습니다.",
   "act_dp_ready": "  수정된 이미지가 '{dir}'에 준비되었습니다.",
   "act_dump_finish": "\n[*] 추출 완료",
+  "act_dump_ignore_warn": "참고: 과정 중 표시되는 'warning'은 무시해도 됩니다.",
   "act_dump_reset": "\n[*] 추출 완료. 시스템으로 재부팅 중...",
   "act_dump_saved": "[*] 파일 저장 위치: {dir}",
   "act_dump_success": "[+] '{target}'을(를) '{file}'(으)로 추출했습니다.",

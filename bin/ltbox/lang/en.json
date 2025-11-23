@@ -57,6 +57,7 @@
   "act_dp_moved": "\n[*] Images moved to '{dir}'.",
   "act_dp_ready": "  Modified images ready in '{dir}'.",
   "act_dump_finish": "\n[*] Dump Finished",
+  "act_dump_ignore_warn": "Note: You can ignore any 'warning' displayed during the process.",
   "act_dump_reset": "\n[*] Dump complete. Rebooting to System...",
   "act_dump_saved": "[*] Files saved to: {dir}",
   "act_dump_success": "[+] Read '{target}' to '{file}'.",
