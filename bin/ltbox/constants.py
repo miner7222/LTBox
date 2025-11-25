@@ -75,7 +75,7 @@ ADB_EXE = DOWNLOAD_DIR / "adb.exe"
 FASTBOOT_EXE = DOWNLOAD_DIR / "fastboot.exe"
 AVBTOOL_PY = DOWNLOAD_DIR / "avbtool.py"
 QSAHARASERVER_EXE = TOOLS_DIR / "Qsaharaserver.exe"
-edl_EXE = TOOLS_DIR / "fh_loader.exe"
+EDL_EXE = TOOLS_DIR / "fh_loader.exe"
 
 MAGISKBOOT_REPO_URL = _get_cfg("magiskboot", "repo_url")
 MAGISKBOOT_TAG = _get_cfg("magiskboot", "tag")
