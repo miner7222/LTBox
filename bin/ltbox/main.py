@@ -73,51 +73,43 @@ def run_task(command, title, dev, command_map, extra_kwargs=None):
     ui.echo(get_string("starting_task").format(title=title))
     ui.echo("  " + "=" * 58 + "\n")
 
-    log_file = None
-    if command in ["patch_all", "patch_all_wipe"]:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = f"log_{timestamp}.txt"
-        ui.info(get_string("logging_enabled").format(log_file=log_file))
-        ui.info(get_string("logging_command").format(command=command))
-
     try:
-        with logging_context(log_file):
-            func_tuple = command_map.get(command)
-            if not func_tuple:
-                raise ToolError(get_string("unknown_command").format(command=command))
-            
-            func, base_kwargs = func_tuple
-            final_kwargs = base_kwargs.copy()
-            
-            if extra_kwargs:
-                final_kwargs.update(extra_kwargs)
-            
-            no_dev_needed = {
-                "patch_root_image_file_gki", "patch_root_image_file_lkm", 
-                "edit_dp", 
-                "patch_anti_rollback", "clean", "modify_xml", "modify_xml_wipe",
-                "decrypt_xml"
-            }
-            
-            if command not in no_dev_needed:
-                final_kwargs["dev"] = dev
-            
-            result = func(**final_kwargs)
+        func_tuple = command_map.get(command)
+        if not func_tuple:
+            raise ToolError(get_string("unknown_command").format(command=command))
+        
+        func, base_kwargs = func_tuple
+        final_kwargs = base_kwargs.copy()
+        
+        if extra_kwargs:
+            final_kwargs.update(extra_kwargs)
+        
+        no_dev_needed = {
+            "patch_root_image_file_gki", "patch_root_image_file_lkm", 
+            "edit_dp", 
+            "patch_anti_rollback", "clean", "modify_xml", "modify_xml_wipe",
+            "decrypt_xml"
+        }
+        
+        if command not in no_dev_needed:
+            final_kwargs["dev"] = dev
 
-            ui.echo("\n  " + "=" * 58)
-            ui.echo(get_string("act_success"))
-            ui.echo("  " + "=" * 58)
+        result = func(**final_kwargs)
 
-            if isinstance(result, str) and result:
-                ui.echo(result)
-            elif isinstance(result, tuple) and command == "read_anti_rollback":
-                 ui.echo(get_string("act_arb_complete").format(status=result[0]))
-                 ui.echo(get_string("act_curr_boot_idx").format(idx=result[1]))
-                 ui.echo(get_string("act_curr_vbmeta_idx").format(idx=result[2]))
-            elif command == "clean":
-                pass
-            elif result:
-                ui.echo(get_string("act_unhandled_success_result").format(res=result))
+        ui.echo("\n  " + "=" * 58)
+        ui.echo(get_string("act_success"))
+        ui.echo("  " + "=" * 58)
+
+        if isinstance(result, str) and result:
+            ui.echo(result)
+        elif isinstance(result, tuple) and command == "read_anti_rollback":
+                ui.echo(get_string("act_arb_complete").format(status=result[0]))
+                ui.echo(get_string("act_curr_boot_idx").format(idx=result[1]))
+                ui.echo(get_string("act_curr_vbmeta_idx").format(idx=result[2]))
+        elif command == "clean":
+            pass
+        elif result:
+            ui.echo(get_string("act_unhandled_success_result").format(res=result))
 
     except ToolError as e:
         ui.box_output([get_string("task_failed").format(title=title), str(e)], err=True)
@@ -137,8 +129,6 @@ def run_task(command, title, dev, command_map, extra_kwargs=None):
         ui.error(get_string("process_cancelled"))
     finally:
         ui.echo("")
-        if log_file:
-            ui.info(get_string("logging_finished").format(log_file=log_file))
 
         ui.echo("  " + "=" * 58)
         ui.echo(get_string("task_completed").format(title=title))
