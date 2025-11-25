@@ -13,7 +13,7 @@ def decrypt_x_files() -> None:
     print(get_string("act_start_decrypt_xml"))
     
     print(get_string("act_wait_image"))
-    prompt = get_string("wf_step3_prompt")
+    prompt = get_string("act_prompt_image")
     utils.wait_for_directory(const.IMAGE_DIR, prompt)
 
     if const.OUTPUT_XML_DIR.exists():
