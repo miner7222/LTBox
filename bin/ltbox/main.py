@@ -403,8 +403,7 @@ def main_loop(device_controller_class, command_map):
         "2": ("patch_all", get_string("task_title_install_nowipe")),
         "3": ("disable_ota", get_string("task_title_disable_ota")),
         "4": ("rescue_ota", get_string("task_title_rescue")),
-        "6": ("unroot_device", get_string("task_title_unroot")),
-        "9": ("change_language", get_string("task_title_change_lang")),
+        "6": ("unroot_device", get_string("task_title_unroot"))
     }
 
     while True:
@@ -424,6 +423,8 @@ def main_loop(device_controller_class, command_map):
             dev.skip_adb = skip_adb
         elif choice == "8":
             skip_rollback = not skip_rollback
+        elif choice == "9":
+            change_language_task()
         elif choice == "a":
             advanced_menu(dev, command_map)
         elif choice == "x":
