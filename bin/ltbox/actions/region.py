@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from . import edl
 from .. import constants as const
 from .. import utils, device
 from ..patch.region import edit_vendor_boot, detect_region_codes, patch_region_codes
@@ -315,11 +316,8 @@ def rescue_after_ota(dev: device.DeviceController) -> None:
     from ..partition import ensure_params_or_fail
 
     utils.ui.echo(get_string("rescue_prompt_files"))
-    utils.wait_for_files(const.IMAGE_DIR, [const.EDL_LOADER_FILENAME], get_string("rescue_prompt_files"))
-    
-    if not list(const.IMAGE_DIR.glob("rawprogram*.xml")):
-         utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
-         utils.wait_for_directory(const.IMAGE_DIR, get_string("act_prompt_image"))
+
+    edl.ensure_edl_requirements()
 
     utils.ui.echo(get_string("rescue_wait_adb"))
     dev.wait_for_adb()

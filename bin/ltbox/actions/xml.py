@@ -9,6 +9,53 @@ from .. import utils
 from ..crypto import decrypt_file
 from ..i18n import get_string
 
+def auto_decrypt_if_needed() -> None:
+    if list(const.IMAGE_DIR.glob("rawprogram*.xml")) or list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")):
+        return
+
+    x_files = list(const.IMAGE_DIR.glob("rawprogram*.x"))
+    if not x_files:
+        return
+
+    print(get_string("img_xml_scan"))
+    
+    decrypted_count = 0
+    for x_file in x_files:
+        xml_file = x_file.with_suffix('.xml')
+        try:
+            if decrypt_file(str(x_file), str(xml_file)):
+                print(get_string("img_xml_decrypt_ok").format(src=x_file.name, dst=xml_file.name))
+                decrypted_count += 1
+            else:
+                print(get_string("img_xml_decrypt_fail").format(name=x_file.name))
+        except Exception as e:
+            print(f"Warning: Failed to decrypt {x_file.name}: {e}")
+            
+    if decrypted_count > 0:
+        print(get_string("act_xml_ready").format(dir=const.IMAGE_DIR.name))
+        print("-" * 60)
+
+def ensure_xml_files() -> None:
+    auto_decrypt_if_needed()
+
+    def _check_xml_ready(path: Path, _: Optional[List[str]]) -> bool:
+        if list(const.IMAGE_DIR.glob("rawprogram*.xml")) or list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")):
+            return True
+
+        auto_decrypt_if_needed()
+
+        if list(const.IMAGE_DIR.glob("rawprogram*.xml")) or list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")):
+            return True
+            
+        return False
+
+    utils._wait_for_resource(
+        const.IMAGE_DIR, 
+        _check_xml_ready, 
+        get_string("act_prompt_image"),
+        None
+    )
+
 def decrypt_x_files() -> None:
     print(get_string("act_start_decrypt_xml"))
     

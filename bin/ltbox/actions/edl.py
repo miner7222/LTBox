@@ -10,17 +10,28 @@ from .. import constants as const
 from .. import utils, device
 from ..partition import ensure_params_or_fail
 from ..i18n import get_string
+from . import xml
 
-def _prepare_edl_session(dev: device.DeviceController) -> str:
+def ensure_loader_file() -> None:
     if not const.EDL_LOADER_FILE.exists():
         utils.ui.echo(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
         prompt = get_string("device_loader_prompt").format(loader=const.EDL_LOADER_FILENAME, folder=const.IMAGE_DIR.name)
         utils.wait_for_files(const.IMAGE_DIR, [const.EDL_LOADER_FILENAME], prompt)
 
+def ensure_edl_requirements() -> None:
+    ensure_loader_file()
+    xml.ensure_xml_files()
+
+def _prepare_edl_session(dev: device.DeviceController) -> str:
+    ensure_edl_requirements()
+
+    port = dev.setup_edl_connection()
+
     if not list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
          utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
          prompt = get_string("act_prompt_image")
          utils.wait_for_directory(const.IMAGE_DIR, prompt)
+         xml.auto_decrypt_if_needed()
 
     port = dev.setup_edl_connection()
     
@@ -167,10 +178,7 @@ def write_anti_rollback(dev: device.DeviceController, skip_reset: bool = False) 
         raise FileNotFoundError(get_string("act_err_patched_missing_exc").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
     utils.ui.echo(get_string("act_found_arb_folder").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
     
-    if not const.EDL_LOADER_FILE.exists():
-        utils.ui.echo(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
-        prompt = get_string("device_loader_prompt").format(loader=const.EDL_LOADER_FILENAME, folder=const.IMAGE_DIR.name)
-        utils.wait_for_files(const.IMAGE_DIR, [const.EDL_LOADER_FILENAME], prompt)
+    ensure_edl_requirements()
 
     if not list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
          utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
@@ -319,11 +327,7 @@ def flash_full_firmware(dev: device.DeviceController, skip_reset: bool = False, 
         utils.ui.echo(get_string("act_err_run_xml_mod"))
         raise FileNotFoundError(get_string("act_err_image_empty_exc").format(dir=const.IMAGE_DIR.name))
         
-    loader_path = const.EDL_LOADER_FILE
-    if not loader_path.exists():
-        utils.ui.echo(get_string("act_err_loader_missing").format(name=loader_path.name, dir=const.IMAGE_DIR.name))
-        utils.ui.echo(get_string("act_err_copy_loader"))
-        raise FileNotFoundError(get_string("device_err_fh_missing").format(path=loader_path.name, dir=const.IMAGE_DIR.name))
+    ensure_loader_file()
 
     if not skip_reset_edl:
         utils.ui.echo("\n" + "="*61)
