@@ -27,14 +27,6 @@ def _prepare_edl_session(dev: device.DeviceController) -> str:
     ensure_edl_requirements()
 
     port = dev.setup_edl_connection()
-
-    if not list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
-         utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
-         prompt = get_string("act_prompt_image")
-         utils.wait_for_directory(const.IMAGE_DIR, prompt)
-         xml.auto_decrypt_if_needed()
-
-    port = dev.setup_edl_connection()
     
     try:
         dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
@@ -180,11 +172,6 @@ def write_anti_rollback(dev: device.DeviceController, skip_reset: bool = False) 
     utils.ui.echo(get_string("act_found_arb_folder").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
     
     ensure_edl_requirements()
-
-    if not list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
-         utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
-         prompt = get_string("act_prompt_image")
-         utils.wait_for_directory(const.IMAGE_DIR, prompt)
     
     utils.ui.echo(get_string("act_arb_write_step1"))
     utils.ui.echo(get_string("act_boot_fastboot"))
@@ -286,32 +273,58 @@ def _prepare_flash_files(skip_dp: bool = False) -> None:
         utils.ui.echo(get_string("act_no_output_folders"))
 
 def _select_flash_xmls(skip_dp: bool = False) -> Tuple[List[Path], List[Path]]:
-    raw_xmls = [f for f in const.IMAGE_DIR.glob("rawprogram*.xml") if f.name != "rawprogram0.xml"]
-    patch_xmls = list(const.IMAGE_DIR.glob("patch*.xml"))
-    
+    all_raw_xmls = sorted(list(const.IMAGE_DIR.glob("rawprogram*.xml")))
+    patch_xmls = sorted(list(const.IMAGE_DIR.glob("patch*.xml")))
+
+    raw_xmls = []
+    for xml in all_raw_xmls:
+        name = xml.name
+        if "WIPE_PARTITIONS" in name or "BLANK_GPT" in name:
+            continue
+        if name == "rawprogram0.xml": 
+            continue
+        raw_xmls.append(xml)
+
     persist_write_xml = const.IMAGE_DIR / "rawprogram_write_persist_unsparse0.xml"
     persist_save_xml = const.IMAGE_DIR / "rawprogram_save_persist_unsparse0.xml"
+    raw_unsparse0 = const.IMAGE_DIR / "rawprogram_unsparse0.xml"
+    
     devinfo_write_xml = const.IMAGE_DIR / "rawprogram4_write_devinfo.xml"
     devinfo_original_xml = const.IMAGE_DIR / "rawprogram4.xml"
-
+    
     has_patched_persist = (const.OUTPUT_DP_DIR / "persist.img").exists()
-    has_patched_devinfo = (const.OUTPUT_DP_DIR / "devinfo.img").exists()
+
+    raw_xmls = [
+        x for x in raw_xmls 
+        if x.name not in [
+            persist_write_xml.name, 
+            persist_save_xml.name, 
+            raw_unsparse0.name
+        ]
+    ]
 
     if persist_write_xml.exists() and has_patched_persist and not skip_dp:
         utils.ui.echo(get_string("act_use_patched_persist"))
-        raw_xmls = [xml for xml in raw_xmls if xml.name != persist_save_xml.name]
-    else:
-        if persist_write_xml.exists() and any(xml.name == persist_write_xml.name for xml in raw_xmls):
-             utils.ui.echo(get_string("act_skip_persist_flash"))
-             raw_xmls = [xml for xml in raw_xmls if xml.name != persist_write_xml.name]
+        raw_xmls.append(persist_write_xml)
+    elif persist_save_xml.exists():
+        utils.ui.echo(get_string("act_skip_persist_flash"))
+        raw_xmls.append(persist_save_xml)
+    elif raw_unsparse0.exists():
+        utils.ui.echo("Using rawprogram_unsparse0.xml (Full Wipe)")
+        raw_xmls.append(raw_unsparse0)
+
+    has_patched_devinfo = (const.OUTPUT_DP_DIR / "devinfo.img").exists()
 
     if devinfo_write_xml.exists() and has_patched_devinfo and not skip_dp:
         utils.ui.echo(get_string("act_use_patched_devinfo"))
-        raw_xmls = [xml for xml in raw_xmls if xml.name != devinfo_original_xml.name]
+        raw_xmls = [x for x in raw_xmls if x.name != devinfo_original_xml.name]
+        raw_xmls.append(devinfo_write_xml)
     else:
-        if devinfo_write_xml.exists() and any(xml.name == devinfo_write_xml.name for xml in raw_xmls):
+        if devinfo_write_xml.exists():
              utils.ui.echo(get_string("act_skip_devinfo_flash"))
-             raw_xmls = [xml for xml in raw_xmls if xml.name != devinfo_write_xml.name]
+             raw_xmls = [x for x in raw_xmls if x.name != devinfo_write_xml.name]
+
+    raw_xmls.sort(key=lambda x: x.name)
 
     if not raw_xmls or not patch_xmls:
         utils.ui.echo(get_string("act_err_xml_missing").format(dir=const.IMAGE_DIR.name))
@@ -352,7 +365,7 @@ def flash_full_firmware(dev: device.DeviceController, skip_reset: bool = False, 
     raw_xmls, patch_xmls = _select_flash_xmls(skip_dp)
         
     utils.ui.echo(get_string("act_flash_step1"))
-
+    
     try:
         dev.edl_rawprogram(const.EDL_LOADER_FILE, "UFS", raw_xmls, patch_xmls, port)
     except Exception as e:
