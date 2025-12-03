@@ -47,7 +47,7 @@ def extract_image_avb_info(image_path: Path) -> Dict[str, Any]:
     if flags_match:
         info['flags'] = flags_match.group(1)
         if output: 
-            print(get_string("img_info_flags").format(flags=info['flags']))
+            utils.ui.info(get_string("img_info_flags").format(flags=info['flags']))
         
     for key, pattern in patterns.items():
         if key not in info:
@@ -65,7 +65,7 @@ def extract_image_avb_info(image_path: Path) -> Dict[str, Any]:
             
     info['props_args'] = props_args
     if props_args and output: 
-        print(get_string("img_info_props").format(count=len(props_args) // 2))
+        utils.ui.info(get_string("img_info_props").format(count=len(props_args) // 2))
 
     return info
 
@@ -77,8 +77,8 @@ def _apply_hash_footer(
 ) -> None:
     rollback_index = new_rollback_index if new_rollback_index is not None else image_info['rollback']
     
-    print(get_string("img_footer_adding").format(name=image_path.name))
-    print(get_string("img_footer_details").format(part=image_info['name'], rb=rollback_index))
+    utils.ui.info(get_string("img_footer_adding").format(name=image_path.name))
+    utils.ui.info(get_string("img_footer_details").format(part=image_info['name'], rb=rollback_index))
 
     add_footer_cmd = [
         str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "add_hash_footer",
@@ -94,10 +94,10 @@ def _apply_hash_footer(
     
     if 'flags' in image_info:
         add_footer_cmd.extend(["--flags", image_info.get('flags', '0')])
-        print(get_string("img_footer_restore_flags").format(flags=image_info.get('flags', '0')))
+        utils.ui.info(get_string("img_footer_restore_flags").format(flags=image_info.get('flags', '0')))
 
     utils.run_command(add_footer_cmd)
-    print(get_string("img_footer_success").format(name=image_path.name))
+    utils.ui.info(get_string("img_footer_success").format(name=image_path.name))
 
 def patch_chained_image_rollback(
     image_name: str, 
@@ -106,17 +106,17 @@ def patch_chained_image_rollback(
     patched_image_path: Path
 ) -> None:
     try:
-        print(get_string("img_analyze_new").format(name=image_name))
+        utils.ui.info(get_string("img_analyze_new").format(name=image_name))
         info = extract_image_avb_info(new_image_path)
         new_rb_index = int(info.get('rollback', '0'))
-        print(get_string("img_new_index").format(index=new_rb_index))
+        utils.ui.info(get_string("img_new_index").format(index=new_rb_index))
 
         if new_rb_index == current_rb_index:
-            print(get_string("img_index_ok").format(name=image_name))
+            utils.ui.info(get_string("img_index_ok").format(name=image_name))
             shutil.copy(new_image_path, patched_image_path)
             return
 
-        print(get_string("img_patch_bypass").format(name=image_name, old=new_rb_index, new=current_rb_index))
+        utils.ui.info(get_string("img_patch_bypass").format(name=image_name, old=new_rb_index, new=current_rb_index))
         
         for key in ['partition_size', 'name', 'salt', 'algorithm', 'pubkey_sha1']:
             if key not in info:
@@ -136,7 +136,7 @@ def patch_chained_image_rollback(
         )
 
     except (KeyError, subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(get_string("img_err_processing").format(name=image_name, e=e), file=sys.stderr)
+        utils.ui.error(get_string("img_err_processing").format(name=image_name, e=e))
         raise
 
 def patch_vbmeta_image_rollback(
@@ -146,17 +146,17 @@ def patch_vbmeta_image_rollback(
     patched_image_path: Path
 ) -> None:
     try:
-        print(get_string("img_analyze_new").format(name=image_name))
+        utils.ui.info(get_string("img_analyze_new").format(name=image_name))
         info = extract_image_avb_info(new_image_path)
         new_rb_index = int(info.get('rollback', '0'))
-        print(get_string("img_new_index").format(index=new_rb_index))
+        utils.ui.info(get_string("img_new_index").format(index=new_rb_index))
 
         if new_rb_index == current_rb_index:
-            print(get_string("img_index_ok").format(name=image_name))
+            utils.ui.info(get_string("img_index_ok").format(name=image_name))
             shutil.copy(new_image_path, patched_image_path)
             return
 
-        print(get_string("img_patch_bypass").format(name=image_name, old=new_rb_index, new=current_rb_index))
+        utils.ui.info(get_string("img_patch_bypass").format(name=image_name, old=new_rb_index, new=current_rb_index))
 
         for key in ['algorithm', 'pubkey_sha1']:
             if key not in info:
@@ -177,23 +177,23 @@ def patch_vbmeta_image_rollback(
         ]
         
         utils.run_command(remake_cmd)
-        print(get_string("img_patch_success").format(name=image_name))
+        utils.ui.info(get_string("img_patch_success").format(name=image_name))
 
     except (KeyError, subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(get_string("img_err_processing").format(name=image_name, e=e), file=sys.stderr)
+        utils.ui.error(get_string("img_err_processing").format(name=image_name, e=e))
         raise
 
 def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
-    print(get_string("img_verify_boot"))
+    utils.ui.info(get_string("img_verify_boot"))
     
     bak_name = "boot.bak.img" if gki else "init_boot.bak.img"
     boot_bak_img = const.BASE_DIR / bak_name
     
     if not boot_bak_img.exists():
-        print(get_string("img_err_boot_bak_missing").format(name=boot_bak_img.name), file=sys.stderr)
+        utils.ui.error(get_string("img_err_boot_bak_missing").format(name=boot_bak_img.name))
         raise FileNotFoundError(get_string("img_err_boot_bak_missing").format(name=boot_bak_img.name))
         
-    print(get_string("img_avb_extract_info").format(name=boot_bak_img.name))
+    utils.ui.info(get_string("img_avb_extract_info").format(name=boot_bak_img.name))
     boot_info = extract_image_avb_info(boot_bak_img)
     
     required_keys = ['partition_size', 'name', 'rollback', 'salt', 'algorithm']
@@ -208,15 +208,15 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
                 raise KeyError(get_string("img_err_missing_key").format(key=key, name=boot_bak_img.name))
 
     try:
-        print(get_string("img_avb_erase_footer").format(name=image_to_process.name))
+        utils.ui.info(get_string("img_avb_erase_footer").format(name=image_to_process.name))
         utils.run_command(
             [str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "erase_footer", "--image", str(image_to_process)],
             capture=True,
             check=False
         )
-        print(get_string("img_avb_erase_footer_ok"))
+        utils.ui.info(get_string("img_avb_erase_footer_ok"))
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(get_string("img_avb_erase_footer_fail").format(e=e))
+        utils.ui.info(get_string("img_avb_erase_footer_fail").format(e=e))
             
     if gki:
         boot_pubkey = boot_info.get('pubkey_sha1')
@@ -226,12 +226,12 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
             key_file_sha1 = "2597c218aae470a130f61162feaae70afd97f011"
             key_file = const.KEY_MAP.get(key_file_sha1)
             if not key_file:
-                print(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
+                utils.ui.info(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
                 raise KeyError(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
             else:
-                print(get_string("img_avb_warn_key_fallback").format(key=boot_pubkey, fallback_name=key_file.name))
+                utils.ui.info(get_string("img_avb_warn_key_fallback").format(key=boot_pubkey, fallback_name=key_file.name))
 
-        print(get_string("img_key_matched").format(name=key_file.name))
+        utils.ui.info(get_string("img_key_matched").format(name=key_file.name))
         
         _apply_hash_footer(
             image_path=image_to_process,
@@ -239,7 +239,7 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
             key_file=key_file
         )
     else:
-        print(get_string("img_avb_apply_footer").format(name=image_to_process.name, algo=boot_info['algorithm']))
+        utils.ui.info(get_string("img_avb_apply_footer").format(name=image_to_process.name, algo=boot_info['algorithm']))
         
         add_footer_cmd = [
             str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "add_hash_footer",
@@ -254,10 +254,10 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
         
         if 'flags' in boot_info:
             add_footer_cmd.extend(["--flags", boot_info.get('flags', '0')])
-            print(get_string("img_footer_restore_flags").format(flags=boot_info.get('flags', '0')))
+            utils.ui.info(get_string("img_footer_restore_flags").format(flags=boot_info.get('flags', '0')))
 
         utils.run_command(add_footer_cmd)
-        print(get_string("img_footer_success").format(name=image_to_process.name))
+        utils.ui.info(get_string("img_footer_success").format(name=image_to_process.name))
 
 def rebuild_vbmeta_with_chained_images(
     output_path: Path,
@@ -265,19 +265,19 @@ def rebuild_vbmeta_with_chained_images(
     chained_images: List[Path],
     padding_size: str = "8192"
 ) -> None:
-    print(get_string("act_remake_vbmeta"))
+    utils.ui.info(get_string("act_remake_vbmeta"))
     vbmeta_info = extract_image_avb_info(original_vbmeta_path)
     
     vbmeta_pubkey = vbmeta_info.get('pubkey_sha1')
     key_file = const.KEY_MAP.get(vbmeta_pubkey) 
 
-    print(get_string("act_verify_vbmeta_key"))
+    utils.ui.info(get_string("act_verify_vbmeta_key"))
     if not key_file:
-        print(get_string("act_err_vbmeta_key_mismatch").format(key=vbmeta_pubkey))
+        utils.ui.info(get_string("act_err_vbmeta_key_mismatch").format(key=vbmeta_pubkey))
         raise KeyError(get_string("act_err_unknown_key").format(key=vbmeta_pubkey))
-    print(get_string("act_key_matched").format(name=key_file.name))
+    utils.ui.info(get_string("act_key_matched").format(name=key_file.name))
 
-    print(get_string("act_remaking_vbmeta"))
+    utils.ui.info(get_string("act_remaking_vbmeta"))
     cmd = [
         str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "make_vbmeta_image",
         "--output", str(output_path),

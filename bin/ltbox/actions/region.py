@@ -16,14 +16,14 @@ from ..i18n import get_string
 def convert_region_images(dev: device.DeviceController, device_model: Optional[str] = None) -> None:
     utils.check_dependencies()
     
-    print(get_string("act_conv_start"))
+    utils.ui.info(get_string("act_conv_start"))
 
-    print(get_string("act_clean_old"))
+    utils.ui.info(get_string("act_clean_old"))
     if const.OUTPUT_DIR.exists():
         shutil.rmtree(const.OUTPUT_DIR)
-    print()
+    utils.ui.info("")
 
-    print(get_string("act_wait_vb_vbmeta"))
+    utils.ui.info(get_string("act_wait_vb_vbmeta"))
     const.IMAGE_DIR.mkdir(exist_ok=True)
     required_files = [const.FN_VENDOR_BOOT, const.FN_VBMETA]
     prompt = get_string("act_prompt_vb_vbmeta").format(name=const.IMAGE_DIR.name)
@@ -32,49 +32,49 @@ def convert_region_images(dev: device.DeviceController, device_model: Optional[s
     vendor_boot_src = const.IMAGE_DIR / const.FN_VENDOR_BOOT
     vbmeta_src = const.IMAGE_DIR / const.FN_VBMETA
 
-    print(get_string("act_backup_orig"))
+    utils.ui.info(get_string("act_backup_orig"))
     vendor_boot_bak = const.BASE_DIR / const.FN_VENDOR_BOOT_BAK
     vbmeta_bak = const.BASE_DIR / const.FN_VBMETA_BAK
     
     try:
         shutil.copy(vendor_boot_src, vendor_boot_bak)
         shutil.copy(vbmeta_src, vbmeta_bak)
-        print(get_string("act_backup_complete"))
+        utils.ui.info(get_string("act_backup_complete"))
     except (IOError, OSError) as e:
-        print(get_string("act_err_copy_input").format(e=e), file=sys.stderr)
+        utils.ui.error(get_string("act_err_copy_input").format(e=e))
         raise
 
-    print(get_string("act_start_conv"))
+    utils.ui.info(get_string("act_start_conv"))
     edit_vendor_boot(str(vendor_boot_bak))
 
     vendor_boot_prc = const.BASE_DIR / const.FN_VENDOR_BOOT_PRC
-    print(get_string("act_verify_conv"))
+    utils.ui.info(get_string("act_verify_conv"))
     if not vendor_boot_prc.exists():
-        print(get_string("act_err_vb_prc_missing"))
+        utils.ui.error(get_string("act_err_vb_prc_missing"))
         raise FileNotFoundError(get_string("act_err_vb_prc_not_created"))
-    print(get_string("act_conv_success"))
+    utils.ui.info(get_string("act_conv_success"))
 
-    print(get_string("act_extract_info"))
+    utils.ui.info(get_string("act_extract_info"))
     vendor_boot_info = extract_image_avb_info(vendor_boot_bak)
-    print(get_string("act_info_extracted"))
+    utils.ui.info(get_string("act_info_extracted"))
 
     if device_model and not dev.skip_adb:
-        print(get_string("act_val_model").format(model=device_model))
+        utils.ui.info(get_string("act_val_model").format(model=device_model))
         fingerprint_key = "com.android.build.vendor_boot.fingerprint"
         if fingerprint_key in vendor_boot_info:
             fingerprint = vendor_boot_info[fingerprint_key]
-            print(get_string("act_found_fp").format(fp=fingerprint))
+            utils.ui.info(get_string("act_found_fp").format(fp=fingerprint))
             if device_model in fingerprint:
-                print(get_string("act_model_match").format(model=device_model))
+                utils.ui.info(get_string("act_model_match").format(model=device_model))
             else:
-                print(get_string("act_model_mismatch").format(model=device_model))
-                print(get_string("act_rom_mismatch_abort"))
+                utils.ui.info(get_string("act_model_mismatch").format(model=device_model))
+                utils.ui.info(get_string("act_rom_mismatch_abort"))
                 raise RuntimeError(get_string("act_err_firmware_mismatch"))
         else:
-            print(get_string("act_warn_fp_missing").format(key=fingerprint_key))
-            print(get_string("act_skip_val"))
+            utils.ui.info(get_string("act_warn_fp_missing").format(key=fingerprint_key))
+            utils.ui.info(get_string("act_skip_val"))
     
-    print(get_string("act_add_footer_vb"))
+    utils.ui.info(get_string("act_add_footer_vb"))
     
     for key in ['partition_size', 'name', 'rollback', 'salt']:
         if key not in vendor_boot_info:
@@ -94,11 +94,11 @@ def convert_region_images(dev: device.DeviceController, device_model: Optional[s
     
     if 'props_args' in vendor_boot_info:
         add_hash_footer_cmd.extend(vendor_boot_info['props_args'])
-        print(get_string("act_restore_props").format(count=len(vendor_boot_info['props_args']) // 2))
+        utils.ui.info(get_string("act_restore_props").format(count=len(vendor_boot_info['props_args']) // 2))
 
     if 'flags' in vendor_boot_info:
         add_hash_footer_cmd.extend(["--flags", vendor_boot_info.get('flags', '0')])
-        print(get_string("act_restore_flags").format(flags=vendor_boot_info.get('flags', '0')))
+        utils.ui.info(get_string("act_restore_flags").format(flags=vendor_boot_info.get('flags', '0')))
 
     utils.run_command(add_hash_footer_cmd)
     
@@ -108,37 +108,37 @@ def convert_region_images(dev: device.DeviceController, device_model: Optional[s
         original_vbmeta_path=vbmeta_bak,
         chained_images=[vendor_boot_prc]
     )
-    print()
+    utils.ui.info("")
 
-    print(get_string("act_finalize"))
-    print(get_string("act_rename_final"))
+    utils.ui.info(get_string("act_finalize"))
+    utils.ui.info(get_string("act_rename_final"))
     final_vendor_boot = const.BASE_DIR / const.FN_VENDOR_BOOT
     shutil.move(const.BASE_DIR / const.FN_VENDOR_BOOT_PRC, final_vendor_boot)
 
     final_images = [final_vendor_boot, const.BASE_DIR / const.FN_VBMETA]
 
-    print(get_string("act_move_final").format(dir=const.OUTPUT_DIR.name))
+    utils.ui.info(get_string("act_move_final").format(dir=const.OUTPUT_DIR.name))
     const.OUTPUT_DIR.mkdir(exist_ok=True)
     for img in final_images:
         if img.exists(): 
             shutil.move(img, const.OUTPUT_DIR / img.name)
 
-    print(get_string("act_move_backup").format(dir=const.BACKUP_DIR.name))
+    utils.ui.info(get_string("act_move_backup").format(dir=const.BACKUP_DIR.name))
     const.BACKUP_DIR.mkdir(exist_ok=True)
     for bak_file in const.BASE_DIR.glob("*.bak.img"):
         shutil.move(bak_file, const.BACKUP_DIR / bak_file.name)
-    print()
+    utils.ui.info("")
 
-    print("  " + "=" * 78)
-    print(get_string("act_success"))
-    print(get_string("act_final_saved").format(dir=const.OUTPUT_DIR.name))
-    print("  " + "=" * 78)
+    utils.ui.info("  " + "=" * 78)
+    utils.ui.info(get_string("act_success"))
+    utils.ui.info(get_string("act_final_saved").format(dir=const.OUTPUT_DIR.name))
+    utils.ui.info("  " + "=" * 78)
 
 def select_country_code(prompt_message: str = "Please select a country from the list below:") -> str:
-    print(get_string("act_prompt_msg").format(msg=prompt_message.upper()))
+    utils.ui.info(get_string("act_prompt_msg").format(msg=prompt_message.upper()))
 
     if not const.SORTED_COUNTRY_CODES:
-        print(get_string("act_err_codes_missing"), file=sys.stderr)
+        utils.ui.error(get_string("act_err_codes_missing"))
         raise ImportError(get_string("act_err_codes_missing_exc"))
 
     sorted_countries = const.SORTED_COUNTRY_CODES
@@ -147,7 +147,7 @@ def select_country_code(prompt_message: str = "Please select a country from the 
     col_width = 38 
     
     line_width = col_width * num_cols
-    print("-" * line_width)
+    utils.ui.info("-" * line_width)
     
     for i in range(0, len(sorted_countries), num_cols):
         line = []
@@ -156,30 +156,30 @@ def select_country_code(prompt_message: str = "Please select a country from the 
             if idx < len(sorted_countries):
                 code, name = sorted_countries[idx]
                 line.append(f"{idx+1:3d}. {name} ({code})".ljust(col_width))
-        print("".join(line))
-    print("-" * line_width)
+        utils.ui.info("".join(line))
+    utils.ui.info("-" * line_width)
 
     while True:
         try:
-            choice = input(get_string("act_enter_num").format(len=len(sorted_countries)))
+            choice = utils.ui.prompt(get_string("act_enter_num").format(len=len(sorted_countries)))
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(sorted_countries):
                 selected_code = sorted_countries[choice_idx][0]
                 selected_name = sorted_countries[choice_idx][1]
-                print(get_string("act_selected").format(name=selected_name, code=selected_code))
+                utils.ui.info(get_string("act_selected").format(name=selected_name, code=selected_code))
                 return selected_code
             else:
-                print(get_string("act_invalid_num"))
+                utils.ui.info(get_string("act_invalid_num"))
         except ValueError:
-            print(get_string("act_invalid_input"))
+            utils.ui.info(get_string("act_invalid_input"))
         except (KeyboardInterrupt, EOFError):
-            print(get_string("act_select_cancel"))
+            utils.ui.info(get_string("act_select_cancel"))
             raise KeyboardInterrupt(get_string("act_select_cancel"))
 
 def edit_devinfo_persist() -> Optional[str]:
-    print(get_string("act_start_dp_patch"))
+    utils.ui.info(get_string("act_start_dp_patch"))
     
-    print(get_string("act_wait_dp"))
+    utils.ui.info(get_string("act_wait_dp"))
     const.BACKUP_DIR.mkdir(exist_ok=True) 
 
     devinfo_img_src = const.BACKUP_DIR / const.FN_DEVINFO
@@ -191,15 +191,15 @@ def edit_devinfo_persist() -> Optional[str]:
     if not devinfo_img_src.exists() and not persist_img_src.exists():
         prompt = get_string("act_prompt_dp").format(dir=const.BACKUP_DIR.name)
         while not devinfo_img_src.exists() and not persist_img_src.exists():
-            os.system('cls')
-            print(get_string("act_wait_files_title"))
-            print(prompt)
-            print(get_string("act_place_one_file").format(dir=const.BACKUP_DIR.name))
-            print(get_string("act_dp_list_item").format(filename=const.FN_DEVINFO))
-            print(get_string("act_dp_list_item").format(filename=const.FN_PERSIST))
-            print(get_string("press_enter_to_continue"))
+            utils.ui.clear()
+            utils.ui.info(get_string("act_wait_files_title"))
+            utils.ui.info(prompt)
+            utils.ui.info(get_string("act_place_one_file").format(dir=const.BACKUP_DIR.name))
+            utils.ui.info(get_string("act_dp_list_item").format(filename=const.FN_DEVINFO))
+            utils.ui.info(get_string("act_dp_list_item").format(filename=const.FN_PERSIST))
+            utils.ui.info(get_string("press_enter_to_continue"))
             try:
-                input()
+                utils.ui.prompt()
             except EOFError:
                 raise RuntimeError(get_string('act_op_cancel'))
 
@@ -216,14 +216,14 @@ def edit_devinfo_persist() -> Optional[str]:
         shutil.copy(devinfo_img, backup_critical_dir)
     if persist_img.exists():
         shutil.copy(persist_img, backup_critical_dir)
-    print(get_string("act_files_backed_up").format(dir=backup_critical_dir.name))
+    utils.ui.info(get_string("act_files_backed_up").format(dir=backup_critical_dir.name))
 
-    print(get_string("act_clean_dp_out").format(dir=const.OUTPUT_DP_DIR.name))
+    utils.ui.info(get_string("act_clean_dp_out").format(dir=const.OUTPUT_DP_DIR.name))
     if const.OUTPUT_DP_DIR.exists():
         shutil.rmtree(const.OUTPUT_DP_DIR)
     const.OUTPUT_DP_DIR.mkdir(exist_ok=True)
 
-    print(get_string("act_detect_codes"))
+    utils.ui.info(get_string("act_detect_codes"))
     detected_codes = detect_country_codes()
     
     status_messages = []
@@ -242,27 +242,27 @@ def edit_devinfo_persist() -> Optional[str]:
             else:
                 status_messages.append(get_string("act_detect_status_null").format(display_name=display_name))
     
-    print(get_string("act_detect_result").format(res=', '.join(status_messages)))
+    utils.ui.info(get_string("act_detect_result").format(res=', '.join(status_messages)))
     
     if files_found == 0:
-        print(get_string("act_no_codes_skip"))
+        utils.ui.info(get_string("act_no_codes_skip"))
         devinfo_img.unlink(missing_ok=True)
         persist_img.unlink(missing_ok=True)
         return backup_critical_dir.name
 
-    print(get_string("act_note_region_code"))
-    print(get_string("act_ask_change_code"))
+    utils.ui.info(get_string("act_note_region_code"))
+    utils.ui.info(get_string("act_ask_change_code"))
     choice = ""
     while choice not in ['y', 'n']:
-        choice = input(get_string("act_enter_yn")).lower().strip()
+        choice = utils.ui.prompt(get_string("act_enter_yn")).lower().strip()
 
     if choice == 'n':
-        print(get_string("act_op_cancel"))
+        utils.ui.info(get_string("act_op_cancel"))
         
         devinfo_img.unlink(missing_ok=True)
         persist_img.unlink(missing_ok=True)
         
-        print(get_string("act_safety_remove"))
+        utils.ui.info(get_string("act_safety_remove"))
         (const.IMAGE_DIR / const.FN_DEVINFO).unlink(missing_ok=True)
         (const.IMAGE_DIR / const.FN_PERSIST).unlink(missing_ok=True)
         return backup_critical_dir.name
@@ -280,15 +280,15 @@ def edit_devinfo_persist() -> Optional[str]:
         if modified_persist.exists():
             shutil.move(modified_persist, const.OUTPUT_DP_DIR / const.FN_PERSIST)
             
-        print(get_string("act_dp_moved").format(dir=const.OUTPUT_DP_DIR.name))
+        utils.ui.info(get_string("act_dp_moved").format(dir=const.OUTPUT_DP_DIR.name))
         
         devinfo_img.unlink(missing_ok=True)
         persist_img.unlink(missing_ok=True)
         
-        print("\n  " + "=" * 78)
-        print(get_string("act_success"))
-        print(get_string("act_dp_ready").format(dir=const.OUTPUT_DP_DIR.name))
-        print("  " + "=" * 78)
+        utils.ui.info("\n  " + "=" * 78)
+        utils.ui.info(get_string("act_success"))
+        utils.ui.info(get_string("act_dp_ready").format(dir=const.OUTPUT_DP_DIR.name))
+        utils.ui.info("  " + "=" * 78)
     
     return backup_critical_dir.name
 

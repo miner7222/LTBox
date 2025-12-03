@@ -4,15 +4,20 @@ import sys
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Optional, Callable, Generator, Any, Union, Dict, Tuple
+from typing import List, Optional, Callable, Generator, Any, Union
 
 from . import constants as const
 from .i18n import get_string
+from .logger import get_logger
+
+logger = get_logger()
 
 class ConsoleUI:
     def echo(self, message: str = "", err: bool = False) -> None:
-        dest = sys.stderr if err else sys.stdout
-        print(message, file=dest)
+        if err:
+            logger.error(message)
+        else:
+            logger.info(message)
 
     def info(self, message: str) -> None:
         self.echo(message)
@@ -72,7 +77,7 @@ def run_command(
     output_lines = []
     if process.stdout:
         for line in process.stdout:
-            sys.stdout.write(line)
+            logger.info(line.rstrip())
             output_lines.append(line)
     
     process.wait()

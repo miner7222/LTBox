@@ -20,7 +20,7 @@ def _patch_vendor_boot_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict
     for target, replacement in patterns_row.items():
         count = content.count(target)
         if count > 0:
-            print(get_string("img_vb_found_replace").format(pattern=target.hex().upper(), count=count))
+            utils.ui.info(get_string("img_vb_found_replace").format(pattern=target.hex().upper(), count=count))
             modified_content = modified_content.replace(target, replacement)
             found_row_count += count
 
@@ -54,7 +54,7 @@ def detect_country_codes() -> Dict[str, Optional[str]]:
     files_to_check = ["devinfo.img", "persist.img"]
 
     if not const.COUNTRY_CODES:
-        print(get_string("img_det_warn_empty"), file=sys.stderr)
+        utils.ui.error(get_string("img_det_warn_empty"))
         return {f: None for f in files_to_check}
 
     for filename in files_to_check:
@@ -72,7 +72,7 @@ def detect_country_codes() -> Dict[str, Optional[str]]:
                     results[filename] = code
                     break
         except Exception as e:
-            print(get_string("img_det_err_read").format(name=filename, e=e), file=sys.stderr)
+            utils.ui.error(get_string("img_det_err_read").format(name=filename, e=e))
             
     return results
 
@@ -94,7 +94,7 @@ def _patch_country_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dic
 
     count = content.count(target_bytes)
     if count > 0:
-        print(get_string("img_code_replace").format(target=target_string, count=count, replacement=replacement_string))
+        utils.ui.info(get_string("img_code_replace").format(target=target_string, count=count, replacement=replacement_string))
         modified_content = content.replace(target_bytes, replacement_bytes)
         return modified_content, {'changed': True, 'message': get_string("img_code_replaced_total").format(count=count), 'count': count}
     
@@ -103,7 +103,7 @@ def _patch_country_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dic
 def patch_country_codes(replacement_code: str, target_map: Dict[str, Optional[str]]) -> int:
     if not replacement_code or len(replacement_code) != 2:
         msg = get_string("img_patch_code_err").format(code=replacement_code)
-        print(msg, file=sys.stderr)
+        utils.ui.error(msg)
         raise RuntimeError(msg)
         
     total_patched = 0
@@ -112,7 +112,7 @@ def patch_country_codes(replacement_code: str, target_map: Dict[str, Optional[st
         "persist.img": "persist_modified.img"
     }
 
-    print(get_string("img_patch_start").format(code=replacement_code))
+    utils.ui.info(get_string("img_patch_start").format(code=replacement_code))
 
     for filename, current_code in target_map.items():
         if filename not in files_to_output:
@@ -124,10 +124,10 @@ def patch_country_codes(replacement_code: str, target_map: Dict[str, Optional[st
         if not input_file.exists():
             continue
             
-        print(get_string("img_patch_processing").format(name=input_file.name))
+        utils.ui.info(get_string("img_patch_processing").format(name=input_file.name))
         
         if not current_code:
-            print(get_string("img_patch_skip").format(name=filename))
+            utils.ui.info(get_string("img_patch_skip").format(name=filename))
             continue
 
         success = utils._process_binary_file(
@@ -142,5 +142,5 @@ def patch_country_codes(replacement_code: str, target_map: Dict[str, Optional[st
         if success:
              total_patched += 1
 
-    print(get_string("img_patch_finish"))
+    utils.ui.info(get_string("img_patch_finish"))
     return total_patched
