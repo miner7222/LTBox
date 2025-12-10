@@ -29,7 +29,7 @@ if not exist "%TOOLS_DIR%" mkdir "%TOOLS_DIR%"
 :: Check Python
 if not exist "%PYTHON_DIR%\python.exe" (
     echo [*] Python not found. Downloading...
-    curl -L "%PYTHON_ZIP_URL%" -o "%PYTHON_ZIP_PATH%" || exit /b 1
+    curl --ssl-no-revoke -L "%PYTHON_ZIP_URL%" -o "%PYTHON_ZIP_PATH%" || exit /b 1
     echo [*] Extracting Python...
     mkdir "%PYTHON_DIR%"
     tar -xf "%PYTHON_ZIP_PATH%" -C "%PYTHON_DIR%"
@@ -40,7 +40,7 @@ if not exist "%PYTHON_DIR%\python.exe" (
 :: Check pip
 if not exist "%PYTHON_DIR%\Scripts\pip.exe" (
     echo [*] pip not found. Installing...
-    curl -L "%GETPIP_URL%" -o "%GETPIP_PATH%" || exit /b 1
+    curl --ssl-no-revoke -L "%GETPIP_URL%" -o "%GETPIP_PATH%" || exit /b 1
     "%PYTHON_DIR%\python.exe" "%GETPIP_PATH%"
     del "%GETPIP_PATH%"
 )
