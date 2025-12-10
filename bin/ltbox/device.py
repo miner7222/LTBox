@@ -44,10 +44,10 @@ class AdbManager:
         except AdbError:
             return None
 
-    def wait_for_device(self) -> None:
+    def wait_for_device(self) -> bool:
         if self.skip_adb:
             ui.warn(get_string("device_skip_adb"))
-            return
+            return False
 
         if not self.connected_once:
             ui.box_output([
@@ -76,16 +76,16 @@ class AdbManager:
                 ui.info(get_string("device_adb_connected"))
             self.connected_once = True
             print(" " * 40, end="\r")
+            return True
                 
         except KeyboardInterrupt:
             ui.warn("\n" + get_string("device_wait_cancelled"))
             self.skip_adb = True
             ui.warn(get_string("act_skip_adb_active"))
-            return
+            return False
 
     def get_model(self) -> Optional[str]:
-        self.wait_for_device()
-        if self.skip_adb:
+        if not self.wait_for_device():
             return None
         try:
             d = self._get_device()
@@ -94,8 +94,7 @@ class AdbManager:
             raise ToolError(get_string("device_err_get_model").format(e=e))
 
     def get_slot_suffix(self) -> Optional[str]:
-        self.wait_for_device()
-        if self.skip_adb:
+        if not self.wait_for_device():
             return None
         try:
             d = self._get_device()
@@ -107,8 +106,7 @@ class AdbManager:
             raise ToolError(get_string("device_err_get_slot").format(e=e))
 
     def get_kernel_version(self) -> str:
-        self.wait_for_device()
-        if self.skip_adb:
+        if not self.wait_for_device():
              raise ToolError(get_string("dl_lkm_kver_fail").format(ver="SKIP_ADB"))
         
         print(get_string("dl_lkm_get_kver"))
@@ -128,62 +126,53 @@ class AdbManager:
         except Exception as e:
              raise ToolError(get_string("dl_lkm_kver_fail").format(ver=str(e)))
 
-    def reboot_edl(self) -> None:
-        self.wait_for_device()
-        if self.skip_adb:
-            ui.warn(get_string("device_manual_edl_req"))
+    def reboot(self, target: str) -> None:
+        if not self.wait_for_device():
+            if target == "edl":
+                ui.warn(get_string("device_manual_edl_req"))
             return
-        try:
-            d = self._get_device()
-            if d:
-                with d.open_transport() as c:
-                    c.send_command("reboot:edl")
-                    c.check_okay()
-        except Exception as e:
-            try:
-                if d: d.shell("reboot edl")
-            except Exception:
-                raise ToolError(get_string("device_err_reboot").format(e=e))
 
-    def reboot_bootloader(self) -> None:
-        self.wait_for_device()
-        if self.skip_adb:
-            return
         try:
             d = self._get_device()
             if d:
-                with d.open_transport() as c:
-                    c.send_command("reboot:bootloader")
-                    c.check_okay()
+                if target == "edl":
+                    try:
+                        with d.open_transport() as c:
+                            c.send_command("reboot:edl")
+                            c.check_okay()
+                    except Exception:
+                        d.shell("reboot edl")
+                elif target == "bootloader":
+                    try:
+                        with d.open_transport() as c:
+                            c.send_command("reboot:bootloader")
+                            c.check_okay()
+                    except Exception:
+                        d.shell("reboot bootloader")
+                else:
+                    d.shell(f"reboot {target}")
         except Exception as e:
-            try:
-                if d: d.shell("reboot bootloader")
-            except Exception:
-                raise ToolError(get_string("device_err_reboot").format(e=e))
+            raise ToolError(get_string("device_err_reboot").format(e=e))
 
     def install(self, apk_path: str) -> None:
-        self.wait_for_device()
-        d = self._get_device()
-        if d:
-            d.install(apk_path)
+        if self.wait_for_device():
+            d = self._get_device()
+            if d: d.install(apk_path)
 
     def push(self, local: str, remote: str) -> None:
-        self.wait_for_device()
-        d = self._get_device()
-        if d:
-            d.sync.push(local, remote)
+        if self.wait_for_device():
+            d = self._get_device()
+            if d: d.sync.push(local, remote)
 
     def pull(self, remote: str, local: str) -> None:
-        self.wait_for_device()
-        d = self._get_device()
-        if d:
-            d.sync.pull(remote, local)
+        if self.wait_for_device():
+            d = self._get_device()
+            if d: d.sync.pull(remote, local)
 
     def shell(self, cmd: str) -> str:
-        self.wait_for_device()
-        d = self._get_device()
-        if d:
-            return d.shell(cmd)
+        if self.wait_for_device():
+            d = self._get_device()
+            if d: return d.shell(cmd)
         return ""
 
 class FastbootManager:
@@ -241,9 +230,12 @@ class FastbootManager:
             ui.warn(get_string("device_wait_fastboot_cancel"))
             raise
 
-    def reboot_system(self) -> None:
+    def reboot(self, target: str = "system") -> None:
         try:
-            utils.run_command([str(const.FASTBOOT_EXE), "reboot"])
+            args = [str(const.FASTBOOT_EXE), "reboot"]
+            if target == "bootloader":
+                args.append("bootloader")
+            utils.run_command(args)
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             raise ToolError(get_string("device_err_reboot").format(e=e))
 
@@ -445,8 +437,48 @@ class DeviceController:
     def get_device_model(self) -> Optional[str]:
         return self.adb.get_model()
 
+    def detect_active_slot(self) -> Optional[str]:
+        slot = self.adb.get_slot_suffix()
+        if slot:
+            return slot
+            
+        ui.echo("\n" + "="*60)
+        ui.echo(get_string("act_manual_fastboot"))
+        ui.echo("="*60 + "\n")
+        
+        self.ensure_fastboot_mode()
+        return self.fastboot.get_slot_suffix()
+
+    def ensure_fastboot_mode(self) -> None:
+        if self.fastboot.check_device(silent=True):
+            return
+
+        if not self.skip_adb:
+            try:
+                self.adb.reboot("bootloader")
+            except Exception as e:
+                ui.warn(get_string("act_err_reboot_bl").format(e=e))
+        
+        self.fastboot.wait_for_device()
+
+    def ensure_edl_mode(self) -> None:
+        if self.edl.check_device(silent=True):
+            ui.info(get_string("device_already_edl"))
+            return
+
+        if not self.skip_adb:
+            self.adb.wait_for_device()
+            ui.info(get_string("device_edl_setup_title"))
+            self.adb.reboot("edl")
+            ui.info(get_string("device_wait_10s_edl"))
+            time.sleep(10)
+        else:
+            ui.echo("\n" + "="*60)
+            ui.echo(get_string("act_manual_edl"))
+            ui.echo("="*60 + "\n")
+
     def get_active_slot_suffix(self) -> Optional[str]:
-        return self.adb.get_slot_suffix()
+        return self.detect_active_slot()
 
     def get_active_slot_suffix_from_fastboot(self) -> Optional[str]:
         return self.fastboot.get_slot_suffix()
@@ -455,10 +487,10 @@ class DeviceController:
         return self.adb.get_kernel_version()
 
     def reboot_to_edl(self) -> None:
-        self.adb.reboot_edl()
+        self.adb.reboot("edl")
 
     def reboot_to_bootloader(self) -> None:
-        self.adb.reboot_bootloader()
+        self.adb.reboot("bootloader")
 
     def install_apk(self, apk_path: str) -> None:
         self.adb.install(apk_path)
@@ -479,7 +511,7 @@ class DeviceController:
         return self.fastboot.wait_for_device()
 
     def fastboot_reboot_system(self) -> None:
-        self.fastboot.reboot_system()
+        self.fastboot.reboot()
 
     def check_edl_device(self, silent: bool = False) -> Optional[str]:
         return self.edl.check_device(silent)
@@ -488,19 +520,8 @@ class DeviceController:
         return self.edl.wait_for_device()
 
     def setup_edl_connection(self) -> str:
-        if self.edl.check_device(silent=True):
-            ui.info(get_string("device_already_edl"))
-        else:
-            if not self.skip_adb:
-                self.adb.wait_for_device()
-            
-            ui.info(get_string("device_edl_setup_title"))
-            self.adb.reboot_edl()
-            
-            if not self.skip_adb:
-                ui.info(get_string("device_wait_10s_edl"))
-                time.sleep(10)
-
+        self.ensure_edl_mode()
+        
         ui.info(get_string("device_wait_loader_title"))
         required_files = [const.EDL_LOADER_FILENAME]
         prompt = get_string("device_loader_prompt").format(loader=const.EDL_LOADER_FILENAME, folder=const.IMAGE_DIR.name)
