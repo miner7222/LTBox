@@ -266,7 +266,7 @@ def ensure_openssl() -> None:
 
     utils.ui.echo(get_string("dl_downloading").format(filename="OpenSSL"))
 
-    url = const._get_cfg("tools", "openssl_url")
+    url = const.CONF._get_val("tools", "openssl_url")
     temp_zip = const.DOWNLOAD_DIR / "openssl.zip"
     
     import requests
