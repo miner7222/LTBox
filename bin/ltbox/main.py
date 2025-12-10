@@ -44,9 +44,9 @@ class TerminalMenu:
 
     def show(self) -> None:
         ui.clear()
-        ui.echo("\n  " + "=" * 78)
+        ui.echo("\n" + "=" * 78)
         ui.echo(f"   {self.title}")
-        ui.echo("  " + "=" * 78 + "\n")
+        ui.echo("=" * 78 + "\n")
         
         for key, text, is_selectable in self.options:
             if is_selectable:
@@ -57,7 +57,7 @@ class TerminalMenu:
                 else:
                     ui.echo("")
         
-        ui.echo("\n  " + "=" * 78 + "\n")
+        ui.echo("\n" + "=" * 78 + "\n")
 
     def ask(self, prompt_msg: str, error_msg: str) -> str:
         while True:
@@ -124,9 +124,9 @@ def check_path_encoding():
         ui.clear()
         ui.box_output([
             get_string("critical_error_path_encoding"),
-            "  " + "-" * 75,
+            "-" * 75,
             get_string("current_path").format(current_path=current_path),
-            "  " + "-" * 75,
+            "-" * 75,
             get_string("path_encoding_details_1"),
             get_string("path_encoding_details_2"),
             "",
@@ -143,9 +143,9 @@ def check_path_encoding():
 def run_task(command, title, dev, command_map, extra_kwargs=None):
     ui.clear()
     
-    ui.echo("  " + "=" * 78)
+    ui.echo("=" * 78)
     ui.echo(get_string("starting_task").format(title=title))
-    ui.echo("  " + "=" * 78 + "\n")
+    ui.echo("=" * 78 + "\n")
 
     try:
         func_tuple = command_map.get(command)
@@ -170,9 +170,9 @@ def run_task(command, title, dev, command_map, extra_kwargs=None):
 
         result = func(**final_kwargs)
 
-        ui.echo("\n  " + "=" * 78)
+        ui.echo("\n" + "=" * 78)
         ui.echo(get_string("act_success"))
-        ui.echo("  " + "=" * 78)
+        ui.echo("=" * 78)
 
         if isinstance(result, str) and result:
             ui.echo(result)
@@ -204,9 +204,9 @@ def run_task(command, title, dev, command_map, extra_kwargs=None):
     finally:
         ui.echo("")
 
-        ui.echo("  " + "=" * 78)
+        ui.echo("=" * 78)
         ui.echo(get_string("task_completed").format(title=title))
-        ui.echo("  " + "=" * 78 + "\n")
+        ui.echo("=" * 78 + "\n")
         
         if command == "clean":
             input(get_string("press_enter_to_exit"))

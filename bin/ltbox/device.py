@@ -56,7 +56,7 @@ class AdbManager:
                 get_string("device_wait_cancel_hint")
             ])
         else:
-            print("  " + get_string("device_wait_adb_loop") + "...", end="\r")
+            print(get_string("device_wait_adb_loop") + "...", end="\r")
         
         def _check_adb():
             try:
