@@ -97,23 +97,31 @@ class LTBoxConfig:
 
     @property
     def ksu_apk_repo(self) -> str:
-        return self._get_val("kernelsu", "apk_repo")
+        return self._get_val("kernelsu-next", "apk_repo")
 
     @property
     def ksu_apk_tag(self) -> str:
-        return self._get_val("kernelsu", "apk_tag")
+        return self._get_val("kernelsu-next", "apk_tag")
+
+    @property
+    def sukisu_repo(self) -> str:
+        return self._get_val("sukisu-ultra", "repo")
+
+    @property
+    def sukisu_workflow(self) -> str:
+        return self._get_val("sukisu-ultra", "workflow")
 
     @property
     def release_owner(self) -> str:
-        return self._get_val("kernelsu", "release_owner")
+        return self._get_val("kernelsu-next", "release_owner")
 
     @property
     def release_repo(self) -> str:
-        return self._get_val("kernelsu", "release_repo")
+        return self._get_val("kernelsu-next", "release_repo")
 
     @property
     def release_tag(self) -> str:
-        return self._get_val("kernelsu", "release_tag")
+        return self._get_val("kernelsu-next", "release_tag")
 
     @property
     def repo_url(self) -> str:
@@ -121,7 +129,28 @@ class LTBoxConfig:
 
     @property
     def anykernel_zip_filename(self) -> str:
-        return self._get_val("kernelsu", "anykernel_zip")
+        return self._get_val("kernelsu-next", "anykernel_zip")
+
+    @property
+    def sukisu_manager_url(self) -> str:
+        return f"https://nightly.link/{self.sukisu_repo}/actions/runs/{self.sukisu_workflow}/Spoofed-Manager.zip"
+
+    def get_sukisu_lkm_url(self, kernel_mapped_name: str) -> str:
+        return f"https://nightly.link/{self.sukisu_repo}/actions/runs/{self.sukisu_workflow}/{identifier}-lkm.zip"
+
+    @property
+    def sukisu_ksuinit_url(self) -> str:
+        return f"https://nightly.link/{self.sukisu_repo}/actions/runs/{self.sukisu_workflow}/ksuinit-aarch64-linux-android.zip"
+
+    @property
+    def kernel_android_map(self) -> Dict[str, str]:
+        return {
+            "5.10": "android13",
+            "5.15": "android14",
+            "6.1": "android14",
+            "6.6": "android15",
+            "6.12": "android16"
+        }
 
     @property
     def edl_loader_filename(self) -> str:
@@ -230,6 +259,9 @@ try:
     MAGISKBOOT_TAG = CONF.magiskboot_tag
     KSU_APK_REPO = CONF.ksu_apk_repo
     KSU_APK_TAG = CONF.ksu_apk_tag
+    SUKISU_REPO = CONF.sukisu_repo
+    SUKISU_WORKFLOW = CONF.sukisu_workflow
+    KERNEL_ANDROID_MAP = CONF.kernel_android_map
     RELEASE_OWNER = CONF.release_owner
     RELEASE_REPO = CONF.release_repo
     RELEASE_TAG = CONF.release_tag

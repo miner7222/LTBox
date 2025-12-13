@@ -8,13 +8,17 @@
     "repo_url": "https://github.com/PinNaCode/magiskboot_build",
     "tag": "last-ci"
   },
-  "kernelsu": {
+  "kernelsu-next": {
     "apk_repo": "KernelSU-Next/KernelSU-Next",
     "apk_tag": "v1.1.1",
     "release_owner": "WildKernels",
     "release_repo": "GKI_KernelSU_SUSFS",
     "release_tag": "v1.5.12-r16",
     "anykernel_zip": "AnyKernel3.zip"
+  },
+  "sukisu-ultra": {
+    "repo": "SukiSU-Ultra/SukiSU-Ultra",
+    "workflow": "19959005245"
   },
   "edl": {
     "loader_filename": "xbl_s_devprg_ns.melf"

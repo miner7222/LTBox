@@ -618,6 +618,8 @@
   "menu_root_2_gki": "Patch boot.img file (from 'image' folder)",
   "menu_root_2_lkm": "Patch init_boot.img via KernelSU Next App (from 'image' folder)",
   "menu_root_invalid": "\n  [!] Invalid choice. Enter 1, 2, or m.",
+  "menu_root_lkm_type_prompt": "  Select type (1, 2, m): ",
+  "menu_root_lkm_type_title": "LTBox - LKM Root Type",
   "menu_root_m": "Back to Main Menu",
   "menu_root_mode_1": "Patch init_boot (LKM Mode)",
   "menu_root_mode_2": "Patch boot (GKI Mode)",

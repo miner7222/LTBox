@@ -617,6 +617,8 @@
   "menu_root_2_gki": "boot.img 파일 패치 ('image' 폴더)",
   "menu_root_2_lkm": "KernelSU Next 앱으로 init_boot.img 패치 ('image' 폴더)",
   "menu_root_invalid": "\n  [!] 잘못된 선택입니다. 1, 2, 또는 m을 입력하세요.",
+  "menu_root_lkm_type_prompt": "  유형 선택 (1, 2, m): ",
+  "menu_root_lkm_type_title": "LTBox - LKM 루트 유형",
   "menu_root_m": "메인으로 돌아가기",
   "menu_root_mode_1": "init_boot 패치 (LKM 모드)",
   "menu_root_mode_2": "boot 패치 (GKI 모드)",

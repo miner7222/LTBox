@@ -618,6 +618,8 @@
   "menu_root_2_gki": "Патч файла boot.img (из папки 'image')",
   "menu_root_2_lkm": "Патч init_boot.img через приложение KernelSU Next (из папки 'image')",
   "menu_root_invalid": "\n  [!] Неверный выбор. Введите 1, 2 или m.",
+  "menu_root_lkm_type_prompt": "  Выберите тип (1, 2, m): ",
+  "menu_root_lkm_type_title": "LTBox - Тип LKM Root",
   "menu_root_m": "Назад в главное меню",
   "menu_root_mode_1": "Патч init_boot (Режим LKM)",
   "menu_root_mode_2": "Патч boot (Режим GKI)",

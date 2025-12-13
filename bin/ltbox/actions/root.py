@@ -19,12 +19,18 @@ from ..i18n import get_string
 def _patch_lkm_via_app(
     dev: device.DeviceController,
     work_dir: Path,
-    img_name: str
+    img_name: str,
+    root_type: str = "ksu"
 ) -> Optional[Path]:
     utils.ui.echo(get_string("act_check_ksu"))
-    downloader.download_ksu_apk(const.BASE_DIR)
+    
+    if root_type == "sukisu":
+        downloader.download_sukisu_manager(const.BASE_DIR)
+        ksu_apks = list(const.BASE_DIR.glob("SukiSU*.apk"))
+    else:
+        downloader.download_ksu_apk(const.BASE_DIR)
+        ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
 
-    ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
     if not ksu_apks:
         utils.ui.echo(get_string("act_skip_ksu"))
         return None
@@ -56,7 +62,10 @@ def _patch_lkm_via_app(
     
     utils.ui.echo(get_string("act_find_patched_file"))
     try:
-        cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_next_patched_*.img")
+        if root_type == "sukisu":
+             cmd_output = dev.adb_shell("ls -t /sdcard/Download/sukisu_patched_*.img")
+        else:
+             cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_next_patched_*.img")
         
         if not cmd_output.strip():
             utils.ui.echo(get_string("act_err_no_patched_files"))
@@ -87,7 +96,7 @@ def _patch_lkm_via_app(
         utils.ui.echo(get_string("act_err_pull_process").format(e=e))
         return None
 
-def patch_root_image_file(gki: bool = False) -> None:
+def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
     img_name = const.FN_BOOT if gki else const.FN_INIT_BOOT
     bak_name = const.FN_BOOT_BAK if gki else const.FN_INIT_BOOT_BAK
     out_dir = const.OUTPUT_ROOT_DIR if gki else const.OUTPUT_ROOT_LKM_DIR
@@ -179,7 +188,7 @@ def patch_root_image_file(gki: bool = False) -> None:
                 dev = device.DeviceController(skip_adb=False)
                 dev.wait_for_adb()
                 lkm_kernel_version = dev.get_kernel_version()
-                patched_boot_path = _patch_lkm_via_app(dev, const.WORK_DIR, img_name)
+                patched_boot_path = _patch_lkm_via_app(dev, const.WORK_DIR, img_name, root_type=root_type)
             except Exception as e:
                 utils.ui.error(get_string("act_err_adb_process").format(e=e))
                 patched_boot_path = None
@@ -223,7 +232,7 @@ def patch_root_image_file(gki: bool = False) -> None:
     else:
         utils.ui.error(fail_msg)
 
-def root_device(dev: device.DeviceController, gki: bool = False) -> None:
+def root_device(dev: device.DeviceController, gki: bool = False, root_type: str = "ksu") -> None:
     utils.ui.echo(get_string("act_start_root"))
     
     img_name = const.FN_BOOT if gki else const.FN_INIT_BOOT
@@ -253,6 +262,7 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
     active_slot = detect_active_slot_robust(dev)
     
     lkm_kernel_version: Optional[str] = None
+
     if not gki:
         if not dev.skip_adb:
             try:
@@ -277,9 +287,14 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
 
     if not dev.skip_adb:
         utils.ui.echo(get_string("act_check_ksu"))
-        downloader.download_ksu_apk(const.BASE_DIR)
         
-        ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
+        if root_type == "sukisu":
+            downloader.download_sukisu_manager(const.BASE_DIR)
+            ksu_apks = list(const.BASE_DIR.glob("SukiSU*.apk"))
+        else:
+            downloader.download_ksu_apk(const.BASE_DIR)
+            ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
+        
         if ksu_apks:
             apk_path = ksu_apks[0]
             utils.ui.echo(get_string("act_install_ksu").format(name=apk_path.name))
@@ -387,7 +402,8 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
         patched_boot_path = patch_boot_with_root_algo(
             const.WORKING_BOOT_DIR, magiskboot_exe, 
             dev=dev, gki=gki,
-            lkm_kernel_version=lkm_kernel_version
+            lkm_kernel_version=lkm_kernel_version,
+            root_type=root_type
         )
 
         if not (patched_boot_path and patched_boot_path.exists()):

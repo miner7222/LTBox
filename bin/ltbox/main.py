@@ -329,15 +329,37 @@ def advanced_menu(dev, command_map):
             sys.exit()
 
 def root_menu(dev, command_map, gki: bool):
+    root_type = "ksu"
+    
+    if not gki:
+        while True:
+            mode_menu = TerminalMenu(get_string("menu_root_lkm_type_title"))
+            mode_menu.add_option("1", "KernelSU Next")
+            mode_menu.add_option("2", "SukiSU Ultra")
+            mode_menu.add_separator()
+            mode_menu.add_option("m", get_string("menu_root_m"))
+            
+            choice = mode_menu.ask(get_string("menu_root_lkm_type_prompt"), get_string("menu_root_invalid"))
+            
+            if choice == "1":
+                root_type = "ksu"
+                break
+            elif choice == "2":
+                root_type = "sukisu"
+                break
+            elif choice == "m":
+                return
+
     if gki:
         actions_map = {
             "1": ("root_device_gki", get_string("task_title_root_gki")),
             "2": ("patch_root_image_file_gki", get_string("task_title_root_file_gki")),
         }
     else:
+        title_suffix = " (SukiSU)" if root_type == "sukisu" else " (KSU)"
         actions_map = {
-            "1": ("root_device_lkm", get_string("task_title_root_lkm")),
-            "2": ("patch_root_image_file_lkm", get_string("task_title_root_file_lkm")),
+            "1": ("root_device_lkm", get_string("task_title_root_lkm") + title_suffix),
+            "2": ("patch_root_image_file_lkm", get_string("task_title_root_file_lkm") + title_suffix),
         }
 
     while True:
@@ -357,7 +379,10 @@ def root_menu(dev, command_map, gki: bool):
 
         if choice in actions_map:
             cmd, title = actions_map[choice]
-            run_task(cmd, title, dev, command_map)
+            extras = {}
+            if not gki:
+                extras["root_type"] = root_type
+            run_task(cmd, title, dev, command_map, extra_kwargs=extras)
         elif choice == "m":
             return
         elif choice == "x":

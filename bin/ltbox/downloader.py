@@ -343,6 +343,126 @@ def download_ksuinit(target_path: Path) -> None:
             target_path.unlink()
         raise ToolError(get_string("dl_err_download_tool").format(name="ksuinit"))
 
+def download_sukisu_manager(target_dir: Path) -> None:
+    utils.ui.echo(get_string("dl_ksu_downloading"))
+    if list(target_dir.glob("SukiSU*.apk")):
+        utils.ui.echo(get_string("dl_ksu_exists"))
+        return
+
+    repo = const.SUKISU_REPO
+    workflow = const.SUKISU_WORKFLOW
+    url = f"https://nightly.link/{repo}/actions/runs/{workflow}/Spoofed-Manager.zip"
+    temp_zip = target_dir / "temp_manager.zip"
+
+    try:
+        download_resource(url, temp_zip)
+        
+        with zipfile.ZipFile(temp_zip, 'r') as zf:
+            for member in zf.infolist():
+                if member.filename.startswith("SukiSU") and member.filename.endswith(".apk"):
+                    source = zf.open(member)
+                    target = target_dir / Path(member.filename).name
+                    with open(target, "wb") as t:
+                        shutil.copyfileobj(source, t)
+                    utils.ui.echo(get_string("dl_ksu_success"))
+                    break
+    except Exception as e:
+        utils.ui.error(get_string("dl_err_ksu_download").format(e=e))
+    finally:
+        if temp_zip.exists():
+            temp_zip.unlink()
+
+def download_sukisu_init(target_path: Path) -> None:
+    if target_path.exists():
+        target_path.unlink()
+
+    repo = const.SUKISU_REPO
+    workflow = const.SUKISU_WORKFLOW
+    url = f"https://nightly.link/{repo}/actions/runs/{workflow}/ksuinit-aarch64-linux-android.zip"
+    temp_zip = target_path.parent / "temp_init.zip"
+
+    msg = get_string("dl_downloading").format(filename="ksuinit")
+    utils.ui.echo(msg)
+
+    try:
+        download_resource(url, temp_zip)
+        
+        found = False
+        with zipfile.ZipFile(temp_zip, 'r') as zf:
+            for member in zf.infolist():
+                if member.filename.endswith("ksuinit") and "release" in member.filename:
+                    with zf.open(member) as source, open(target_path, "wb") as target:
+                        shutil.copyfileobj(source, target)
+                    found = True
+                    break
+        
+        if found:
+            utils.ui.echo(get_string("dl_download_success").format(filename="ksuinit"))
+        else:
+            raise ToolError("ksuinit not found in archive")
+
+    except Exception as e:
+        utils.ui.error(get_string("dl_download_failed").format(url=url, error=e))
+        raise ToolError(get_string("dl_err_download_tool").format(name="ksuinit"))
+    finally:
+        if temp_zip.exists():
+            temp_zip.unlink()
+
+def get_sukisu_lkm(target_path: Path, kernel_version: str) -> None:
+    if target_path.exists():
+        target_path.unlink()
+        
+    if not kernel_version:
+        raise ToolError("Kernel version is required for SukiSU LKM download")
+
+    major_minor = ".".join(kernel_version.split(".")[:2])
+
+    mapping = {
+        "5.10": "android12-5.10",
+        "5.15": "android13-5.15",
+        "6.1":  "android14-6.1",
+        "6.6":  "android15-6.6",
+        "6.12": "android16-6.12"
+    }
+    
+    mapped_name = mapping.get(major_minor)
+    
+    if not mapped_name:
+         utils.ui.echo(f"Warning: No hardcoded mapping found for Kernel {major_minor}. Defaulting to android12-5.10 format fallback...")
+         mapped_name = f"android12-{major_minor}"
+
+    repo = const.SUKISU_REPO
+    workflow = const.SUKISU_WORKFLOW
+    url = f"https://nightly.link/{repo}/actions/runs/{workflow}/{mapped_name}-lkm.zip"
+    temp_zip = target_path.parent / "temp_lkm.zip"
+
+    utils.ui.echo(get_string("dl_lkm_downloading").format(asset=f"{mapped_name}-lkm"))
+
+    try:
+        download_resource(url, temp_zip)
+        
+        found = False
+        with zipfile.ZipFile(temp_zip, 'r') as zf:
+            for member in zf.infolist():
+                if member.filename.endswith("_kernelsu.ko"):
+                    with zf.open(member) as source, open(target_path, "wb") as target:
+                        shutil.copyfileobj(source, target)
+                    found = True
+                    break
+        
+        if found:
+            utils.ui.echo(get_string("dl_lkm_download_ok"))
+        else:
+            raise ToolError("kernelsu.ko not found in archive")
+
+    except Exception as e:
+        utils.ui.error(get_string("dl_lkm_download_fail").format(asset=mapped_name))
+        utils.ui.error(f"[!] {e}")
+        raise ToolError(str(e))
+    finally:
+        if temp_zip.exists():
+            temp_zip.unlink()
+
 def get_lkm_kernel(target_path: Path, kernel_version: str) -> None:
     if target_path.exists():
         target_path.unlink()

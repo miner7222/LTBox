@@ -13,7 +13,8 @@ def patch_boot_with_root_algo(
     magiskboot_exe: Path, 
     dev: Optional[device.DeviceController] = None, 
     gki: bool = False,
-    lkm_kernel_version: Optional[str] = None
+    lkm_kernel_version: Optional[str] = None,
+    root_type: str = "ksu"
 ) -> Optional[Path]:
     
     img_name = const.FN_BOOT if gki else const.FN_INIT_BOOT
@@ -77,13 +78,21 @@ def patch_boot_with_root_algo(
         try:
             ksuinit_path = work_dir / "init"
             kmod_path = work_dir / "kernelsu.ko"
-            downloader.download_ksuinit(ksuinit_path)
             
-            if not lkm_kernel_version:
-                 print(get_string("img_root_lkm_no_dev"), file=sys.stderr)
-                 return None
+            if root_type == "sukisu":
+                if not lkm_kernel_version:
+                     print(get_string("img_root_lkm_no_dev"), file=sys.stderr)
+                     return None
+                
+                downloader.download_sukisu_init(ksuinit_path)
+                downloader.get_sukisu_lkm(kmod_path, lkm_kernel_version)
+            else:
+                downloader.download_ksuinit(ksuinit_path)
+                if not lkm_kernel_version:
+                     print(get_string("img_root_lkm_no_dev"), file=sys.stderr)
+                     return None
+                downloader.get_lkm_kernel(kmod_path, lkm_kernel_version)
 
-            downloader.get_lkm_kernel(kmod_path, lkm_kernel_version)
         except Exception as e:
             print(get_string("img_root_lkm_download_fail").format(e=e), file=sys.stderr)
             return None
