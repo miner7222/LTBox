@@ -223,13 +223,8 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
         key_file = const.KEY_MAP.get(boot_pubkey) 
         
         if not key_file:
-            key_file_sha1 = "2597c218aae470a130f61162feaae70afd97f011"
-            key_file = const.KEY_MAP.get(key_file_sha1)
-            if not key_file:
-                utils.ui.info(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
-                raise KeyError(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
-            else:
-                utils.ui.info(get_string("img_avb_warn_key_fallback").format(key=boot_pubkey, fallback_name=key_file.name))
+            utils.ui.error(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
+            raise KeyError(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
 
         utils.ui.info(get_string("img_key_matched").format(name=key_file.name))
         
