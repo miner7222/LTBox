@@ -5,6 +5,7 @@ backup*/
 bin/ltbox/__pycache__/
 bin/ltbox/actions/__pycache__/
 bin/ltbox/patch/__pycache__/
+bin/ltbox/settings.json
 bin/python3/
 bin/tools/dl/
 bin/tools/tmp_patch/
