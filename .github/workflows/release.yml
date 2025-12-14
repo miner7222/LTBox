@@ -1,0 +1,40 @@
+name: Release Based On Tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Archive
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          zip -r "LTBox-win_amd64-${TAG_NAME}.zip" . -x ".git/*" -x ".github/*" -x ".gitignore"
+
+      - name: Generate Changelog
+        run: |
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          echo "## What's Changed" > release_notes.md
+          if [ -z "$PREV_TAG" ]; then
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/$CURRENT_TAG" >> release_notes.md
+          else
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$CURRENT_TAG" >> release_notes.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          files: LTBox-win_amd64-*.zip
