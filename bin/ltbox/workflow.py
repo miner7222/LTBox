@@ -53,7 +53,7 @@ def _decrypt_and_modify_xml(ctx: TaskContext) -> None:
     actions.modify_xml(wipe=ctx.wipe)
 
 def _dump_images(ctx: TaskContext) -> Tuple[bool, str, str]:
-    skip_dp_workflow = False
+    skip_dp_workflow = (ctx.wipe == 0)
     
     suffix = ctx.active_slot_suffix if ctx.active_slot_suffix else ""
     boot_target = f"boot{suffix}"
@@ -66,7 +66,8 @@ def _dump_images(ctx: TaskContext) -> Tuple[bool, str, str]:
     actions.dump_partitions(
         dev=ctx.dev,
         skip_reset=False, 
-        additional_targets=extra_dumps
+        additional_targets=extra_dumps,
+        skip_dp=skip_dp_workflow
     )
 
     return skip_dp_workflow, boot_target, vbmeta_target
@@ -155,7 +156,10 @@ def patch_all(dev: device.DeviceController, wipe: int = 0, skip_rollback: bool =
             ctx.on_log(get_string('wf_step6_dump'))
             skip_dp_workflow, boot_target, vbmeta_target = _dump_images(ctx)
             
-            ctx.on_log(get_string('wf_step7_patch_dp'))
+            if skip_dp_workflow:
+                ctx.on_log(get_string('wf_step7_skipped'))
+            else:
+                ctx.on_log(get_string('wf_step7_patch_dp'))
             backup_dir_name = _patch_devinfo(ctx, skip_dp_workflow)
             
             if not ctx.skip_rollback:
