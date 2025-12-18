@@ -16,6 +16,26 @@ from ..patch.root import patch_boot_with_root_algo
 from ..patch.avb import process_boot_image_avb, extract_image_avb_info, rebuild_vbmeta_with_chained_images, _apply_hash_footer
 from ..i18n import get_string
 
+def _prepare_and_find_manager_apks(root_type: str) -> list[Path]:
+    is_sukisu = (root_type == "sukisu")
+    
+    if is_sukisu:
+        downloader.download_sukisu_manager(const.BASE_DIR)
+        return [f for f in const.BASE_DIR.glob("*.apk") if f.name.lower().startswith("sukisu")]
+    else:
+        downloader.download_ksu_apk(const.BASE_DIR)
+        ksu_apks = [
+            f for f in const.BASE_DIR.glob("*.apk")
+            if (f.name.lower().startswith("kernelsu_next") or ("spoofed" in f.name.lower() and "kernelsu" in f.name.lower()))
+            and not f.name.lower().startswith("sukisu")
+        ]
+        
+        if not ksu_apks:
+            candidates = list(const.BASE_DIR.glob("*.apk"))
+            ksu_apks = [f for f in candidates if not f.name.lower().startswith("sukisu")]
+            
+        return ksu_apks
+
 def _patch_lkm_via_app(
     dev: device.DeviceController,
     work_dir: Path,
@@ -26,16 +46,8 @@ def _patch_lkm_via_app(
     check_key = "act_check_sukisu" if is_sukisu else "act_check_ksu"
     
     utils.ui.echo(get_string(check_key))
-    
-    if is_sukisu:
-        downloader.download_sukisu_manager(const.BASE_DIR)
-        ksu_apks = list(const.BASE_DIR.glob("SukiSU*.apk"))
-    else:
-        downloader.download_ksu_apk(const.BASE_DIR)
-        ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
-        if not ksu_apks:
-            candidates = list(const.BASE_DIR.glob("*.apk"))
-            ksu_apks = [f for f in candidates if "SukiSU" not in f.name]
+
+    ksu_apks = _prepare_and_find_manager_apks(root_type)
 
     if not ksu_apks:
         skip_key = "act_skip_sukisu" if is_sukisu else "act_skip_ksu"
@@ -71,7 +83,6 @@ def _patch_lkm_via_app(
     utils.ui.echo(get_string("act_find_patched_file"))
     try:
         if is_sukisu:
-             # Sukisu saves as kernelsu_patched_*.img
              cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_patched_*.img")
         else:
              cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_next_patched_*.img")
@@ -299,15 +310,7 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         check_key = "act_check_sukisu" if is_sukisu else "act_check_ksu"
         utils.ui.echo(get_string(check_key))
         
-        if is_sukisu:
-            downloader.download_sukisu_manager(const.BASE_DIR)
-            ksu_apks = list(const.BASE_DIR.glob("SukiSU*.apk"))
-        else:
-            downloader.download_ksu_apk(const.BASE_DIR)
-            ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
-            if not ksu_apks:
-                candidates = list(const.BASE_DIR.glob("*.apk"))
-                ksu_apks = [f for f in candidates if "SukiSU" not in f.name]
+        ksu_apks = _prepare_and_find_manager_apks(root_type)
         
         if ksu_apks:
             apk_path = ksu_apks[0]
