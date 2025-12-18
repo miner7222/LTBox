@@ -33,6 +33,9 @@ def _patch_lkm_via_app(
     else:
         downloader.download_ksu_apk(const.BASE_DIR)
         ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
+        if not ksu_apks:
+            candidates = list(const.BASE_DIR.glob("*.apk"))
+            ksu_apks = [f for f in candidates if "SukiSU" not in f.name]
 
     if not ksu_apks:
         skip_key = "act_skip_sukisu" if is_sukisu else "act_skip_ksu"
@@ -302,6 +305,9 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         else:
             downloader.download_ksu_apk(const.BASE_DIR)
             ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
+            if not ksu_apks:
+                candidates = list(const.BASE_DIR.glob("*.apk"))
+                ksu_apks = [f for f in candidates if "SukiSU" not in f.name]
         
         if ksu_apks:
             apk_path = ksu_apks[0]

@@ -410,6 +410,7 @@
   "dl_err_download_tool": "{name} 다운로드 실패",
   "dl_err_exe_in_zip_not_found": "{zip_name} 내에서 '{exe_name}'을(를) 찾을 수 없습니다.",
   "dl_err_extract_tool": "{name} 추출 실패",
+  "dl_err_ksu_dl_spoof": "Spoofed APK를 찾지 못함. 일반 APK로 시도 중...",
   "dl_err_ksu_download": "KSU APK 다운로드 실패: {e}",
   "dl_err_openssl_download": "OpenSSL 다운로드 실패: {e}",
   "dl_err_openssl_generic": "OpenSSL 다운로드에 실패했습니다.",

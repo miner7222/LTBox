@@ -313,6 +313,10 @@ def download_ksu_apk(target_dir: Path) -> None:
         try:
             _download_github_asset(f"https://github.com/{const.KSU_APK_REPO}", const.KSU_APK_TAG, ".*spoofed.*\\.apk", target_dir)
             utils.ui.echo(get_string("dl_ksu_success"))
+        except ToolError as e:utils.ui.echo(get_string("dl_err_ksu_dl_spoof"))
+        try:
+            _download_github_asset(f"https://github.com/{const.KSU_APK_REPO}", const.KSU_APK_TAG, ".*\\.apk", target_dir)
+            utils.ui.echo(get_string("dl_ksu_success"))
         except ToolError as e:
              utils.ui.error(get_string("dl_err_ksu_download").format(e=e))
 

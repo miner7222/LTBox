@@ -411,6 +411,7 @@
   "dl_err_download_tool": "Download failed for {name}",
   "dl_err_exe_in_zip_not_found": "'{exe_name}' not found inside {zip_name}",
   "dl_err_extract_tool": "Extraction failed for {name}",
+  "dl_err_ksu_dl_spoof": "Spoofed APK not found, trying standard APK...",
   "dl_err_ksu_download": "Failed to download KSU APK: {e}",
   "dl_err_openssl_download": "Failed to download OpenSSL: {e}",
   "dl_err_openssl_generic": "OpenSSL download failed",

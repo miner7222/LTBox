@@ -411,6 +411,7 @@
   "dl_err_download_tool": "Скачивание не удалось: {name}",
   "dl_err_exe_in_zip_not_found": "'{exe_name}' не найден внутри {zip_name}",
   "dl_err_extract_tool": "Извлечение не удалось: {name}",
+  "dl_err_ksu_dl_spoof": "Поддельный APK-файл не найден, выполняется попытка использования стандартного APK-файла...",
   "dl_err_ksu_download": "Не удалось загрузить APK KSU: {e}",
   "dl_err_openssl_download": "Не удалось загрузить OpenSSL: {e}",
   "dl_err_openssl_generic": "Ошибка загрузки OpenSSL",
