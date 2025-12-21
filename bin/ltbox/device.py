@@ -422,7 +422,7 @@ class DeviceController:
 
     @property
     def skip_adb(self) -> bool:
-        return self._skip_adb
+        return self.adb.skip_adb
 
     @skip_adb.setter
     def skip_adb(self, value: bool) -> None:
