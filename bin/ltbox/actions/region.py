@@ -60,6 +60,7 @@ def convert_region_images(
     on_log(get_string("act_info_extracted"))
 
     if device_model and not dev.skip_adb:
+        device_model = device_model.replace(" ", "")
         on_log(get_string("act_val_model").format(model=device_model))
         fingerprint_key = "com.android.build.vendor_boot.fingerprint"
         if fingerprint_key in vendor_boot_info:
