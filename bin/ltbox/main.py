@@ -356,7 +356,7 @@ def root_menu(dev, command_map, gki: bool):
             "2": ("patch_root_image_file_gki", get_string("task_title_root_file_gki")),
         }
     else:
-        title_suffix = " (SukiSU)" if root_type == "sukisu" else " (KSU)"
+        title_suffix = " (SukiSU Ultra)" if root_type == "sukisu" else " (KernelSU Next)"
         actions_map = {
             "1": ("root_device_lkm", get_string("task_title_root_lkm") + title_suffix),
             "2": ("patch_root_image_file_lkm", get_string("task_title_root_file_lkm") + title_suffix),

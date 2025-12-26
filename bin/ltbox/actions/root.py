@@ -43,15 +43,20 @@ def _patch_lkm_via_app(
     root_type: str = "ksu"
 ) -> Optional[Path]:
     is_sukisu = (root_type == "sukisu")
-    check_key = "act_check_sukisu" if is_sukisu else "act_check_ksu"
-    
-    utils.ui.echo(get_string(check_key))
+
+    check_msg = get_string("act_check_ksu")
+    if is_sukisu:
+        check_msg = check_msg.replace("KernelSU Next", "SukiSU Ultra")
+    utils.ui.echo(check_msg)
 
     ksu_apks = _prepare_and_find_manager_apks(root_type)
 
     if not ksu_apks:
-        skip_key = "act_skip_sukisu" if is_sukisu else "act_skip_ksu"
-        utils.ui.echo(get_string(skip_key))
+        skip_key = "act_skip_ksu"
+        skip_msg = get_string(skip_key)
+        if is_sukisu:
+            skip_msg = skip_msg.replace("KernelSU Next", "SukiSU Ultra")
+        utils.ui.echo(skip_msg)
         return None
     
     apk_path = ksu_apks[0]
@@ -71,7 +76,7 @@ def _patch_lkm_via_app(
     except Exception as e:
         utils.ui.echo(get_string("act_err_push_init_boot").format(e=e))
         return None
-    
+
     prompt_key = "act_prompt_patch_app_sukisu" if is_sukisu else "act_prompt_patch_app"
     utils.ui.echo(get_string(prompt_key))
     utils.ui.echo(get_string("press_enter_to_continue"))
@@ -307,8 +312,11 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
 
     if not dev.skip_adb:
         is_sukisu = (root_type == "sukisu")
-        check_key = "act_check_sukisu" if is_sukisu else "act_check_ksu"
-        utils.ui.echo(get_string(check_key))
+
+        check_msg = get_string("act_check_ksu")
+        if is_sukisu:
+            check_msg = check_msg.replace("KernelSU Next", "SukiSU Ultra")
+        utils.ui.echo(check_msg)
         
         ksu_apks = _prepare_and_find_manager_apks(root_type)
         
@@ -322,8 +330,11 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
                 utils.ui.echo(get_string("act_err_ksu").format(e=e))
                 utils.ui.echo(get_string("act_root_anyway"))
         else:
-            skip_key = "act_skip_sukisu" if is_sukisu else "act_skip_ksu"
-            utils.ui.echo(get_string(skip_key))
+            skip_key = "act_skip_ksu"
+            skip_msg = get_string(skip_key)
+            if is_sukisu:
+                skip_msg = skip_msg.replace("KernelSU Next", "SukiSU Ultra")
+            utils.ui.echo(skip_msg)
     
     utils.ui.echo(get_string("act_root_step2"))
     port = dev.setup_edl_connection()

@@ -348,9 +348,13 @@ def download_ksuinit(target_path: Path) -> None:
         raise ToolError(get_string("dl_err_download_tool").format(name="ksuinit"))
 
 def download_sukisu_manager(target_dir: Path) -> None:
-    utils.ui.echo(get_string("dl_ksu_downloading"))
+    msg_downloading = get_string("dl_ksu_downloading")
+    msg_downloading = msg_downloading.replace("KernelSU Next", "SukiSU Ultra")
+    utils.ui.echo(msg_downloading)
     if list(target_dir.glob("SukiSU*.apk")):
-        utils.ui.echo(get_string("dl_ksu_exists"))
+        msg_exists = get_string("dl_ksu_exists")
+        msg_exists = msg_exists.replace("KernelSU Next", "SukiSU Ultra")
+        utils.ui.echo(msg_exists)
         return
 
     repo = const.SUKISU_REPO
@@ -368,10 +372,14 @@ def download_sukisu_manager(target_dir: Path) -> None:
                         target = target_dir / Path(member.filename).name
                         with open(target, "wb") as t:
                             shutil.copyfileobj(source, t)
-                    utils.ui.echo(get_string("dl_ksu_success"))
+                    msg_success = get_string("dl_ksu_success")
+                    msg_success = msg_success.replace("KernelSU Next", "SukiSU Ultra")
+                    utils.ui.echo(msg_success)
                     break
     except Exception as e:
-        utils.ui.error(get_string("dl_err_ksu_download").format(e=e))
+        msg_err_download = get_string("dl_err_ksu_download")
+        msg_err_download = msg_downloading.replace("KernelSU Next", "SukiSU Ultra")
+        utils.ui.error(msg_err_download.format(e=e))
     finally:
         if temp_zip.exists():
             try:
