@@ -471,6 +471,7 @@
   "err_req_kernel_ver_lkm": "LKM 다운로드를 위해 커널 버전이 필요합니다.",
   "err_req_kernel_ver_sukisu": "SukiSU LKM 다운로드를 위해 커널 버전이 필요합니다.",
   "err_run_install_manually": "[!] 'ltbox/install.bat'를 수동으로 실행하고 다시 시도하세요.",
+  "err_sukisu_kernel_map_not_found": "커널 {ver}에 대한 매핑을 찾을 수 없습니다. 중단합니다.",
   "example_path": "  예: C:\\LTBox",
   "img_analyze_new": "[*] 새 {name} 분석 중...",
   "img_avb_apply_footer": "[*] '{name}'에 Algorithm={algo}(으)로 해시 푸터 적용 중...",

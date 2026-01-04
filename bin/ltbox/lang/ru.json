@@ -472,6 +472,7 @@
   "err_req_kernel_ver_lkm": "Для загрузки LKM требуется версия ядра.",
   "err_req_kernel_ver_sukisu": "Для загрузки SukiSU LKM требуется версия ядра.",
   "err_run_install_manually": "[!] Запустите вручную 'ltbox/install.bat' и повторите попытку.",
+  "err_sukisu_kernel_map_not_found": "Не найдено сопоставление для ядра {ver}. Прерывание.",
   "example_path": "  Пример: C:\\LTBox",
   "img_analyze_new": "[*] Анализ нового '{name}'...",
   "img_avb_apply_footer": "[*] Примяем хеш footer для '{name}' с алгоритмом={algo}...",

@@ -472,6 +472,7 @@
   "err_req_kernel_ver_lkm": "Kernel version is required for LKM download",
   "err_req_kernel_ver_sukisu": "Kernel version is required for SukiSU LKM download",
   "err_run_install_manually": "[!] Run 'ltbox/install.bat' manually and try again.",
+  "err_sukisu_kernel_map_not_found": "No mapping found for Kernel {ver}. Aborting.",
   "example_path": "  Example: C:\\LTBox",
   "img_analyze_new": "[*] Analyzing new {name}...",
   "img_avb_apply_footer": "[*] Applying hash footer for '{name}' with Algorithm={algo}...",

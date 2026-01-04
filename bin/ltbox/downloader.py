@@ -445,8 +445,7 @@ def get_sukisu_lkm(target_path: Path, kernel_version: str) -> None:
     mapped_name = mapping.get(major_minor)
     
     if not mapped_name:
-         utils.ui.echo(f"Warning: No hardcoded mapping found for Kernel {major_minor}. Defaulting to android12-5.10 format fallback...")
-         mapped_name = f"android12-{major_minor}"
+         raise ToolError(get_string("err_sukisu_kernel_map_not_found").format(ver=major_minor))
 
     repo = const.SUKISU_REPO
     workflow = const.SUKISU_WORKFLOW
