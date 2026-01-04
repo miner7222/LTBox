@@ -568,9 +568,9 @@ def entry_point():
             sys.exit(1)
 
         try:
-            from . import utils as u, actions as a, workflow as w, device as d
-            from . import constants as c
-            from .patch import avb as avb
+            from . import utils, actions, workflow, device
+            from . import constants
+            from .patch import avb
 
             registry = CommandRegistry()
 
@@ -580,31 +580,31 @@ def entry_point():
                 i18n.load_lang(new_lang)
                 return get_string("lang_changed")
 
-            registry.add("convert", a.convert_region_images, get_string("task_title_convert_rom"), require_dev=True)
-            registry.add("root_device_gki", a.root_device, get_string("task_title_root_gki"), require_dev=True, gki=True)
-            registry.add("patch_root_image_file_gki", a.patch_root_image_file, get_string("task_title_root_file_gki"), require_dev=False, gki=True)
-            registry.add("root_device_lkm", a.root_device, get_string("task_title_root_lkm"), require_dev=True, gki=False)
-            registry.add("patch_root_image_file_lkm", a.patch_root_image_file, get_string("task_title_root_file_lkm"), require_dev=False, gki=False)
-            registry.add("unroot_device", a.unroot_device, get_string("task_title_unroot"), require_dev=True)
-            registry.add("sign_and_flash_twrp", a.sign_and_flash_twrp, get_string("task_title_rec_flash"), require_dev=True)
-            registry.add("disable_ota", a.disable_ota, get_string("task_title_disable_ota"), require_dev=True)
-            registry.add("rescue_ota", a.rescue_after_ota, get_string("task_title_rescue"), require_dev=True)
-            registry.add("edit_dp", a.edit_devinfo_persist, get_string("task_title_patch_devinfo"), require_dev=False)
-            registry.add("dump_partitions", a.dump_partitions, get_string("task_title_dump_devinfo"), require_dev=True)
-            registry.add("flash_partitions", a.flash_partitions, get_string("task_title_write_devinfo"), require_dev=True)
-            registry.add("read_anti_rollback", a.read_anti_rollback_from_device, get_string("task_title_read_arb"), require_dev=True)
-            registry.add("patch_anti_rollback", a.patch_anti_rollback_in_rom, get_string("task_title_patch_arb"), require_dev=False)
-            registry.add("write_anti_rollback", a.write_anti_rollback, get_string("task_title_write_arb"), require_dev=True)
-            registry.add("clean", u.clean_workspace, get_string("task_title_clean"), require_dev=False)
-            registry.add("decrypt_xml", a.decrypt_x_files, get_string("task_title_decrypt_xml"), require_dev=False)
-            registry.add("modify_xml", a.modify_xml, get_string("task_title_modify_xml_nowipe"), require_dev=False, wipe=0)
-            registry.add("modify_xml_wipe", a.modify_xml, get_string("task_title_modify_xml_wipe"), require_dev=False, wipe=1)
-            registry.add("flash_full_firmware", a.flash_full_firmware, get_string("task_title_flash_full_firmware"), require_dev=True)
-            registry.add("patch_all", w.patch_all, get_string("task_title_install_nowipe"), require_dev=True, wipe=0)
-            registry.add("patch_all_wipe", w.patch_all, get_string("task_title_install_wipe"), require_dev=True, wipe=1)
+            registry.add("convert", actions.convert_region_images, get_string("task_title_convert_rom"), require_dev=True)
+            registry.add("root_device_gki", actions.root_device, get_string("task_title_root_gki"), require_dev=True, gki=True)
+            registry.add("patch_root_image_file_gki", actions.patch_root_image_file, get_string("task_title_root_file_gki"), require_dev=False, gki=True)
+            registry.add("root_device_lkm", actions.root_device, get_string("task_title_root_lkm"), require_dev=True, gki=False)
+            registry.add("patch_root_image_file_lkm", actions.patch_root_image_file, get_string("task_title_root_file_lkm"), require_dev=False, gki=False)
+            registry.add("unroot_device", actions.unroot_device, get_string("task_title_unroot"), require_dev=True)
+            registry.add("sign_and_flash_twrp", actions.sign_and_flash_twrp, get_string("task_title_rec_flash"), require_dev=True)
+            registry.add("disable_ota", actions.disable_ota, get_string("task_title_disable_ota"), require_dev=True)
+            registry.add("rescue_ota", actions.rescue_after_ota, get_string("task_title_rescue"), require_dev=True)
+            registry.add("edit_dp", actions.edit_devinfo_persist, get_string("task_title_patch_devinfo"), require_dev=False)
+            registry.add("dump_partitions", actions.dump_partitions, get_string("task_title_dump_devinfo"), require_dev=True)
+            registry.add("flash_partitions", actions.flash_partitions, get_string("task_title_write_devinfo"), require_dev=True)
+            registry.add("read_anti_rollback", actions.read_anti_rollback_from_device, get_string("task_title_read_arb"), require_dev=True)
+            registry.add("patch_anti_rollback", actions.patch_anti_rollback_in_rom, get_string("task_title_patch_arb"), require_dev=False)
+            registry.add("write_anti_rollback", actions.write_anti_rollback, get_string("task_title_write_arb"), require_dev=True)
+            registry.add("clean", utils.clean_workspace, get_string("task_title_clean"), require_dev=False)
+            registry.add("decrypt_xml", actions.decrypt_x_files, get_string("task_title_decrypt_xml"), require_dev=False)
+            registry.add("modify_xml", actions.modify_xml, get_string("task_title_modify_xml_nowipe"), require_dev=False, wipe=0)
+            registry.add("modify_xml_wipe", actions.modify_xml, get_string("task_title_modify_xml_wipe"), require_dev=False, wipe=1)
+            registry.add("flash_full_firmware", actions.flash_full_firmware, get_string("task_title_flash_full_firmware"), require_dev=True)
+            registry.add("patch_all", workflow.patch_all, get_string("task_title_install_nowipe"), require_dev=True, wipe=0)
+            registry.add("patch_all_wipe", workflow.patch_all, get_string("task_title_install_wipe"), require_dev=True, wipe=1)
 
-            device_controller_class = d.DeviceController
-            constants_module = c
+            device_controller_class = device.DeviceController
+            constants_module = constants
             avb_patch_module = avb
 
         except ImportError as e:
