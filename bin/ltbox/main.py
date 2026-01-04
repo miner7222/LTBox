@@ -126,9 +126,6 @@ def _get_advanced_menu_data() -> List[Dict[str, Any]]:
         {"type": "option", "key": "10", "text": get_string("menu_adv_10"), "action": "modify_xml"},
         {"type": "option", "key": "11", "text": get_string("menu_adv_11"), "action": "flash_full_firmware"},
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_adv_sub_maint')},
-        {"type": "option", "key": "12", "text": get_string("menu_adv_12"), "action": "clean"},
-        {"type": "separator"},
         {"type": "label", "text": get_string('menu_adv_sub_nav')},
         {"type": "option", "key": "m", "text": get_string("menu_adv_m"), "action": "return"},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
@@ -291,8 +288,6 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
                 ui.echo(get_string("act_arb_complete").format(status=result[0]))
                 ui.echo(get_string("act_curr_boot_idx").format(idx=result[1]))
                 ui.echo(get_string("act_curr_vbmeta_idx").format(idx=result[2]))
-        elif command == "clean":
-            pass
         elif result:
             ui.echo(get_string("act_unhandled_success_result").format(res=result))
 
@@ -318,11 +313,8 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
         ui.echo("=" * 78)
         ui.echo(get_string("task_completed").format(title=title))
         ui.echo("=" * 78 + "\n")
-        
-        if command == "clean":
-            input(get_string("press_enter_to_exit"))
-        else:
-            input(get_string("press_enter_to_continue"))
+
+        input(get_string("press_enter_to_continue"))
 
 def run_info_scan(paths, constants, avb_patch):
     print(get_string("scan_start"))
@@ -394,8 +386,6 @@ def advanced_menu(dev, registry: CommandRegistry):
             sys.exit()
         elif action:
             run_task(action, dev, registry)
-            if action == "clean":
-                sys.exit()
 
 def root_menu(dev, registry: CommandRegistry, gki: bool):
     root_type = "ksu"
@@ -589,7 +579,6 @@ def entry_point():
             registry.add("read_anti_rollback", actions.read_anti_rollback_from_device, get_string("task_title_read_arb"), require_dev=True)
             registry.add("patch_anti_rollback", actions.patch_anti_rollback_in_rom, get_string("task_title_patch_arb"), require_dev=False)
             registry.add("write_anti_rollback", actions.write_anti_rollback, get_string("task_title_write_arb"), require_dev=True)
-            registry.add("clean", utils.clean_workspace, get_string("task_title_clean"), require_dev=False)
             registry.add("decrypt_xml", actions.decrypt_x_files, get_string("task_title_decrypt_xml"), require_dev=False)
             registry.add("modify_xml", actions.modify_xml, get_string("task_title_modify_xml_nowipe"), require_dev=False, wipe=0)
             registry.add("modify_xml_wipe", actions.modify_xml, get_string("task_title_modify_xml_wipe"), require_dev=False, wipe=1)
