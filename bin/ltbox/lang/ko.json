@@ -443,7 +443,7 @@
   "err_current_platform": "  감지된 플랫폼: {platform}",
   "err_detailed_traceback": "상세 오류 내역:\n",
   "err_details": "[!] 상세: {e}",
-  "err_download_workflow": "다운로드에 실패했습니다. 워크플로 실행 넘버가 올바른지/만료되지 않았는지 확인하세요.\n메뉴로 돌아갑니다."
+  "err_download_workflow": "다운로드에 실패했습니다. 워크플로 실행 넘버가 올바른지/만료되지 않았는지 확인하세요.\n메뉴로 돌아갑니다.",
   "err_ensure_errors": "[!] 'ltbox/errors.py' 파일이 있는지 확인하세요.",
   "err_ensure_ltbox_present": "[!] 'ltbox' 폴더와 파일이 있는지 확인하세요.",
   "err_fatal_abort": "\n[!] 치명적인 오류가 발생했습니다. 중단합니다.",
