@@ -173,6 +173,17 @@ class AdbManager:
             if d: return d.shell(cmd)
         return ""
 
+    def force_kill_server(self):
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "adb.exe", "/T"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+        except Exception:
+            pass
+
 class FastbootManager:
     def get_slot_suffix(self) -> Optional[str]:
         try:

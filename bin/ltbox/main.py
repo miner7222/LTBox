@@ -317,6 +317,9 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
     except KeyboardInterrupt:
         ui.error(get_string("process_cancelled"))
     finally:
+        if dev and hasattr(dev, 'adb'):
+            dev.adb.force_kill_server()
+
         ui.echo("")
         input(get_string("press_enter_to_continue"))
 
