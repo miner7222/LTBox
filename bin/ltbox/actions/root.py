@@ -165,7 +165,7 @@ class LkmRootStrategy(RootStrategy):
         utils.ui.echo(msg_default)
         utils.ui.echo("-" * 60)
         
-        val = input("Input > ").strip()
+        val = input(get_string("prompt_input_arrow")).strip()
         if not val:
             return default_id
         return val
@@ -362,9 +362,9 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
         lkm_kernel_version = None
         if not gki:
              utils.ui.echo(get_string("err_req_kernel_ver_lkm"))
-             lkm_kernel_version = input("Enter Kernel Version (e.g. 5.15.100): ").strip()
+             lkm_kernel_version = input(get_string("prompt_enter_kernel_version")).strip()
              if not lkm_kernel_version:
-                 utils.ui.error("Kernel version required.")
+                 utils.ui.error(get_string("err_kernel_version_req"))
                  return
         
         if not strategy.download_resources(lkm_kernel_version):
@@ -563,7 +563,7 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
     lkm_kernel_version = _get_lkm_kernel_version(dev, gki)
 
     if not strategy.download_resources(lkm_kernel_version):
-        utils.ui.error("Failed to download resources. Aborting.")
+        utils.ui.error(get_string("err_download_resources_abort"))
         return
 
     _install_manager_apk(dev)
@@ -810,7 +810,7 @@ def sign_and_flash_twrp(dev: device.DeviceController) -> None:
 def _cleanup_manager_apk():
     manager_apk = const.TOOLS_DIR / "manager.apk"
     if manager_apk.exists():
-        utils.ui.echo("[*] Cleaning up old manager.apk...")
+        utils.ui.echo(get_string("act_cleanup_manager_apk"))
         try:
             manager_apk.unlink()
         except OSError:
@@ -823,12 +823,12 @@ def _install_manager_apk(dev: device.DeviceController):
     utils.ui.echo(get_string("act_install_ksu").format(name="Manager App"))
     
     if not manager_apk.exists():
-        utils.ui.error("Manager APK not found. Skipping installation.")
+        utils.ui.error(get_string("act_manager_apk_not_found"))
         return
 
     if dev.skip_adb:
-        utils.ui.echo("ADB skipped. Please install the Manager app manually.")
-        utils.ui.echo(f"File location: {manager_apk}")
+        utils.ui.echo(get_string("act_adb_skipped_manual_install"))
+        utils.ui.echo(get_string("act_file_location").format(path=manager_apk))
         return
 
     utils.ui.echo(get_string("act_wait_sys_adb"))
