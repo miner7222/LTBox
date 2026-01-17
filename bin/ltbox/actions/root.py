@@ -157,6 +157,7 @@ class LkmRootStrategy(RootStrategy):
         return mapping.get(major_minor)
 
     def _prompt_workflow(self, root_name: str, default_id: str) -> str:
+        utils.ui.clear()
         msg_enter = get_string("prompt_workflow_id").replace("{name}", root_name)
         msg_default = get_string("prompt_workflow_default").replace("{id}", default_id)
         
@@ -182,7 +183,7 @@ class LkmRootStrategy(RootStrategy):
             menu.add_option("1", get_string("menu_root_subtype_release"))
             menu.add_option("2", get_string("menu_root_subtype_nightly"))
             
-            choice = menu.ask(get_string("menu_root_subtype_prompt"), get_string("menu_invalid"))
+            choice = menu.ask(get_string("prompt_select"), get_string("menu_invalid"))
             
             if choice == "2":
                 self.is_nightly = True
@@ -621,7 +622,7 @@ def unroot_device(dev: device.DeviceController) -> None:
         utils.ui.echo("\n  " + "=" * 78 + "\n")
         
         while selected_strategy is None:
-            choice = utils.ui.prompt(get_string("act_unroot_menu_prompt")).strip().lower()
+            choice = utils.ui.prompt(get_string("prompt_select")).strip().lower()
             if choice == "1":
                 selected_strategy = lkm_strategy
             elif choice == "2":
