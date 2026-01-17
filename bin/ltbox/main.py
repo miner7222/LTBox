@@ -1,9 +1,10 @@
+import ctypes
+import json
 import os
 import platform
 import subprocess
 import sys
-import json
-import ctypes
+import webbrowser
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Dict, Callable, Any, List, Optional
@@ -609,6 +610,34 @@ def entry_point():
             sys.exit(0)
         
         ui.clear()
+        
+        from . import utils
+
+        current_version = "v0.0.0"
+        config_file = APP_DIR / "config.json"
+
+        if config_file.exists():
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    current_version = config_data.get("version", "v0.0.0")
+            except Exception:
+                pass
+
+        latest_version = utils.get_latest_release_version("miner7222", "LTBox")
+        
+        if latest_version and utils.is_update_available(current_version, latest_version):
+            ui.echo(get_string("update_avail_title"))
+
+            prompt_msg = get_string("update_avail_prompt").format(curr=current_version, new=latest_version)
+            choice = input(prompt_msg).strip().lower()
+            
+            if choice == 'y':
+                ui.echo(get_string("update_open_web"))
+                webbrowser.open("https://github.com/miner7222/LTBox/releases")
+                sys.exit(0)
+
+            ui.clear()
 
         try:
             downloader.install_base_tools(lang_code)

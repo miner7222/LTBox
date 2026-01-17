@@ -1,6 +1,8 @@
+import json
 import os
 import subprocess
 import shutil
+import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Callable, Generator, Any, Union
@@ -13,6 +15,26 @@ from .ui import ui
 logger = get_logger()
 
 _CACHED_ENV = None
+
+def get_latest_release_version(repo_owner: str, repo_name: str) -> Optional[str]:
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+                tag = data.get("tag_name")
+                return tag
+    except Exception as e:
+        return None
+
+def is_update_available(current: str, latest: str) -> bool:
+    def version_to_tuple(v_str):
+        try:
+            return tuple(map(int, v_str.lstrip('v').split('.')))
+        except ValueError:
+            return (0, 0, 0)
+
+    return version_to_tuple(latest) > version_to_tuple(current)
 
 def _get_tool_env() -> dict:
     global _CACHED_ENV

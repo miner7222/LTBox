@@ -16,6 +16,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify Version Match
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          CONFIG_VERSION=$(jq -r '.version' bin/ltbox/config.json)
+          
+          echo "Tag: $TAG_NAME"
+          echo "Config: $CONFIG_VERSION"
+          
+          if [ "$TAG_NAME" != "$CONFIG_VERSION" ]; then
+            echo "Error: Git tag ($TAG_NAME) does not match config.json version ($CONFIG_VERSION)."
+            exit 1
+          fi
+
       - name: Create Archive
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}

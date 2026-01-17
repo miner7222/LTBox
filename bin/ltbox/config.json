@@ -1,4 +1,5 @@
 {
+  "version": "v2.2.0",
   "tools": {
     "platform_tools_url": "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
     "avb_archive_url": "https://android.googlesource.com/platform/external/avb/+archive/refs/heads/main.tar.gz",
