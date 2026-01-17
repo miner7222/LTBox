@@ -88,7 +88,9 @@ class GkiRootStrategy(RootStrategy):
         ensure_magiskboot()
         
         downloader.download_gki_tools(gki=True)
-        
+
+        downloader.download_ksu_manager_release(const.TOOLS_DIR)
+
         return patch_boot_with_root_algo(work_dir, magiskboot_exe, dev=None, gki=True)
 
     def finalize_patch(self, patched_boot: Path, output_dir: Path, backup_source_dir: Path) -> Path:
@@ -133,11 +135,6 @@ class LkmRootStrategy(RootStrategy):
             "main": f"init_boot{suffix}",
             "vbmeta": f"vbmeta{suffix}"
         }
-    
-    def _cleanup_manager_apk(self):
-        manager_apk = const.TOOLS_DIR / "manager.apk"
-        if manager_apk.exists():
-            manager_apk.unlink()
 
     def _get_mapped_kernel_name(self, kernel_version: str) -> Optional[str]:
         if not kernel_version: return None
@@ -240,7 +237,6 @@ class LkmRootStrategy(RootStrategy):
             return False
 
     def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path:
-        self._cleanup_manager_apk()
         magiskboot_exe = utils.get_platform_executable("magiskboot")
         ensure_magiskboot()
 
@@ -523,8 +519,47 @@ def _flash_root_image(dev: device.DeviceController, strategy: RootStrategy, part
         utils.ui.error(get_string("act_err_edl_write").format(e=e))
         raise
 
+def _cleanup_manager_apk():
+    manager_apk = const.TOOLS_DIR / "manager.apk"
+    if manager_apk.exists():
+        utils.ui.echo("[*] Cleaning up old manager.apk...")
+        try:
+            manager_apk.unlink()
+        except OSError:
+            pass
+
+def _install_manager_apk(dev: device.DeviceController):
+    manager_apk = const.TOOLS_DIR / "manager.apk"
+    
+    utils.ui.echo("\n" + "-" * 30)
+    utils.ui.echo(get_string("act_install_ksu").format(name="Manager App"))
+    
+    if not manager_apk.exists():
+        utils.ui.error("Manager APK not found. Skipping installation.")
+        return
+
+    if dev.skip_adb:
+        utils.ui.echo("ADB skipped. Please install the Manager app manually.")
+        utils.ui.echo(f"File location: {manager_apk}")
+        return
+
+    utils.ui.echo(get_string("act_wait_sys_adb"))
+    try:
+        dev.adb.wait_for_device()
+
+        utils.ui.echo(get_string("act_wait_stability"))
+        time.sleep(5)
+        
+        dev.adb.install(manager_apk)
+        utils.ui.echo(get_string("act_ksu_ok"))
+    except Exception as e:
+        utils.ui.error(get_string("act_err_ksu").format(e=e))
+    utils.ui.echo("-" * 30 + "\n")
+
 def root_device(dev: device.DeviceController, gki: bool = False, root_type: str = "ksu") -> None:
     strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
+
+    _cleanup_manager_apk()
 
     if isinstance(strategy, LkmRootStrategy):
         strategy.configure_source()
@@ -561,6 +596,8 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
     _dump_and_generate_root_image(dev, port, strategy, partition_map, gki, lkm_kernel_version)
 
     _flash_root_image(dev, strategy, partition_map, gki)
+
+    _install_manager_apk(dev)
 
     utils.ui.echo(get_string("act_root_finish"))
 
