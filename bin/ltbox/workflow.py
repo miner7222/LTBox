@@ -84,8 +84,18 @@ def _patch_devinfo(ctx: TaskContext, skip_dp_workflow: bool) -> Optional[str]:
 
 def _select_country_code_adapter(options, prompt_msg):
     utils.ui.info(prompt_msg)
-    for i, (code, name) in enumerate(options):
-        utils.ui.info(f"{i+1:3d}. {name} ({code})")
+    
+    count = len(options)
+    for i in range(0, count, 2):
+        code1, name1 = options[i]
+        item1 = f"{i+1:3d}. {name1} ({code1})"
+        
+        if i + 1 < count:
+            code2, name2 = options[i+1]
+            item2 = f"{i+2:3d}. {name2} ({code2})"
+            utils.ui.info(f"{item1:<40} {item2}")
+        else:
+            utils.ui.info(item1)
     
     while True:
         choice = utils.ui.prompt(get_string("act_enter_num").format(len=len(options)))
