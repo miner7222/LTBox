@@ -135,6 +135,7 @@
   "act_finalize_root": "\n[*] 마무리 중...",
   "act_find_patched_file": "[*] /sdcard/Download/ 에서 패치된 파일 찾는 중...",
   "act_flash_boot_ok": "[+] 'boot.img'를 {part}에 플래싱했습니다.",
+  "act_flash_vbmeta_ok": "[+] 'vbmeta.img'를 {part}에 플래싱했습니다.",
   "act_flash_devinfo_ok": "[+] 'devinfo' 플래싱됨.",
   "act_flash_finish": "\n[*] EDL 모드 전체 플래싱 완료",
   "act_flash_init_boot_ok": "[+] 'init_boot.img'를 {part}에 플래싱했습니다.",

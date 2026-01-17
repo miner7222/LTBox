@@ -506,7 +506,7 @@ def _flash_root_image(dev: device.DeviceController, strategy: RootStrategy, part
             final_vbmeta_path = strategy.output_dir / const.FN_VBMETA
             vbmeta_part = partition_map["vbmeta"]
             edl.flash_partition_target(dev, port, vbmeta_part, final_vbmeta_path)
-            utils.ui.echo(get_string("act_flash_boot_ok").format(part=vbmeta_part))
+            utils.ui.echo(get_string("act_flash_vbmeta_ok").format(part=vbmeta_part))
 
         utils.ui.echo(get_string("act_reset_sys"))
         dev.edl.reset(port)

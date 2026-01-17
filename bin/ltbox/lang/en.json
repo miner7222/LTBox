@@ -136,6 +136,7 @@
   "act_find_patched_file": "[*] Finding patched file in /sdcard/Download/...",
   "act_flash_boot_ok": "[+] Flashed 'boot.img' to {part}.",
   "act_flash_devinfo_ok": "[+] Flashed 'devinfo'.",
+  "act_flash_vbmeta_ok": "[+] 'vbmeta.img' flashed to {part}.",
   "act_flash_finish": "\n[*] Full EDL Flash Finished",
   "act_flash_init_boot_ok": "[+] Flashed 'init_boot.img' to {part}.",
   "act_flash_persist_ok": "[+] Flashed 'persist'.",

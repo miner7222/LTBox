@@ -136,6 +136,7 @@
   "act_find_patched_file": "[*] Поиск патченного файла в /sdcard/Download/...",
   "act_flash_boot_ok": "[+] 'boot.img' прошит в {part}.",
   "act_flash_devinfo_ok": "[+] Прошивка 'devinfo'.",
+  "act_flash_vbmeta_ok": "[+] 'vbmeta.img' прошит в {part}.",
   "act_flash_finish": "\n[*] Полная прошивка в EDL завершена",
   "act_flash_init_boot_ok": "[+] 'init_boot.img' прошит в {part}.",
   "act_flash_persist_ok": "[+] Прошивка 'persist'.",
