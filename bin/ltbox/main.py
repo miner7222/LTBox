@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Dict, Callable, Any, List, Optional
 
-from . import downloader, i18n
+from . import downloader, i18n, utils
 from .i18n import get_string
 from .logger import logging_context
 from .utils import ui
@@ -170,6 +170,7 @@ def _get_settings_menu_data(skip_adb_state: str, skip_rb_state: str, target_regi
         {"type": "option", "key": "2", "text": get_string("menu_settings_skip_adb").format(state=skip_adb_state), "action": "toggle_adb"},
         {"type": "option", "key": "3", "text": get_string("menu_settings_skip_rb").format(state=skip_rb_state), "action": "toggle_rollback"},
         {"type": "option", "key": "4", "text": get_string("menu_settings_lang"), "action": "change_lang"},
+        {"type": "option", "key": "5", "text": get_string("menu_settings_check_update"), "action": "check_update"},
         {"type": "separator"},
         {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
     ]
@@ -496,6 +497,43 @@ def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback:
             skip_rollback = not skip_rollback
         elif action == "change_lang":
             registry.get("change_language")["func"]()
+        elif action == "check_update":
+            ui.clear()
+            ui.echo(get_string("act_update_checking"))
+
+            current_version = "v0.0.0"
+            config_file = APP_DIR / "config.json"
+            if config_file.exists():
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                        current_version = config_data.get("version", "v0.0.0")
+                except Exception:
+                    pass
+
+            try:
+                latest_version = utils.get_latest_release_version("miner7222", "LTBox")
+                
+                if latest_version and utils.is_update_available(current_version, latest_version):
+                    ui.echo(get_string("update_avail_title"))
+                    prompt_msg = get_string("update_avail_prompt").format(curr=current_version, new=latest_version)
+                    
+                    choice = input(prompt_msg).strip().lower()
+                    if choice == 'y':
+                        ui.echo(get_string("update_open_web"))
+                        webbrowser.open("https://github.com/miner7222/LTBox/releases")
+                        sys.exit(0)
+                else:
+                    if latest_version:
+                        ui.echo(get_string("act_update_not_found").format(version=current_version))
+                    else:
+                        ui.echo(get_string("act_update_error").format(e="Unknown version"))
+                        
+            except Exception as e:
+                ui.echo(get_string("act_update_error").format(e=e))
+            
+            ui.echo("")
+            input(get_string("press_enter_to_continue"))
 
 def prompt_for_language(force_prompt: bool = False) -> str:
     if not force_prompt:
