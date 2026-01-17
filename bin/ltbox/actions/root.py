@@ -544,10 +544,6 @@ def _install_manager_apk(dev: device.DeviceController):
     utils.ui.echo(get_string("act_wait_sys_adb"))
     try:
         dev.adb.wait_for_device()
-
-        utils.ui.echo(get_string("act_wait_stability"))
-        time.sleep(5)
-        
         dev.adb.install(manager_apk)
         utils.ui.echo(get_string("act_ksu_ok"))
     except Exception as e:
