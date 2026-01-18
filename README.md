@@ -1,5 +1,7 @@
 # LTBox
 
+[🇰🇷 한국어](READMEs/README_ko-KR.md)
+
 [![License: CC BY-NC-SA 4.0][cc-by-nc-sa-shield]][cc-by-nc-sa]
 
 ## ⚠️ Important: Disclaimer
