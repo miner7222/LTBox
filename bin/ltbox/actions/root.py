@@ -531,15 +531,14 @@ def _flash_root_image(dev: device.DeviceController, strategy: RootStrategy, part
     try:
         final_boot_path = strategy.output_dir / strategy.image_name
         edl.flash_partition_target(dev, port, main_partition, final_boot_path)
-        
-        flash_ok_msg = get_string("act_flash_boot_ok") if gki else get_string("act_flash_init_boot_ok")
-        utils.ui.echo(flash_ok_msg.format(part=main_partition))
+
+        utils.ui.echo(get_string("act_flash_img").format(filename=strategy.image_name, part=main_partition))
 
         if not gki:
             final_vbmeta_path = strategy.output_dir / const.FN_VBMETA
             vbmeta_part = partition_map["vbmeta"]
             edl.flash_partition_target(dev, port, vbmeta_part, final_vbmeta_path)
-            utils.ui.echo(get_string("act_flash_vbmeta_ok").format(part=vbmeta_part))
+            utils.ui.echo(get_string("act_flash_img").format(filename=const.FN_VBMETA, part=vbmeta_part))
 
         utils.ui.echo(get_string("act_reset_sys"))
         dev.edl.reset(port)
@@ -576,7 +575,7 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
     main_partition = partition_map["main"]
     
     if active_slot:
-        utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
+        utils.ui.echo(get_string("act_active_slot").format(slot=active_slot))
     else:
         utils.ui.echo(get_string("act_warn_root_slot"))
         main_partition = strategy.image_name.replace(".img", "")
@@ -681,18 +680,18 @@ def unroot_device(dev: device.DeviceController) -> None:
             
             target_init_boot = partition_map["main"]
             edl.flash_partition_target(dev, port, target_init_boot, lkm_init_boot_file)
-            utils.ui.echo(get_string("act_flash_stock_init_boot_ok").format(part=target_init_boot))
+            utils.ui.echo(get_string("act_flash_img").format(filename=lkm_init_boot_file.name, part=target_init_boot))
 
             target_vbmeta = partition_map["vbmeta"]
             edl.flash_partition_target(dev, port, target_vbmeta, lkm_vbmeta_file)
-            utils.ui.echo(get_string("act_flash_stock_vbmeta_ok").format(part=target_vbmeta))
+            utils.ui.echo(get_string("act_flash_img").format(filename=lkm_vbmeta_file.name, part=target_vbmeta))
             
         elif isinstance(selected_strategy, GkiRootStrategy):
             target_boot = partition_map["main"]
             utils.ui.echo(get_string("act_unroot_step4_gki").format(part=target_boot))
             
             edl.flash_partition_target(dev, port, target_boot, gki_boot_file)
-            utils.ui.echo(get_string("act_flash_stock_boot_ok").format(part=target_boot))
+            utils.ui.echo(get_string("act_flash_img").format(filename=gki_boot_file.name, part=target_boot))
         
         utils.ui.echo(get_string("act_reset_sys"))
         dev.edl.reset(port)
@@ -800,8 +799,9 @@ def sign_and_flash_twrp(dev: device.DeviceController) -> None:
         except Exception:
             pass
 
-        utils.ui.echo(get_string("act_flash_twrp").format(part=target_partition))
         edl.flash_partition_target(dev, port, target_partition, final_twrp)
+
+        utils.ui.echo(get_string("act_flash_img").format(filename=twrp_name, part=target_partition))
 
         utils.ui.echo(get_string("act_reset_sys"))
         dev.edl.reset(port)

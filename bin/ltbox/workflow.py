@@ -24,7 +24,7 @@ def _cleanup_previous_outputs(ctx: TaskContext) -> None:
             try:
                 shutil.rmtree(folder)
             except OSError as e:
-                raise LTBoxError(get_string('wf_remove_error').format(name=folder.name, e=e), e)
+                raise LTBoxError(get_string('utils_remove_error').format(name=folder.name, e=e), e)
 
 def _populate_device_info(ctx: TaskContext) -> None:
     ctx.active_slot_suffix = ctx.dev.detect_active_slot()
@@ -158,7 +158,7 @@ def patch_all(dev: device.DeviceController, wipe: int = 0, skip_rollback: bool =
             _populate_device_info(ctx)
             
             active_slot_str = ctx.active_slot_suffix if ctx.active_slot_suffix else get_string('wf_active_slot_unknown')
-            ctx.on_log(get_string('wf_active_slot').format(slot=active_slot_str))
+            ctx.on_log(get_string('act_active_slot').format(slot=active_slot_str))
             
             ctx.on_log(get_string('wf_step3_wait_image'))
             _wait_for_input_images(ctx)
