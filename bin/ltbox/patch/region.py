@@ -33,7 +33,11 @@ def _patch_vendor_boot_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict
     
     return content, {'changed': False, 'message': get_string("img_vb_no_patterns")}
 
-def edit_vendor_boot(input_file_path: str, copy_if_unchanged: bool = True) -> bool:
+def edit_vendor_boot(
+    input_file_path: str,
+    copy_if_unchanged: bool = True,
+    target_region: str = "PRC"
+) -> bool:
     input_file = Path(input_file_path)
     output_file = input_file.parent / "vendor_boot_prc.img"
 
@@ -41,7 +45,8 @@ def edit_vendor_boot(input_file_path: str, copy_if_unchanged: bool = True) -> bo
         input_file, 
         output_file, 
         _patch_vendor_boot_logic, 
-        copy_if_unchanged=copy_if_unchanged
+        copy_if_unchanged=copy_if_unchanged,
+        target_region=target_region
     )
 
     if copy_if_unchanged and not success:
