@@ -508,6 +508,7 @@
   "img_root_unpack_fail": "[!] 언팩 실패. 잘못된 이미지인가요?",
   "img_root_unpack_ok": "[+] 언팩 성공.",
   "img_vb_already_prc": ".PRC 패턴 발견 (이미 패치됨).",
+  "img_vb_already_target": ".{target} 패턴 발견 (이미 패치됨).",
   "img_vb_found_replace": "'{pattern}' {count}회 발견. 교체 중...",
   "img_vb_no_patterns": ".ROW 또는 .PRC 패턴을 찾을 수 없습니다.",
   "img_vb_replaced_total": "{count}개 인스턴스 교체됨.",

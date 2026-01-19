@@ -509,6 +509,7 @@
   "img_root_unpack_fail": "[!] Распаковка не удалась. Неверный формат образа?",
   "img_root_unpack_ok": "[+] Распаковка завершена успешно.",
   "img_vb_already_prc": "Шаблоны .PRC найдены (уже применены).",
+  "img_vb_already_target": "Шаблоны .{target} найдены (уже применены).",
   "img_vb_found_replace": "Найдено '{pattern}' в {count} местах. Замена...",
   "img_vb_no_patterns": "Шаблоны .ROW или .PRC не найдены.",
   "img_vb_replaced_total": "Заменено в {count} местах.",

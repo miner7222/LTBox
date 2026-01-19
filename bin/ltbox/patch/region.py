@@ -8,16 +8,25 @@ from .. import utils
 from ..i18n import get_string
 
 def _patch_vendor_boot_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict[str, Any]]:
-    patterns_row = {
-        const.ROW_PATTERN_DOT: const.PRC_PATTERN_DOT,
-        const.ROW_PATTERN_I: const.PRC_PATTERN_I
-    }
-    patterns_prc = [const.PRC_PATTERN_DOT, const.PRC_PATTERN_I]
+    target_region = str(kwargs.get("target_region", "PRC")).upper()
+    if target_region == "ROW":
+        patterns_map = {
+            const.PRC_PATTERN_DOT: const.ROW_PATTERN_DOT,
+            const.PRC_PATTERN_I: const.ROW_PATTERN_I
+        }
+        target_patterns = [const.ROW_PATTERN_DOT, const.ROW_PATTERN_I]
+    else:
+        target_region = "PRC"
+        patterns_map = {
+            const.ROW_PATTERN_DOT: const.PRC_PATTERN_DOT,
+            const.ROW_PATTERN_I: const.PRC_PATTERN_I
+        }
+        target_patterns = [const.PRC_PATTERN_DOT, const.PRC_PATTERN_I]
     
     modified_content = content
     found_row_count = 0
 
-    for target, replacement in patterns_row.items():
+    for target, replacement in patterns_map.items():
         count = content.count(target)
         if count > 0:
             utils.ui.info(get_string("img_vb_found_replace").format(pattern=target.hex().upper(), count=count))
@@ -26,10 +35,10 @@ def _patch_vendor_boot_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict
 
     if found_row_count > 0:
         return modified_content, {'changed': True, 'message': get_string("img_vb_replaced_total").format(count=found_row_count)}
-    
-    found_prc = any(content.count(target) > 0 for target in patterns_prc)
-    if found_prc:
-        return content, {'changed': False, 'message': get_string("img_vb_already_prc")}
+
+    found_target = any(content.count(target) > 0 for target in target_patterns)
+    if found_target:
+        return content, {'changed': False, 'message': get_string("img_vb_already_target").format(target=target_region)}
     
     return content, {'changed': False, 'message': get_string("img_vb_no_patterns")}
 

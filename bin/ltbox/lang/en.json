@@ -509,6 +509,7 @@
   "img_root_unpack_fail": "[!] Unpack failed. Invalid image?",
   "img_root_unpack_ok": "[+] Unpack successful.",
   "img_vb_already_prc": ".PRC patterns found (Already patched).",
+  "img_vb_already_target": ".{target} patterns found (Already patched).",
   "img_vb_found_replace": "Found '{pattern}' {count} time(s). Replacing...",
   "img_vb_no_patterns": "No .ROW or .PRC patterns found.",
   "img_vb_replaced_total": "Replaced {count} instance(s).",
