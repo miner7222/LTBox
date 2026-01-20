@@ -34,6 +34,11 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
           zip -r "LTBox-win_amd64-${TAG_NAME}.zip" . -x ".git/*" -x ".github/*" -x ".gitignore" -x ".gitattributes" -x ".editorconfig" -x ".pre-commit-config.yaml"
 
+      - name: Generate Checksums
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          sha256sum "LTBox-win_amd64-${TAG_NAME}.zip" > "LTBox-win_amd64-${TAG_NAME}.zip.sha256"
+
       - name: Generate Changelog
         run: |
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
@@ -50,4 +55,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_notes.md
-          files: LTBox-win_amd64-*.zip
+          files: |
+            LTBox-win_amd64-*.zip
+            LTBox-win_amd64-*.zip.sha256
