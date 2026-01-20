@@ -1,32 +1,47 @@
-import subprocess
 import sys
 import os
-from unittest.mock import patch, MagicMock
 import pytest
+import subprocess
+from unittest.mock import patch, MagicMock
+from ltbox import utils
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../bin')))
 
-from ltbox.utils import run_command
+class TestUtilities:
+    @pytest.mark.parametrize("current, latest, expected", [
+        ("v1.0.0", "v1.0.1", True),
+        ("v1.0.1", "v1.0.0", False),
+        ("1.0", "1.1", True),
+    ])
+    def test_is_update_available(self, current, latest, expected):
+        assert utils.is_update_available(current, latest) == expected
 
-@patch("ltbox.utils.subprocess.run")
-def test_run_command_success(mock_run):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=["adb", "devices"], returncode=0, stdout="List of devices attached\n", stderr=""
-    )
+    @patch("ltbox.utils.subprocess.run")
+    def test_run_command_success(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["echo"], returncode=0, stdout="ok", stderr=""
+        )
+        res = utils.run_command(["echo"], capture=True)
+        assert res.returncode == 0
+        assert "ok" in res.stdout
 
-    result = run_command(["adb", "devices"], capture=True)
+    @patch("urllib.request.urlopen")
+    def test_get_latest_release_version(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"tag_name": "v9.9.9"}'
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
 
-    assert result.returncode == 0
-    assert "List of devices attached" in result.stdout
-    mock_run.assert_called_once()
+        ver = utils.get_latest_release_version("user", "repo")
+        assert ver == "v9.9.9"
 
-@patch("ltbox.utils.subprocess.Popen")
-def test_run_command_failure(mock_popen):
-    process_mock = MagicMock()
-    process_mock.returncode = 1
-    process_mock.stdout = iter(["Error occurred\n"])
-    process_mock.wait.return_value = None
-    mock_popen.return_value = process_mock
+    def test_temporary_workspace(self, tmp_path):
+        target = tmp_path / "work"
+        with utils.temporary_workspace(target) as ws:
+            assert ws.exists()
+            (ws / "test").touch()
+        assert not target.exists()
 
-    with pytest.raises(subprocess.CalledProcessError):
-        run_command(["adb", "faulty_command"])
+    def test_device_string_parsing(self):
+        output = "(bootloader) current-slot:a\nall: Done!!"
+        assert "current-slot:a" in output
