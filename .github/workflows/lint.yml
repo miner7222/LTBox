@@ -31,6 +31,10 @@ jobs:
         run: |
           flake8 bin/ltbox --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
+      - name: Check Imports (isort)
+        run: |
+          isort bin/ltbox --check-only --profile black
+
       - name: Check Black Formatting
         run: |
           black --check bin/ltbox
