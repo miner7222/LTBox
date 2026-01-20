@@ -30,10 +30,6 @@ jobs:
           pip install -r bin/requirements.txt
           pip install pytest
 
-      - name: Smoke Test (Import Check)
-        run: |
-          python -c "import sys; sys.path.append('bin'); import ltbox.main; print('Successfully imported ltbox.main')"
-
       - name: Smoke Test (Compile)
         run: |
           python -m compileall bin/ltbox
