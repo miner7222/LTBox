@@ -321,6 +321,8 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
     finally:
         if dev and hasattr(dev, 'adb'):
             dev.adb.force_kill_server()
+        if dev and hasattr(dev, 'fastboot'):
+            dev.fastboot.force_kill_server()
 
         ui.echo("")
         input(get_string("press_enter_to_continue"))

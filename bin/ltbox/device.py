@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import time
@@ -185,6 +186,17 @@ class AdbManager:
             pass
 
 class FastbootManager:
+    def force_kill_server(self) -> None:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "fastboot.exe", "/T"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+        except Exception:
+            pass
+
     def get_slot_suffix(self) -> Optional[str]:
         try:
             result = utils.run_command([str(const.FASTBOOT_EXE), "getvar", "current-slot"], capture=True, check=False)
