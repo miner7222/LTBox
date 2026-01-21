@@ -33,28 +33,24 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            tests/data/fw_archive.7z
+            tests/data/extracted
             tests/data/url.txt
-          key: fw-archive-v1
+          key: fw-extracted-v1
 
-      - name: Verify FW archive cache
+      - name: Verify FW cache
         if: steps.cache-fw.outputs.cache-hit != 'true'
         run: |
-          if [ ! -f "tests/data/fw_archive.7z" ]; then
-            echo "Cached FW archive not found."
+          if [ ! -d "tests/data/extracted" ]; then
+            echo "Cached FW extracted data not found."
             exit 1
           fi
 
-      - name: Extract Tools from FW
-        env:
-          FW_PASSWORD: ${{ secrets.TEST_FW_PASSWORD }}
+      - name: Install Tools from Cache
         run: |
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full
-
           mkdir -p bin/tools
 
-          7z e tests/data/fw_archive.7z -o"bin/tools" -p"$FW_PASSWORD" "*/tool/fh_loader.exe" "*/tool/QSaharaServer.exe" -r -y
+          find tests/data/extracted -name "fh_loader.exe" -exec cp {} bin/tools/ \;
+          find tests/data/extracted -name "QSaharaServer.exe" -exec cp {} bin/tools/ \;
 
           ls -l bin/tools/*.exe
 

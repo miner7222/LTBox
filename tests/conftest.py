@@ -1,11 +1,9 @@
 import os
-import shutil
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import cache_fw
-import py7zr
 import pytest
 from ltbox import downloader, i18n
 
@@ -39,24 +37,14 @@ def fw_pkg(tmp_path_factory):
         pytest.skip("TEST_FW_PASSWORD not set")
 
     try:
-        cache_fw.ensure_archive_downloaded()
+        cache_fw.ensure_firmware_extracted()
     except Exception as e:
-        if cache_fw.ARCHIVE.exists():
-            cache_fw.ARCHIVE.unlink()
-        pytest.fail(f"Download failed: {e}")
-    cached_url = cache_fw.read_cached_url()
-    cache_fw.EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
-    targets = [
-        "vbmeta.img",
-        "boot.img",
-        "vendor_boot.img",
-        "rawprogram_unsparse0.xml",
-        "rawprogram_save_persist_unsparse0.xml",
-    ]
+        pytest.fail(f"Firmware preparation failed: {e}")
 
     cached_map = {}
     missing_targets = False
-    for t in targets:
+
+    for t in cache_fw.TARGETS:
         found = list(cache_fw.EXTRACT_DIR.rglob(t))
         if found:
             cached_map[t] = found[0]
@@ -64,40 +52,11 @@ def fw_pkg(tmp_path_factory):
             missing_targets = True
             break
 
-    if not missing_targets and cached_url == cache_fw.FW_URL:
-        print("\n[INFO] Using cached extracted files.", flush=True)
-        return cached_map
+    if missing_targets:
+        pytest.fail("Targets missing despite successful cache preparation")
 
-    print("\n[INFO] Extracting archive...", flush=True)
-    try:
-        if cache_fw.EXTRACT_DIR.exists():
-            shutil.rmtree(cache_fw.EXTRACT_DIR)
-        cache_fw.EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
-
-        with py7zr.SevenZipFile(
-            cache_fw.ARCHIVE, mode="r", password=cache_fw.FW_PW
-        ) as z:
-            all_f = z.getnames()
-            to_ext = [
-                f
-                for f in all_f
-                if os.path.basename(f.replace("\\", "/")) in targets
-                and "/image/" in f.replace("\\", "/")
-            ]
-
-            if not to_ext:
-                pytest.fail("Targets not found in archive")
-            z.extract(path=cache_fw.EXTRACT_DIR, targets=to_ext)
-
-            mapped = {}
-            for t in targets:
-                for p in cache_fw.EXTRACT_DIR.rglob(t):
-                    mapped[t] = p
-                    break
-            return mapped
-
-    except Exception as e:
-        pytest.fail(f"Extraction failed: {e}")
+    print("\n[INFO] Using cached extracted files.", flush=True)
+    return cached_map
 
 
 @pytest.fixture

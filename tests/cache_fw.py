@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+import py7zr
 import requests
 
 FW_URL = (
@@ -25,6 +26,16 @@ PART_SUFFIX = ".part"
 DEFAULT_SEGMENTS = 4
 DOWNLOAD_TIMEOUT = 30
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+TARGETS = [
+    "vbmeta.img",
+    "boot.img",
+    "vendor_boot.img",
+    "rawprogram_unsparse0.xml",
+    "rawprogram_save_persist_unsparse0.xml",
+    "fh_loader.exe",
+    "QSaharaServer.exe",
+]
 
 
 def read_cached_url() -> str:
@@ -205,10 +216,8 @@ def download_with_ranges(
                 part_path.unlink()
 
 
-def ensure_archive_downloaded() -> None:
+def _download_archive() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cached_url = read_cached_url()
-    reset_cache_if_url_changed(cached_url)
 
     if ARCHIVE.exists() and ARCHIVE.stat().st_size > 0:
         return
@@ -232,6 +241,67 @@ def ensure_archive_downloaded() -> None:
         f"\n[INFO] Download Complete! Size: {ARCHIVE.stat().st_size / (1024**3):.2f} GB",
         flush=True,
     )
+
+
+def _extract_files() -> None:
+    print("\n[INFO] Extracting necessary files...", flush=True)
+    EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with py7zr.SevenZipFile(ARCHIVE, mode="r", password=FW_PW) as z:
+            all_f = z.getnames()
+            to_ext = [
+                f
+                for f in all_f
+                if os.path.basename(f.replace("\\", "/")) in TARGETS
+                and (
+                    "/image/" in f.replace("\\", "/")
+                    or "/tool/" in f.replace("\\", "/")
+                )
+            ]
+
+            if not to_ext:
+                raise RuntimeError("Targets not found in archive")
+
+            z.extract(path=EXTRACT_DIR, targets=to_ext)
+            print("[INFO] Extraction complete.", flush=True)
+
+    except Exception as e:
+        if EXTRACT_DIR.exists():
+            shutil.rmtree(EXTRACT_DIR)
+        raise e
+
+
+def ensure_firmware_extracted() -> None:
+    cached_url = read_cached_url()
+    reset_cache_if_url_changed(cached_url)
+
+    missing_targets = False
+    if EXTRACT_DIR.exists():
+        for t in TARGETS:
+            found = list(EXTRACT_DIR.rglob(t))
+            if not found:
+                missing_targets = True
+                break
+    else:
+        missing_targets = True
+
+    if not missing_targets and cached_url == FW_URL:
+        return
+
+    _download_archive()
+
+    try:
+        _extract_files()
+    except Exception:
+        if ARCHIVE.exists():
+            ARCHIVE.unlink()
+        raise
+
+    if ARCHIVE.exists():
+        print("[INFO] Deleting archive to save space...", flush=True)
+        ARCHIVE.unlink()
+
     URL_RECORD_FILE.write_text(FW_URL, encoding="utf-8")
 
 
@@ -240,7 +310,7 @@ def main() -> None:
         print("[INFO] TEST_FW_PASSWORD not set. Skipping FW cache prefetch.")
         return
 
-    ensure_archive_downloaded()
+    ensure_firmware_extracted()
 
 
 if __name__ == "__main__":

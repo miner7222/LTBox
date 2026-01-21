@@ -40,9 +40,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            tests/data/fw_archive.7z
+            tests/data/extracted
             tests/data/url.txt
-          key: fw-archive-v1
+          key: fw-extracted-v1
 
       - name: Prefetch FW archive
         env:
@@ -53,13 +53,13 @@ jobs:
           python tests/cache_fw.py
 
       - name: Save FW cache
-        if: ${{ always() && hashFiles('tests/data/fw_archive.7z') != '' }}
+        if: ${{ always() && hashFiles('tests/data/url.txt') != '' }}
         uses: actions/cache/save@v4
         with:
           path: |
-            tests/data/fw_archive.7z
+            tests/data/extracted
             tests/data/url.txt
-          key: fw-archive-v1
+          key: fw-extracted-v1
 
   build:
     runs-on: windows-latest
@@ -93,9 +93,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            tests/data/fw_archive.7z
+            tests/data/extracted
             tests/data/url.txt
-          key: fw-archive-v1
+          key: fw-extracted-v1
 
       - name: Run Unit Tests
         env:
