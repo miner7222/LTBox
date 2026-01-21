@@ -149,24 +149,13 @@ def test_prc_to_row(fw_pkg, mock_env):
     mock_dev = MagicMock()
     mock_dev.skip_adb = True
 
-    with patch("ltbox.utils.run_command") as mock_run:
-        mock_proc = MagicMock()
-        mock_proc.stdout = """
-        Footer version:           1.0
-        Image size:               100663296 bytes
-        Original image size:      15155200 bytes
-        Algorithm:                SHA256_RSA4096
-        Partition Name:           vendor_boot
-        Salt:                     e1465bf10e5fcf838f8ae21205c0da2b5cb364a00cf7e58fd51630b49257db59
-        Rollback Index:           0
-        Flags:                    0
-        """
-        mock_proc.returncode = 0
-        mock_run.return_value = mock_proc
+    from ltbox.actions import region
+    from ltbox.patch.avb import extract_image_avb_info
 
-        from ltbox.actions import region
+    vendor_boot_info = extract_image_avb_info(img_dir / "vendor_boot.img")
+    assert vendor_boot_info, "Failed to extract AVB info from vendor_boot.img"
 
-        region.convert_region_images(dev=mock_dev, target_region="ROW", on_log=print)
+    region.convert_region_images(dev=mock_dev, target_region="ROW", on_log=print)
 
     out_vb = output_dir / "vendor_boot.img"
     out_vbmeta = output_dir / "vbmeta.img"
