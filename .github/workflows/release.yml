@@ -29,28 +29,32 @@ jobs:
             exit 1
           fi
 
-      - name: Cache QFIL Archive
-        id: cache-qfil
-        uses: actions/cache@v4
+      - name: Restore FW Archive cache
+        uses: actions/cache/restore@v4
         with:
-          path: qfil_archive.7z
-          key: qfil-archive-v1
+          path: |
+            tests/data/fw_archive.7z
+            tests/data/url.txt
+          key: fw-archive-v1
 
-      - name: Download QFIL Archive
-        if: steps.cache-qfil.outputs.cache-hit != 'true'
+      - name: Verify FW archive cache
+        if: steps.cache-fw.outputs.cache-hit != 'true'
         run: |
-          curl -L "http://zsk-cdn.lenovows.com/%E7%9F%A5%E8%AF%86%E5%BA%93/Flash_tool_image/TB322_ZUXOS_1.5.10.063_Tool.7z" -o qfil_archive.7z
+          if [ ! -f "tests/data/fw_archive.7z" ]; then
+            echo "Cached FW archive not found."
+            exit 1
+          fi
 
-      - name: Extract Tools from QFIL
+      - name: Extract Tools from FW
         env:
-          QFIL_PASSWORD: ${{ secrets.TEST_QFIL_PASSWORD }}
+          FW_PASSWORD: ${{ secrets.TEST_FW_PASSWORD }}
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full
 
           mkdir -p bin/tools
 
-          7z e qfil_archive.7z -o"bin/tools" -p"$QFIL_PASSWORD" "*/tool/fh_loader.exe" "*/tool/QSaharaServer.exe" -r -y
+          7z e tests/data/fw_archive.7z -o"bin/tools" -p"$FW_PASSWORD" "*/tool/fh_loader.exe" "*/tool/QSaharaServer.exe" -r -y
 
           ls -l bin/tools/*.exe
 

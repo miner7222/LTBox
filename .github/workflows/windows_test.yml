@@ -13,7 +13,7 @@ on:
       - '.github/workflows/windows_test.yml'
 
 jobs:
-  build:
+  prepare-fw-cache:
     runs-on: windows-latest
 
     steps:
@@ -34,23 +34,73 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r bin/requirements.txt
-          pip install pypdl pytest py7zr requests
+          pip install pypdl py7zr requests
+
+      - name: Restore FW cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            tests/data/fw_archive.7z
+            tests/data/url.txt
+          key: fw-archive-v1
+
+      - name: Prefetch FW archive
+        env:
+          TEST_FW_PASSWORD: ${{ secrets.TEST_FW_PASSWORD }}
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "bin"
+        run: |
+          python tests/cache_fw.py
+
+      - name: Save FW cache
+        if: ${{ always() && hashFiles('tests/data/fw_archive.7z') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            tests/data/fw_archive.7z
+            tests/data/url.txt
+          key: fw-archive-v1
+
+  build:
+    runs-on: windows-latest
+    needs: prepare-fw-cache
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Free Disk Space (Windows)
+        run: |
+          Write-Host "Cleaning up disk space..."
+          if (Test-Path "C:\Android") { Remove-Item -Recurse -Force "C:\Android" -ErrorAction SilentlyContinue }
+          Get-PSDrive C | Select-Object Used,Free
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r bin/requirements.txt
+          pip install pytest py7zr requests
 
       - name: Smoke Test (Compile)
         run: |
           python -m compileall bin/ltbox
 
-      - name: Cache QFIL Archive
-        id: cache-qfil
-        uses: actions/cache@v4
+      - name: Restore FW cache
+        uses: actions/cache/restore@v4
         with:
-          path: tests/data/qfil_archive.7z
-          key: qfil-archive-v1
+          path: |
+            tests/data/fw_archive.7z
+            tests/data/url.txt
+          key: fw-archive-v1
 
       - name: Run Unit Tests
         env:
-          TEST_QFIL_URL: ${{ secrets.TEST_QFIL_URL }}
-          TEST_QFIL_PASSWORD: ${{ secrets.TEST_QFIL_PASSWORD }}
+          TEST_FW_URL: ${{ secrets.TEST_FW_URL }}
+          TEST_FW_PASSWORD: ${{ secrets.TEST_FW_PASSWORD }}
           PYTHONUNBUFFERED: "1"
           PYTHONPATH: "bin"
         run: |
