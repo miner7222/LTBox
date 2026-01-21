@@ -19,6 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Free Disk Space (Windows)
+        run: |
+          Write-Host "Cleaning up disk space..."
+          if (Test-Path "C:\Android") { Remove-Item -Recurse -Force "C:\Android" -ErrorAction SilentlyContinue }
+          Get-PSDrive C | Select-Object Used,Free
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
