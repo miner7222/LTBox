@@ -64,17 +64,12 @@ def fw_pkg(tmp_path_factory):
     if not ARCHIVE.exists() or ARCHIVE.stat().st_size == 0:
         print("\n[INFO] Starting download...", flush=True)
         try:
-            is_ci = (
-                os.environ.get("CI", "false").lower() == "true"
-                or os.environ.get("GITHUB_ACTIONS", "false").lower() == "true"
-            )
-
             dl = Pypdl()
             dl.start(
                 QFIL_URL,
                 file_path=str(ARCHIVE),
                 segments=10,
-                display=not is_ci,
+                display=True,
                 block=True,
                 retries=3,
             )
