@@ -278,9 +278,10 @@ def test_root_lkm(fw_pkg, tmp_path):
 
     boot_img = fw_pkg.get("boot.img")
     vbmeta_img = fw_pkg.get("vbmeta.img")
+    init_boot_img = fw_pkg.get("init_boot.img")
 
-    if not boot_img or not vbmeta_img:
-        pytest.skip("Required images (boot/init_boot, vbmeta) missing")
+    if not boot_img or not vbmeta_img or not init_boot_img:
+        pytest.skip("Required images (boot, init_boot, vbmeta) missing")
 
     mock_dirs = {
         "TOOLS_DIR": tmp_path / "bin" / "tools",
@@ -346,8 +347,10 @@ def test_root_lkm(fw_pkg, tmp_path):
 
         shutil.copy(boot_img, mock_dirs["BASE_DIR"] / "init_boot.bak.img")
 
+        print(f"[INFO] [LKM] Using REAL {init_boot_img.name} from firmware...")
         target_init_boot = work_dir / "init_boot.img"
-        shutil.copy(boot_img, target_init_boot)
+        shutil.copy(init_boot_img, target_init_boot)
+        shutil.copy(init_boot_img, mock_dirs["BASE_DIR"] / "init_boot.bak.img")
 
         print("[INFO] [LKM] Running ACTUAL patch process...")
         try:

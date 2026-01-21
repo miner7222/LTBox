@@ -30,6 +30,7 @@ DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 TARGETS = [
     "vbmeta.img",
     "boot.img",
+    "init_boot.img",
     "vendor_boot.img",
     "rawprogram_unsparse0.xml",
     "rawprogram_save_persist_unsparse0.xml",
