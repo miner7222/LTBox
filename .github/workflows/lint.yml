@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install flake8 black isort
+          pip install flake8 black isort mypy types-requests types-setuptools
 
       - name: Run Flake8 (Errors)
         run: |
