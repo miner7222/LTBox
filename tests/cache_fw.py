@@ -141,7 +141,8 @@ def download_with_ranges(
                 if output != last_output:
                     print(output, end="", flush=True)
                     last_output = output
-            time.sleep(0.5)
+            if stop_event.wait(10):
+                break
 
     def on_progress(bytes_count: int) -> None:
         nonlocal downloaded
