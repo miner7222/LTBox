@@ -2,6 +2,8 @@ name: Windows Smoke Test & Unit Test
 
 on:
   push:
+    tags:
+      - 'v*'
     paths:
       - 'bin/**'
       - 'tests/**'
@@ -43,7 +45,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ github.run_id }}
+          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
           restore-keys: |
             fw-extracted-v1-
 
@@ -62,7 +64,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ github.run_id }}
+          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
 
   build:
     runs-on: windows-latest
@@ -98,7 +100,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ github.run_id }}
+          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
           restore-keys: |
             fw-extracted-v1-
 
