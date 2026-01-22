@@ -49,33 +49,38 @@ def _get_tool_env() -> dict:
     return _CACHED_ENV
 
 
-def run_command(
+def _run_command_capture(
     command: Union[List[str], str],
-    shell: bool = False,
-    check: bool = True,
-    env: Optional[dict] = None,
-    capture: bool = False,
-    cwd: Optional[Union[str, Path]] = None,
+    shell: bool,
+    check: bool,
+    env: dict,
+    cwd: Optional[Union[str, Path]],
 ) -> subprocess.CompletedProcess:
-    run_env = env if env is not None else _get_tool_env()
+    return subprocess.run(
+        command,
+        shell=shell,
+        check=check,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        env=env,
+        cwd=cwd,
+    )
 
-    if capture:
-        return subprocess.run(
-            command,
-            shell=shell,
-            check=check,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            env=run_env,
-            cwd=cwd,
-        )
 
+def _run_command_stream(
+    command: Union[List[str], str],
+    shell: bool,
+    check: bool,
+    env: dict,
+    cwd: Optional[Union[str, Path]],
+    on_output: Optional[Callable[[str], None]],
+) -> subprocess.CompletedProcess:
     process = subprocess.Popen(
         command,
         shell=shell,
-        env=run_env,
+        env=env,
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -88,7 +93,10 @@ def run_command(
     output_lines = []
     if process.stdout:
         for line in process.stdout:
-            logger.info(line.rstrip())
+            if on_output is not None:
+                on_output(line)
+            else:
+                logger.info(line.rstrip())
             output_lines.append(line)
 
     process.wait()
@@ -102,6 +110,23 @@ def run_command(
     return subprocess.CompletedProcess(
         command, returncode, stdout="".join(output_lines), stderr=None
     )
+
+
+def run_command(
+    command: Union[List[str], str],
+    shell: bool = False,
+    check: bool = True,
+    env: Optional[dict] = None,
+    capture: bool = False,
+    cwd: Optional[Union[str, Path]] = None,
+    on_output: Optional[Callable[[str], None]] = None,
+) -> subprocess.CompletedProcess:
+    run_env = env if env is not None else _get_tool_env()
+
+    if capture:
+        return _run_command_capture(command, shell, check, run_env, cwd)
+
+    return _run_command_stream(command, shell, check, run_env, cwd, on_output)
 
 
 def get_platform_executable(name: str) -> Path:
