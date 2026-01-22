@@ -35,7 +35,9 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1
+          key: fw-extracted-v1-${{ github.run_id }}
+          restore-keys: |
+            fw-extracted-v1-
 
       - name: Verify FW cache
         if: steps.cache-fw.outputs.cache-hit != 'true'

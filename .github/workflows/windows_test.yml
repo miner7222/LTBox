@@ -37,12 +37,15 @@ jobs:
           pip install pypdl py7zr requests
 
       - name: Restore FW cache
+        id: cache-fw
         uses: actions/cache/restore@v4
         with:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1
+          key: fw-extracted-v1-${{ github.run_id }}
+          restore-keys: |
+            fw-extracted-v1-
 
       - name: Prefetch FW archive
         env:
@@ -53,13 +56,13 @@ jobs:
           python tests/cache_fw.py
 
       - name: Save FW cache
-        if: ${{ always() && hashFiles('tests/data/url.txt') != '' }}
+        if: ${{ always() && hashFiles('tests/data/url.txt') != '' && steps.cache-fw.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1
+          key: fw-extracted-v1-${{ github.run_id }}
 
   build:
     runs-on: windows-latest
@@ -95,7 +98,9 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1
+          key: fw-extracted-v1-${{ github.run_id }}
+          restore-keys: |
+            fw-extracted-v1-
 
       - name: Run Unit Tests
         env:
