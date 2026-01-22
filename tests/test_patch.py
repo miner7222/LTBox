@@ -38,7 +38,7 @@ def test_process_boot_image_avb_reapplies_footer(fw_pkg, tmp_path):
     boot_info = avb.extract_image_avb_info(boot_bak)
 
     with patch("ltbox.constants.BASE_DIR", tmp_path):
-        avb.process_boot_image_avb(target_boot, gki=False)
+        avb.process_boot_image_avb(target_boot, gki=True)
 
     patched_info = avb.extract_image_avb_info(target_boot)
 
