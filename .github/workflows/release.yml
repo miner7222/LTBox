@@ -20,7 +20,7 @@ jobs:
       }}
     defaults:
       run:
-        shell: bash
+        shell: pwsh
     steps:
       - uses: actions/checkout@v6
         with:
@@ -30,28 +30,28 @@ jobs:
       - name: Resolve Tag Name
         id: resolve-tag
         run: |
-          TAG_NAME=$(git tag --points-at "${{ github.event.workflow_run.head_sha }}" | grep '^v' | head -n 1)
+          $sha = "${{ github.event.workflow_run.head_sha }}"
+          $tag = git tag --points-at $sha | Select-String -Pattern '^v' | Select-Object -First 1
 
-          if [ -z "$TAG_NAME" ]; then
-            echo "No release tag found for commit ${{ github.event.workflow_run.head_sha }}."
+          if (-not $tag) {
+            Write-Error "No release tag found for commit $sha."
             exit 1
-          fi
+          }
 
-          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
-          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          "TAG_NAME=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Verify Version Match
         run: |
-          TAG_NAME="${TAG_NAME}"
-          CONFIG_VERSION=$(jq -r '.version' bin/ltbox/config.json)
+          $configVersion = (Get-Content bin/ltbox/config.json | ConvertFrom-Json).version
 
-          echo "Tag: $TAG_NAME"
-          echo "Config: $CONFIG_VERSION"
+          Write-Host "Tag: $env:TAG_NAME"
+          Write-Host "Config: $configVersion"
 
-          if [ "$TAG_NAME" != "$CONFIG_VERSION" ]; then
-            echo "Error: Git tag ($TAG_NAME) does not match config.json version ($CONFIG_VERSION)."
+          if ($env:TAG_NAME -ne $configVersion) {
+            Write-Error "Error: Git tag ($env:TAG_NAME) does not match config.json version ($configVersion)."
             exit 1
-          fi
+          }
 
       - name: Restore FW Archive cache
         id: cache-fw
@@ -88,34 +88,46 @@ jobs:
 
       - name: Install Tools from Cache
         run: |
-          mkdir -p bin/tools
+          New-Item -ItemType Directory -Force -Path bin/tools | Out-Null
 
-          find tests/data/extracted -name "fh_loader.exe" -exec cp {} bin/tools/ \;
-          find tests/data/extracted -name "QSaharaServer.exe" -exec cp {} bin/tools/ \;
+          Get-ChildItem -Path tests/data/extracted -Recurse -Filter "fh_loader.exe" | Copy-Item -Destination bin/tools -Force
+          Get-ChildItem -Path tests/data/extracted -Recurse -Filter "QSaharaServer.exe" | Copy-Item -Destination bin/tools -Force
 
-          ls -l bin/tools/*.exe
+          Get-ChildItem -Path bin/tools -Filter "*.exe" | Format-Table -AutoSize
 
       - name: Create Archive
         run: |
-          TAG_NAME="${TAG_NAME}"
-          zip -r "LTBox-win_amd64-${TAG_NAME}.zip" . -x ".git/*" -x ".github/*" -x ".gitignore" -x ".gitattributes" -x ".editorconfig" -x ".pre-commit-config.yaml" -x "tests/*"
+          $archive = "LTBox-win_amd64-$($env:TAG_NAME).zip"
+          $excludes = @(
+            ".git/*",
+            ".github/*",
+            ".gitignore",
+            ".gitattributes",
+            ".editorconfig",
+            ".pre-commit-config.yaml",
+            "tests/*"
+          )
+
+          $excludeArgs = $excludes | ForEach-Object { "-xr!$_" }
+          & 7z a $archive "." @excludeArgs
 
       - name: Generate Checksums
         run: |
-          TAG_NAME="${TAG_NAME}"
-          sha256sum "LTBox-win_amd64-${TAG_NAME}.zip" > "LTBox-win_amd64-${TAG_NAME}.zip.sha256"
+          $archive = "LTBox-win_amd64-$($env:TAG_NAME).zip"
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLower()
+          "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ascii
 
       - name: Generate Changelog
         run: |
-          CURRENT_TAG="${TAG_NAME}"
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          $currentTag = $env:TAG_NAME
+          $prevTag = git describe --tags --abbrev=0 HEAD^ 2>$null
 
-          echo "## What's Changed" > release_notes.md
-          if [ -z "$PREV_TAG" ]; then
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/$CURRENT_TAG" >> release_notes.md
-          else
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$CURRENT_TAG" >> release_notes.md
-          fi
+          "## What's Changed" | Out-File -FilePath release_notes.md -Encoding utf8
+          if (-not $prevTag) {
+            "**Full Changelog**: https://github.com/${{ github.repository }}/commits/$currentTag" | Out-File -FilePath release_notes.md -Append -Encoding utf8
+          } else {
+            "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$prevTag...$currentTag" | Out-File -FilePath release_notes.md -Append -Encoding utf8
+          }
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
