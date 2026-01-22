@@ -393,8 +393,9 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
     if not gki:
         while True:
             mode_menu = TerminalMenu(get_string("menu_root_lkm_type_title"))
-            mode_menu.add_option("1", "KernelSU Next")
-            mode_menu.add_option("2", "SukiSU Ultra")
+            mode_menu.add_option("1", "Magisk")
+            mode_menu.add_option("2", "KernelSU Next")
+            mode_menu.add_option("3", "SukiSU Ultra")
             mode_menu.add_separator()
             mode_menu.add_option("b", get_string("menu_back"))
             mode_menu.add_option("m", get_string("menu_root_m"))
@@ -404,9 +405,12 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             )
 
             if choice == "1":
-                root_type = "ksu"
+                root_type = "magisk"
                 break
             elif choice == "2":
+                root_type = "ksu"
+                break
+            elif choice == "3":
                 root_type = "sukisu"
                 break
             elif choice == "b":

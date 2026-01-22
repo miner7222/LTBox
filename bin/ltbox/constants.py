@@ -118,6 +118,14 @@ class LTBoxConfig:
             return self._get_val("kernelsu-next", "apk_tag")
 
     @property
+    def magisk_repo(self) -> str:
+        return self._get_val("magisk", "repo")
+
+    @property
+    def magisk_tag(self) -> str:
+        return self._get_val("magisk", "tag")
+
+    @property
     def sukisu_repo(self) -> str:
         return self._get_val("sukisu-ultra", "repo")
 
@@ -268,6 +276,8 @@ try:
     MAGISKBOOT_TAG = CONF.magiskboot_tag
     KSU_APK_REPO = CONF.ksu_apk_repo
     KSU_APK_TAG = CONF.ksu_apk_tag
+    MAGISK_REPO = CONF.magisk_repo
+    MAGISK_TAG = CONF.magisk_tag
     SUKISU_REPO = CONF.sukisu_repo
     SUKISU_WORKFLOW = CONF.sukisu_workflow
     RELEASE_OWNER = CONF.release_owner

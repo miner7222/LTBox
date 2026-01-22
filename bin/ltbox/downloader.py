@@ -452,6 +452,66 @@ def download_ksu_manager_release(target_dir: Path) -> None:
         utils.ui.echo(get_string("dl_ksu_success"))
 
 
+def download_magisk_apk(target_dir: Path) -> Path:
+    utils.ui.echo(get_string("dl_magisk_downloading"))
+
+    target_file = target_dir / "magisk.apk"
+    if target_file.exists():
+        target_file.unlink()
+
+    downloaded_path = _download_github_asset(
+        f"https://github.com/{const.MAGISK_REPO}",
+        const.MAGISK_TAG,
+        r"Magisk.*\.apk",
+        target_dir,
+    )
+    shutil.move(downloaded_path, target_file)
+    utils.ui.echo(get_string("dl_magisk_success"))
+    return target_file
+
+
+def extract_magisk_libs(apk_path: Path, target_dir: Path) -> None:
+    utils.ui.echo(get_string("dl_magisk_extracting"))
+    lib_map = {
+        "libmagiskinit.so": "magiskinit",
+        "libmagisk.so": "magisk",
+        "libinit-ld.so": "init-ld",
+    }
+    asset_map = {
+        "assets/stub.apk": "stub.apk",
+    }
+    missing = []
+
+    with zipfile.ZipFile(apk_path, "r") as zf:
+        for source_name, target_name in lib_map.items():
+            source_path = f"lib/arm64-v8a/{source_name}"
+            try:
+                member = zf.getinfo(source_path)
+            except KeyError:
+                missing.append(source_name)
+                continue
+
+            target_path = target_dir / target_name
+            _extract_zip_member(zf, member, target_path)
+
+        for source_name, target_name in asset_map.items():
+            try:
+                member = zf.getinfo(source_name)
+            except KeyError:
+                missing.append(source_name)
+                continue
+
+            target_path = target_dir / target_name
+            _extract_zip_member(zf, member, target_path)
+
+    if missing:
+        raise ToolError(
+            get_string("dl_magisk_lib_missing").format(files=", ".join(missing))
+        )
+
+    utils.ui.echo(get_string("dl_magisk_extract_ok"))
+
+
 def download_ksuinit_release(target_path: Path) -> None:
     if target_path.exists():
         target_path.unlink()

@@ -56,7 +56,7 @@ ADB 모드로 기기에 연결하여 시스템 업데이트 패키지를 비활�
 
 **`5. 기기 루팅`**
 루팅 선택 메뉴를 엽니다:
-* **LKM 모드:** `init_boot.img`와 `vbmeta.img`를 패치합니다 (최신 커널 권장). KernelSU Next 및 SukiSU를 지원합니다.
+* **LKM 모드:** `init_boot.img`와 `vbmeta.img`를 패치합니다 (최신 커널 권장). Magisk, KernelSU Next 및 SukiSU를 지원합니다.
 * **GKI 모드:** 커널을 [GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS)로 교체하여 `boot.img`를 패치합니다.
 
 **`6. 기기 언루팅`**

@@ -194,6 +194,9 @@ class LkmRootStrategy(RootStrategy):
     def configure_source(self) -> None:
         settings = const.load_settings_raw()
 
+        if self.root_type == "magisk":
+            return
+
         if self.root_type == "sukisu":
             self.is_nightly = True
             self.repo_config = settings.get("sukisu-ultra", {})
@@ -292,6 +295,24 @@ class LkmRootStrategy(RootStrategy):
     def download_resources(self, kernel_version: Optional[str] = None) -> bool:
         _cleanup_manager_apk(show_message=False)
 
+        if self.root_type == "magisk":
+            if self.staging_dir.exists():
+                shutil.rmtree(self.staging_dir)
+            self.staging_dir.mkdir(exist_ok=True)
+
+            try:
+                apk_path = downloader.download_magisk_apk(self.staging_dir)
+                downloader.extract_magisk_libs(apk_path, self.staging_dir)
+            except Exception as e:
+                utils.ui.error(str(e))
+                return False
+
+            manager_path = const.TOOLS_DIR / "manager.apk"
+            if manager_path.exists():
+                manager_path.unlink()
+            shutil.copy(apk_path, manager_path)
+            return True
+
         if self.is_nightly:
             repo = self.repo_config.get("repo")
             manager = (
@@ -324,16 +345,32 @@ class LkmRootStrategy(RootStrategy):
         magiskboot_exe = utils.get_platform_executable("magiskboot")
         ensure_magiskboot()
 
-        if (self.staging_dir / "init").exists() and (
-            self.staging_dir / "kernelsu.ko"
-        ).exists():
-            shutil.copy(self.staging_dir / "init", work_dir / "init")
-            shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
+        if self.root_type == "magisk":
+            magisk_files = [
+                "magiskinit",
+                "magisk",
+                "init-ld",
+                "stub.apk",
+            ]
+            if all((self.staging_dir / name).exists() for name in magisk_files):
+                for name in magisk_files:
+                    shutil.copy(self.staging_dir / name, work_dir / name)
+            else:
+                if not self.download_resources(lkm_kernel_version):
+                    return None
+                for name in magisk_files:
+                    shutil.copy(self.staging_dir / name, work_dir / name)
         else:
-            if not self.download_resources(lkm_kernel_version):
-                return None
-            shutil.copy(self.staging_dir / "init", work_dir / "init")
-            shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
+            if (self.staging_dir / "init").exists() and (
+                self.staging_dir / "kernelsu.ko"
+            ).exists():
+                shutil.copy(self.staging_dir / "init", work_dir / "init")
+                shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
+            else:
+                if not self.download_resources(lkm_kernel_version):
+                    return None
+                shutil.copy(self.staging_dir / "init", work_dir / "init")
+                shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
 
         return patch_boot_with_root_algo(
             work_dir,
@@ -429,7 +466,7 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
             (const.BASE_DIR / const.FN_VBMETA).unlink()
 
         lkm_kernel_version = None
-        if not gki:
+        if not gki and root_type != "magisk":
             utils.ui.echo(get_string("err_req_kernel_ver_lkm"))
             lkm_kernel_version = input(
                 get_string("prompt_enter_kernel_version")
@@ -494,8 +531,10 @@ def _prepare_root_env(strategy: RootStrategy):
     ensure_magiskboot()
 
 
-def _get_lkm_kernel_version(dev: device.DeviceController, gki: bool) -> Optional[str]:
-    if not gki:
+def _get_lkm_kernel_version(
+    dev: device.DeviceController, gki: bool, root_type: str
+) -> Optional[str]:
+    if not gki and root_type != "magisk":
         if not dev.skip_adb:
             try:
                 return dev.adb.get_kernel_version()
@@ -706,7 +745,7 @@ def root_device(
     if not dev.skip_adb:
         dev.adb.wait_for_device()
 
-    lkm_kernel_version = _get_lkm_kernel_version(dev, gki)
+    lkm_kernel_version = _get_lkm_kernel_version(dev, gki, root_type)
 
     if not strategy.download_resources(lkm_kernel_version):
         utils.ui.error(get_string("err_download_resources_abort"))

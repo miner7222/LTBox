@@ -9,6 +9,10 @@
     "repo_url": "https://github.com/PinNaCode/magiskboot_build",
     "tag": "last-ci"
   },
+  "magisk": {
+    "repo": "topjohnwu/Magisk",
+    "tag": "latest"
+  },
   "kernelsu-next": {
     "repo": "KernelSU-Next/KernelSU-Next",
     "tag": "v3.0.0",

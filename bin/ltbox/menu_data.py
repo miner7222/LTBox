@@ -87,7 +87,9 @@ def get_root_menu_data(gki: bool, root_type: str) -> List[MenuItem]:
     else:
         label_2 = get_string("menu_root_2_lkm")
         if root_type == "sukisu":
-            label_2 = label_2.replace("KernelSU Next", "Sukisu Ultra")
+            label_2 = label_2.replace("KernelSU Next", "SukiSU Ultra")
+        elif root_type == "magisk":
+            label_2 = label_2.replace("KernelSU Next", "Magisk")
         items.append(
             MenuItem.option(
                 "1", get_string("menu_root_1_lkm"), action="root_device_lkm"
