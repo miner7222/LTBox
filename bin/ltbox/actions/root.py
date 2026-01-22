@@ -126,6 +126,114 @@ class GkiRootStrategy(RootStrategy):
         return final_boot
 
 
+class MagiskRootStrategy(RootStrategy):
+    def __init__(self) -> None:
+        self.staging_dir = const.TOOLS_DIR / "magisk_staging"
+
+    @property
+    def image_name(self) -> str:
+        return const.FN_INIT_BOOT
+
+    @property
+    def backup_name(self) -> str:
+        return const.FN_INIT_BOOT_BAK
+
+    @property
+    def output_dir(self) -> Path:
+        return const.OUTPUT_ROOT_MAGISK_DIR
+
+    @property
+    def backup_dir(self) -> Path:
+        return const.BACKUP_MAGISK_DIR
+
+    @property
+    def required_files(self) -> List[str]:
+        return [self.image_name, const.FN_VBMETA]
+
+    @property
+    def log_output_dir_name(self) -> str:
+        return const.OUTPUT_ROOT_MAGISK_DIR.name
+
+    def get_partition_map(self, suffix: str) -> Dict[str, str]:
+        return {"main": f"init_boot{suffix}", "vbmeta": f"vbmeta{suffix}"}
+
+    def download_resources(self, kernel_version: Optional[str] = None) -> bool:
+        _cleanup_manager_apk(show_message=False)
+
+        if self.staging_dir.exists():
+            shutil.rmtree(self.staging_dir)
+        self.staging_dir.mkdir(exist_ok=True)
+
+        try:
+            apk_path = downloader.download_magisk_apk(self.staging_dir)
+            downloader.extract_magisk_libs(apk_path, self.staging_dir)
+        except Exception as e:
+            utils.ui.error(str(e))
+            return False
+
+        manager_path = const.TOOLS_DIR / "manager.apk"
+        if manager_path.exists():
+            manager_path.unlink()
+        shutil.copy(apk_path, manager_path)
+        return True
+
+    def patch(
+        self,
+        work_dir: Path,
+        dev: Optional[device.DeviceController] = None,
+        lkm_kernel_version: Optional[str] = None,
+    ) -> Optional[Path]:
+        magiskboot_exe = utils.get_platform_executable("magiskboot")
+        ensure_magiskboot()
+
+        magisk_files = [
+            "magiskinit",
+            "magisk",
+            "init-ld",
+            "stub.apk",
+        ]
+        if all((self.staging_dir / name).exists() for name in magisk_files):
+            for name in magisk_files:
+                shutil.copy(self.staging_dir / name, work_dir / name)
+        else:
+            if not self.download_resources(lkm_kernel_version):
+                return None
+            for name in magisk_files:
+                shutil.copy(self.staging_dir / name, work_dir / name)
+
+        return patch_boot_with_root_algo(
+            work_dir,
+            magiskboot_exe,
+            dev,
+            gki=False,
+            lkm_kernel_version=None,
+            root_type="magisk",
+            skip_lkm_download=True,
+        )
+
+    def finalize_patch(
+        self, patched_boot: Path, output_dir: Path, backup_source_dir: Path
+    ) -> Path:
+        process_boot_image_avb(patched_boot, gki=False)
+
+        vbmeta_bak = backup_source_dir / const.FN_VBMETA_BAK
+        patched_vbmeta_path = const.BASE_DIR / const.FN_VBMETA_ROOT
+
+        rebuild_vbmeta_with_chained_images(
+            output_path=patched_vbmeta_path,
+            original_vbmeta_path=vbmeta_bak,
+            chained_images=[patched_boot],
+        )
+
+        final_boot = output_dir / self.image_name
+        shutil.move(patched_boot, final_boot)
+
+        if patched_vbmeta_path.exists():
+            shutil.move(patched_vbmeta_path, output_dir / const.FN_VBMETA)
+
+        return final_boot
+
+
 class LkmRootStrategy(RootStrategy):
     def __init__(self, root_type: str = "ksu"):
         self.root_type = root_type
@@ -193,9 +301,6 @@ class LkmRootStrategy(RootStrategy):
 
     def configure_source(self) -> None:
         settings = const.load_settings_raw()
-
-        if self.root_type == "magisk":
-            return
 
         if self.root_type == "sukisu":
             self.is_nightly = True
@@ -295,24 +400,6 @@ class LkmRootStrategy(RootStrategy):
     def download_resources(self, kernel_version: Optional[str] = None) -> bool:
         _cleanup_manager_apk(show_message=False)
 
-        if self.root_type == "magisk":
-            if self.staging_dir.exists():
-                shutil.rmtree(self.staging_dir)
-            self.staging_dir.mkdir(exist_ok=True)
-
-            try:
-                apk_path = downloader.download_magisk_apk(self.staging_dir)
-                downloader.extract_magisk_libs(apk_path, self.staging_dir)
-            except Exception as e:
-                utils.ui.error(str(e))
-                return False
-
-            manager_path = const.TOOLS_DIR / "manager.apk"
-            if manager_path.exists():
-                manager_path.unlink()
-            shutil.copy(apk_path, manager_path)
-            return True
-
         if self.is_nightly:
             repo = self.repo_config.get("repo")
             manager = (
@@ -345,32 +432,16 @@ class LkmRootStrategy(RootStrategy):
         magiskboot_exe = utils.get_platform_executable("magiskboot")
         ensure_magiskboot()
 
-        if self.root_type == "magisk":
-            magisk_files = [
-                "magiskinit",
-                "magisk",
-                "init-ld",
-                "stub.apk",
-            ]
-            if all((self.staging_dir / name).exists() for name in magisk_files):
-                for name in magisk_files:
-                    shutil.copy(self.staging_dir / name, work_dir / name)
-            else:
-                if not self.download_resources(lkm_kernel_version):
-                    return None
-                for name in magisk_files:
-                    shutil.copy(self.staging_dir / name, work_dir / name)
+        if (self.staging_dir / "init").exists() and (
+            self.staging_dir / "kernelsu.ko"
+        ).exists():
+            shutil.copy(self.staging_dir / "init", work_dir / "init")
+            shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
         else:
-            if (self.staging_dir / "init").exists() and (
-                self.staging_dir / "kernelsu.ko"
-            ).exists():
-                shutil.copy(self.staging_dir / "init", work_dir / "init")
-                shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
-            else:
-                if not self.download_resources(lkm_kernel_version):
-                    return None
-                shutil.copy(self.staging_dir / "init", work_dir / "init")
-                shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
+            if not self.download_resources(lkm_kernel_version):
+                return None
+            shutil.copy(self.staging_dir / "init", work_dir / "init")
+            shutil.copy(self.staging_dir / "kernelsu.ko", work_dir / "kernelsu.ko")
 
         return patch_boot_with_root_algo(
             work_dir,
@@ -406,7 +477,12 @@ class LkmRootStrategy(RootStrategy):
 
 
 def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
-    strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
+    if gki:
+        strategy = GkiRootStrategy()
+    elif root_type == "magisk":
+        strategy = MagiskRootStrategy()
+    else:
+        strategy = LkmRootStrategy(root_type)
 
     if isinstance(strategy, LkmRootStrategy):
         strategy.configure_source()
@@ -466,7 +542,7 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
             (const.BASE_DIR / const.FN_VBMETA).unlink()
 
         lkm_kernel_version = None
-        if not gki and root_type != "magisk":
+        if isinstance(strategy, LkmRootStrategy):
             utils.ui.echo(get_string("err_req_kernel_ver_lkm"))
             lkm_kernel_version = input(
                 get_string("prompt_enter_kernel_version")
@@ -532,9 +608,9 @@ def _prepare_root_env(strategy: RootStrategy):
 
 
 def _get_lkm_kernel_version(
-    dev: device.DeviceController, gki: bool, root_type: str
+    dev: device.DeviceController, strategy: RootStrategy
 ) -> Optional[str]:
-    if not gki and root_type != "magisk":
+    if isinstance(strategy, LkmRootStrategy):
         if not dev.skip_adb:
             try:
                 return dev.adb.get_kernel_version()
@@ -636,7 +712,12 @@ def _dump_and_generate_root_image(
         utils.ui.echo(get_string("act_dump_reset"))
         dev.edl.reset(port)
 
-        patch_image = "boot.img" if gki else "init_boot.img (LKM)"
+        if gki:
+            patch_image = "boot.img"
+        elif isinstance(strategy, LkmRootStrategy):
+            patch_image = "init_boot.img (LKM)"
+        else:
+            patch_image = "init_boot.img"
         utils.ui.echo(get_string("act_root_step4_patch").format(image=patch_image))
 
         try:
@@ -732,7 +813,12 @@ def _flash_root_image(
 def root_device(
     dev: device.DeviceController, gki: bool = False, root_type: str = "ksu"
 ) -> None:
-    strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
+    if gki:
+        strategy = GkiRootStrategy()
+    elif root_type == "magisk":
+        strategy = MagiskRootStrategy()
+    else:
+        strategy = LkmRootStrategy(root_type)
 
     _cleanup_manager_apk()
 
@@ -745,7 +831,7 @@ def root_device(
     if not dev.skip_adb:
         dev.adb.wait_for_device()
 
-    lkm_kernel_version = _get_lkm_kernel_version(dev, gki, root_type)
+    lkm_kernel_version = _get_lkm_kernel_version(dev, strategy)
 
     if not strategy.download_resources(lkm_kernel_version):
         utils.ui.error(get_string("err_download_resources_abort"))
@@ -788,31 +874,48 @@ def unroot_device(dev: device.DeviceController) -> None:
 
     gki_strategy = GkiRootStrategy()
     lkm_strategy = LkmRootStrategy()
+    magisk_strategy = MagiskRootStrategy()
 
     gki_boot_file = gki_strategy.backup_dir / gki_strategy.image_name
     lkm_init_boot_file = lkm_strategy.backup_dir / lkm_strategy.image_name
     lkm_vbmeta_file = lkm_strategy.backup_dir / const.FN_VBMETA
+    magisk_init_boot_file = magisk_strategy.backup_dir / magisk_strategy.image_name
+    magisk_vbmeta_file = magisk_strategy.backup_dir / const.FN_VBMETA
 
     gki_exists = gki_boot_file.exists()
     lkm_exists = lkm_init_boot_file.exists() and lkm_vbmeta_file.exists()
+    magisk_exists = magisk_init_boot_file.exists() and magisk_vbmeta_file.exists()
 
     selected_strategy: Optional[RootStrategy] = None
 
-    if gki_exists and lkm_exists:
+    available_count = sum([gki_exists, lkm_exists, magisk_exists])
+
+    if available_count > 1:
         os.system("cls")
         utils.ui.echo("\n  " + "=" * 78)
         utils.ui.echo(get_string("act_unroot_menu_title"))
         utils.ui.echo("  " + "=" * 78 + "\n")
-        utils.ui.echo(get_string("act_unroot_menu_1_lkm"))
-        utils.ui.echo(get_string("act_unroot_menu_2_gki"))
+        utils.ui.echo(get_string("act_unroot_menu_1_magisk"))
+        utils.ui.echo(get_string("act_unroot_menu_2_lkm"))
+        utils.ui.echo(get_string("act_unroot_menu_3_gki"))
         utils.ui.echo("\n" + get_string("act_unroot_menu_m"))
         utils.ui.echo("\n  " + "=" * 78 + "\n")
 
         while selected_strategy is None:
             choice = utils.ui.prompt(get_string("prompt_select")).strip().lower()
             if choice == "1":
-                selected_strategy = lkm_strategy
+                if magisk_exists:
+                    selected_strategy = magisk_strategy
+                else:
+                    utils.ui.echo(get_string("err_invalid_selection"))
+                    continue
             elif choice == "2":
+                if lkm_exists:
+                    selected_strategy = lkm_strategy
+                else:
+                    utils.ui.echo(get_string("err_invalid_selection"))
+                    continue
+            elif choice == "3":
                 selected_strategy = gki_strategy
             elif choice == "m":
                 utils.ui.echo(get_string("act_op_cancel"))
@@ -820,6 +923,9 @@ def unroot_device(dev: device.DeviceController) -> None:
             else:
                 utils.ui.echo(get_string("err_invalid_selection"))
 
+    elif magisk_exists:
+        utils.ui.echo(get_string("act_unroot_magisk_detected"))
+        selected_strategy = magisk_strategy
     elif lkm_exists:
         utils.ui.echo(get_string("act_unroot_lkm_detected"))
         selected_strategy = lkm_strategy
@@ -828,17 +934,24 @@ def unroot_device(dev: device.DeviceController) -> None:
         selected_strategy = gki_strategy
     else:
         prompt = get_string("act_unroot_prompt_all").format(
-            lkm_dir=lkm_strategy.backup_dir.name, gki_dir=gki_strategy.backup_dir.name
+            magisk_dir=magisk_strategy.backup_dir.name,
+            lkm_dir=lkm_strategy.backup_dir.name,
+            gki_dir=gki_strategy.backup_dir.name,
         )
 
         def check_for_unroot_files(p: Path, f: Optional[list]) -> bool:
-            return gki_boot_file.exists() or (
-                lkm_init_boot_file.exists() and lkm_vbmeta_file.exists()
+            return (
+                gki_boot_file.exists()
+                or (lkm_init_boot_file.exists() and lkm_vbmeta_file.exists())
+                or (magisk_init_boot_file.exists() and magisk_vbmeta_file.exists())
             )
 
         utils._wait_for_resource(const.BASE_DIR, check_for_unroot_files, prompt, None)
 
-        if lkm_init_boot_file.exists() and lkm_vbmeta_file.exists():
+        if magisk_init_boot_file.exists() and magisk_vbmeta_file.exists():
+            selected_strategy = magisk_strategy
+            utils.ui.echo(get_string("act_unroot_magisk_detected"))
+        elif lkm_init_boot_file.exists() and lkm_vbmeta_file.exists():
             selected_strategy = lkm_strategy
             utils.ui.echo(get_string("act_unroot_lkm_detected"))
         else:
@@ -865,7 +978,28 @@ def unroot_device(dev: device.DeviceController) -> None:
         try:
             partition_map = selected_strategy.get_partition_map(suffix)
 
-            if isinstance(selected_strategy, LkmRootStrategy):
+            if isinstance(selected_strategy, MagiskRootStrategy):
+                utils.ui.echo(get_string("act_unroot_step4_magisk"))
+
+                target_init_boot = partition_map["main"]
+                edl.flash_partition_target(
+                    dev, port, target_init_boot, magisk_init_boot_file
+                )
+                utils.ui.echo(
+                    get_string("act_flash_img").format(
+                        filename=magisk_init_boot_file.name, part=target_init_boot
+                    )
+                )
+
+                target_vbmeta = partition_map["vbmeta"]
+                edl.flash_partition_target(dev, port, target_vbmeta, magisk_vbmeta_file)
+                utils.ui.echo(
+                    get_string("act_flash_img").format(
+                        filename=magisk_vbmeta_file.name, part=target_vbmeta
+                    )
+                )
+
+            elif isinstance(selected_strategy, LkmRootStrategy):
                 utils.ui.echo(get_string("act_unroot_step4_lkm"))
 
                 target_init_boot = partition_map["main"]

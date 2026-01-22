@@ -9,15 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import downloader, i18n, utils
+from . import downloader, i18n, menu_data, utils
 from .i18n import get_string
 from .logger import logging_context
 from .menu_data import (
     MenuItem,
     get_advanced_menu_data,
     get_main_menu_data,
-    get_root_menu_data,
-    get_root_mode_menu_data,
     get_settings_menu_data,
 )
 from .utils import ui
@@ -387,39 +385,9 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
             run_task(action, dev, registry, extra_kwargs=extras)
 
 
-def root_menu(dev, registry: CommandRegistry, gki: bool):
-    root_type = "ksu"
-
-    if not gki:
-        while True:
-            mode_menu = TerminalMenu(get_string("menu_root_lkm_type_title"))
-            mode_menu.add_option("1", "Magisk")
-            mode_menu.add_option("2", "KernelSU Next")
-            mode_menu.add_option("3", "SukiSU Ultra")
-            mode_menu.add_separator()
-            mode_menu.add_option("b", get_string("menu_back"))
-            mode_menu.add_option("m", get_string("menu_root_m"))
-
-            choice = mode_menu.ask(
-                get_string("prompt_select"), get_string("err_invalid_selection")
-            )
-
-            if choice == "1":
-                root_type = "magisk"
-                break
-            elif choice == "2":
-                root_type = "ksu"
-                break
-            elif choice == "3":
-                root_type = "sukisu"
-                break
-            elif choice == "b":
-                return
-            elif choice == "m":
-                return "main"
-
+def _root_action_menu(dev, registry: CommandRegistry, gki: bool, root_type: str):
     while True:
-        menu_items = get_root_menu_data(gki, root_type)
+        menu_items = menu_data.get_root_menu_data(gki)
         menu = TerminalMenu(get_string("menu_root_title"))
         menu.populate(menu_items)
 
@@ -445,25 +413,56 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             run_task(action, dev, registry, extra_kwargs=extras)
 
 
-def root_mode_selection_menu(dev, registry: CommandRegistry):
+def root_menu(dev, registry: CommandRegistry):
     while True:
-        menu_items = get_root_mode_menu_data()
-        menu = TerminalMenu(get_string("menu_root_mode_title"))
-        menu.populate(menu_items)
+        mode_menu = TerminalMenu(get_string("menu_root_type_title"))
+        mode_menu.add_option("1", get_string("menu_root_type_magisk"))
+        mode_menu.add_option("2", get_string("menu_root_type_ksu_next"))
+        mode_menu.add_option("3", get_string("menu_root_type_sukisu"))
+        mode_menu.add_separator()
+        mode_menu.add_option("b", get_string("menu_back"))
+        mode_menu.add_option("x", get_string("menu_main_exit"))
 
-        choice = menu.ask(
+        choice = mode_menu.ask(
             get_string("prompt_select"), get_string("err_invalid_selection")
         )
 
-        result = None
         if choice == "1":
-            result = root_menu(dev, registry, gki=False)
+            result = _root_action_menu(dev, registry, gki=False, root_type="magisk")
         elif choice == "2":
-            result = root_menu(dev, registry, gki=True)
+            result = None
+            while True:
+                mode_items = TerminalMenu(get_string("menu_root_mode_title"))
+                mode_items.add_option("1", get_string("menu_root_mode_1"))
+                mode_items.add_option("2", get_string("menu_root_mode_2"))
+                mode_items.add_separator()
+                mode_items.add_option("b", get_string("menu_back"))
+                mode_items.add_option("m", get_string("menu_root_m"))
+
+                mode_choice = mode_items.ask(
+                    get_string("prompt_select"), get_string("err_invalid_selection")
+                )
+                if mode_choice == "1":
+                    result = _root_action_menu(
+                        dev, registry, gki=False, root_type="ksu"
+                    )
+                    break
+                if mode_choice == "2":
+                    result = _root_action_menu(dev, registry, gki=True, root_type="ksu")
+                    break
+                if mode_choice == "b":
+                    result = None
+                    break
+                if mode_choice == "m":
+                    return
+        elif choice == "3":
+            result = _root_action_menu(dev, registry, gki=False, root_type="sukisu")
         elif choice == "b":
             return
         elif choice == "x":
             sys.exit()
+        else:
+            result = None
 
         if result == "main":
             return
@@ -633,7 +632,7 @@ def main_loop(device_controller_class, registry: CommandRegistry):
                 dev, registry, skip_adb, skip_rollback, target_region
             )
         elif action == "menu_root":
-            root_mode_selection_menu(dev, registry)
+            root_menu(dev, registry)
         elif action == "menu_advanced":
             advanced_menu(dev, registry, target_region)
         elif action:

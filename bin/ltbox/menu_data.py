@@ -71,7 +71,7 @@ def get_root_mode_menu_data() -> List[MenuItem]:
     ]
 
 
-def get_root_menu_data(gki: bool, root_type: str) -> List[MenuItem]:
+def get_root_menu_data(gki: bool) -> List[MenuItem]:
     items: List[MenuItem] = []
     if gki:
         items.append(
@@ -79,23 +79,12 @@ def get_root_menu_data(gki: bool, root_type: str) -> List[MenuItem]:
                 "1", get_string("menu_root_1_gki"), action="root_device_gki"
             )
         )
-        items.append(
-            MenuItem.option(
-                "2", get_string("menu_root_2_gki"), action="patch_root_image_file_gki"
-            )
-        )
     else:
-        label_2 = get_string("menu_root_2_lkm")
-        if root_type == "sukisu":
-            label_2 = label_2.replace("KernelSU Next", "SukiSU Ultra")
-        elif root_type == "magisk":
-            label_2 = label_2.replace("KernelSU Next", "Magisk")
         items.append(
             MenuItem.option(
                 "1", get_string("menu_root_1_lkm"), action="root_device_lkm"
             )
         )
-        items.append(MenuItem.option("2", label_2, action="patch_root_image_file_lkm"))
 
     items.append(MenuItem.separator())
     items.append(MenuItem.option("b", get_string("menu_back"), action="back"))
