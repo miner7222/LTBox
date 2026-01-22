@@ -44,4 +44,5 @@ def disable_ota(dev: device.DeviceController) -> None:
         except Exception:
             utils.ui.echo(get_string("act_ota_uninstall_fail").format(pkg=pkg))
 
+    utils.ui.echo(get_string("act_ota_factory_reset_notice"))
     utils.ui.echo(get_string("act_ota_finished"))

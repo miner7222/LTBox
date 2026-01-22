@@ -144,6 +144,7 @@
   "act_no_output_folders": "[*] output 폴더 없음. 기존 'image' 파일 사용.",
   "act_note_region_code": "Play Integrity와 Widevine 작동을 위해\nROM에 맞는 국가 코드를 선택해야 합니다.",
   "act_op_cancel": "[*] 작업 취소됨.",
+  "act_ota_factory_reset_notice": "공장 초기화 시 OTA 비활성화 작업을 다시 수행해야 합니다.",
   "act_ota_finished": "\n[*] OTA 비활성화 완료",
   "act_ota_settings_put": "시스템 설정 적용 중: ota_disable_automatic_update = 1 ...",
   "act_ota_uninstall_fail": "[-] 실패 또는 설치되지 않음: {pkg}",

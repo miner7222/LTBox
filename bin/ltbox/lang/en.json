@@ -144,6 +144,7 @@
   "act_no_output_folders": "[*] No output folders. Using existing 'image' files.",
   "act_note_region_code": "Select the country code matching your ROM\nfor Play Integrity and Widevine to work.",
   "act_op_cancel": "[*] Operation cancelled.",
+  "act_ota_factory_reset_notice": "After a factory reset, you must run OTA disable again.",
   "act_ota_finished": "\n[*] Disable OTA Finished",
   "act_ota_settings_put": "Applying setting: ota_disable_automatic_update = 1 ...",
   "act_ota_uninstall_fail": "[-] Failed or not installed: {pkg}",
