@@ -15,6 +15,13 @@ from .i18n import get_string
 from .i18n import load_lang as i18n_load_lang
 
 
+def _extract_zip_member(
+    zip_file: zipfile.ZipFile, member: zipfile.ZipInfo, target_path: Path
+) -> None:
+    with zip_file.open(member) as source, open(target_path, "wb") as target:
+        shutil.copyfileobj(source, target)
+
+
 def download_resource(url: str, dest_path: Path, show_progress: bool = True) -> None:
     import requests
     from requests.exceptions import RequestException
@@ -67,10 +74,7 @@ def extract_archive_files(archive_path: Path, extract_map: Dict[str, Path]) -> N
                 for zip_member in zf.infolist():
                     if zip_member.filename in extract_map:
                         target_path = extract_map[zip_member.filename]
-                        with zf.open(zip_member) as source, open(
-                            target_path, "wb"
-                        ) as target:
-                            shutil.copyfileobj(source, target)
+                        _extract_zip_member(zf, zip_member, target_path)
                         utils.ui.echo(
                             get_string("dl_extracted_file").format(
                                 filename=target_path.name
@@ -175,8 +179,7 @@ def _ensure_tool_from_github_release(
                 )
 
             extracted_path = const.DOWNLOAD_DIR / Path(exe_info.filename).name
-            with zip_ref.open(exe_info) as source, open(extracted_path, "wb") as target:
-                shutil.copyfileobj(source, target)
+            _extract_zip_member(zip_ref, exe_info, extracted_path)
 
             if extracted_path != tool_exe:
                 shutil.move(extracted_path, tool_exe)
@@ -212,8 +215,7 @@ def ensure_platform_tools() -> None:
                 if re.match(r"^platform-tools/[^/]+$", member.filename):
                     file_name = Path(member.filename).name
                     target_path = const.DOWNLOAD_DIR / file_name
-                    with zf.open(member) as source, open(target_path, "wb") as target:
-                        shutil.copyfileobj(source, target)
+                    _extract_zip_member(zf, member, target_path)
 
         temp_zip_path.unlink()
         utils.ui.echo(get_string("dl_platform_success"))
@@ -277,8 +279,7 @@ def ensure_openssl() -> None:
                         continue
 
                     target_path = const.DOWNLOAD_DIR / filename
-                    with zf.open(member) as source, open(target_path, "wb") as target:
-                        shutil.copyfileobj(source, target)
+                    _extract_zip_member(zf, member, target_path)
 
         utils.ui.echo(get_string("dl_tool_success").format(tool_name="OpenSSL"))
 
