@@ -1,4 +1,3 @@
-import os
 import shutil
 import subprocess
 import zipfile
@@ -896,7 +895,7 @@ def unroot_device(dev: device.DeviceController) -> None:
     available_count = sum([gki_exists, lkm_exists, magisk_exists])
 
     if available_count > 1:
-        os.system("cls")
+        utils.ui.clear()
         utils.ui.echo("\n  " + "=" * 78)
         utils.ui.echo(get_string("act_unroot_menu_title"))
         utils.ui.echo("  " + "=" * 78 + "\n")
