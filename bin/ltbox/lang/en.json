@@ -46,7 +46,7 @@
   "act_curr_vbmeta_idx": "  > Current VBMeta Index: {idx}",
   "act_detect_codes": "[*] Detecting country codes...",
   "act_detect_result": "\n[+] Detection Result: {res}",
-  "act_detect_status_found": "{display_name}: {code}XX",
+  "act_detect_status_found": "{display_name}: {code}",
   "act_detect_status_null": "{display_name}: null",
   "act_dp_moved": "\n[*] Images moved to '{dir}'.",
   "act_dp_ready": "  Modified images ready in '{dir}'.",

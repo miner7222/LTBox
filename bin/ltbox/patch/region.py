@@ -5,6 +5,46 @@ from .. import constants as const
 from .. import utils
 from ..i18n import get_string
 
+EU_COUNTRY_CODES = {
+    "AT",
+    "BE",
+    "BG",
+    "HR",
+    "CY",
+    "CZ",
+    "DK",
+    "EE",
+    "FI",
+    "FR",
+    "DE",
+    "GR",
+    "HU",
+    "IE",
+    "IT",
+    "LV",
+    "LT",
+    "LU",
+    "MT",
+    "NL",
+    "PL",
+    "PT",
+    "RO",
+    "SK",
+    "SI",
+    "ES",
+    "SE",
+}
+
+
+def _country_suffix(code: str) -> str:
+    return "XE" if code.upper() in EU_COUNTRY_CODES else "XX"
+
+
+def _candidate_suffixes(code: str) -> Tuple[str, ...]:
+    if code.upper() in EU_COUNTRY_CODES:
+        return ("XE", "XX")
+    return ("XX",)
+
 
 def _patch_vendor_boot_logic(
     content: bytes, **kwargs: Any
@@ -94,9 +134,12 @@ def detect_country_codes() -> Dict[str, Optional[str]]:
         try:
             content = file_path.read_bytes()
             for code, _ in const.COUNTRY_CODES.items():
-                target_bytes = f"{code.upper()}XX".encode("ascii")
-                if target_bytes in content:
-                    results[filename] = code
+                for suffix in _candidate_suffixes(code):
+                    target_bytes = f"{code.upper()}{suffix}".encode("ascii")
+                    if target_bytes in content:
+                        results[filename] = code
+                        break
+                if results[filename]:
                     break
         except Exception as e:
             utils.ui.error(get_string("img_det_err_read").format(name=filename, e=e))
@@ -113,13 +156,20 @@ def _patch_country_code_logic(
     if not current_code or not replacement_code:
         return content, {"changed": False, "message": get_string("img_code_invalid")}
 
-    target_string = f"{current_code.upper()}XX"
-    target_bytes = target_string.encode("ascii")
-
-    replacement_string = f"{replacement_code.upper()}XX"
+    replacement_suffix = _country_suffix(replacement_code)
+    replacement_string = f"{replacement_code.upper()}{replacement_suffix}"
     replacement_bytes = replacement_string.encode("ascii")
 
-    if target_bytes == replacement_bytes:
+    target_strings = [
+        f"{current_code.upper()}{suffix}"
+        for suffix in _candidate_suffixes(current_code)
+    ]
+    target_bytes_list = [target.encode("ascii") for target in target_strings]
+    targets_to_replace = [
+        target for target in target_bytes_list if target != replacement_bytes
+    ]
+
+    if not targets_to_replace:
         return content, {
             "changed": False,
             "message": get_string("img_code_already").format(
@@ -127,14 +177,18 @@ def _patch_country_code_logic(
             ),
         }
 
-    count = content.count(target_bytes)
+    count = sum(content.count(target) for target in targets_to_replace)
     if count > 0:
         utils.ui.info(
             get_string("img_code_replace").format(
-                target=target_string, count=count, replacement=replacement_string
+                target=", ".join(target_strings),
+                count=count,
+                replacement=replacement_string,
             )
         )
-        modified_content = content.replace(target_bytes, replacement_bytes)
+        modified_content = content
+        for target_bytes in targets_to_replace:
+            modified_content = modified_content.replace(target_bytes, replacement_bytes)
         return modified_content, {
             "changed": True,
             "message": get_string("img_code_replaced_total").format(count=count),
@@ -143,7 +197,9 @@ def _patch_country_code_logic(
 
     return content, {
         "changed": False,
-        "message": get_string("img_code_not_found").format(target=target_string),
+        "message": get_string("img_code_not_found").format(
+            target=", ".join(target_strings)
+        ),
     }
 
 

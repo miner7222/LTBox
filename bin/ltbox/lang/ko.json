@@ -46,7 +46,7 @@
   "act_curr_vbmeta_idx": "  > 현재 VBMeta 인덱스: {idx}",
   "act_detect_codes": "[*] 국가 코드 감지 중...",
   "act_detect_result": "\n[+] 감지 결과: {res}",
-  "act_detect_status_found": "{display_name}: {code}XX",
+  "act_detect_status_found": "{display_name}: {code}",
   "act_detect_status_null": "{display_name}: 없음",
   "act_dp_moved": "\n[*] 이미지가 '{dir}'로 이동되었습니다.",
   "act_dp_ready": "  수정된 이미지가 '{dir}'에 준비되었습니다.",
