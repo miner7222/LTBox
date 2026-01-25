@@ -12,6 +12,12 @@ from .edl import (
     write_anti_rollback,
 )
 from .region import convert_region_images, edit_devinfo_persist, rescue_after_ota
-from .root import patch_root_image_file, root_device, sign_and_flash_twrp, unroot_device
+from .root import (
+    patch_root_image_file,
+    patch_root_image_file_and_flash,
+    root_device,
+    sign_and_flash_twrp,
+    unroot_device,
+)
 from .system import detect_active_slot_robust, disable_ota
 from .xml import decrypt_x_files, modify_xml
