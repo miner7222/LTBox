@@ -79,7 +79,8 @@ jobs:
               # 2. Magiskboot (GitHub Release)
               print("\n--- Magiskboot ---")
               mb = config.get('magiskboot', {})
-              if not check_github_api(mb.get('repo_url'), mb.get('tag'), "Magiskboot Release"): has_error = True
+              mb_repo = mb.get('repo') or mb.get('repo_url')
+              if not check_github_api(mb_repo, mb.get('tag'), "Magiskboot Release"): has_error = True
 
               # 3. KernelSU-Next (GitHub Release)
               print("\n--- KernelSU-Next ---")
