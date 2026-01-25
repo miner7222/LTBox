@@ -202,6 +202,8 @@ def check_dependencies() -> None:
         "ADB": const.ADB_EXE,
         "Fastboot": const.FASTBOOT_EXE,
         "avbtool": const.AVBTOOL_PY,
+        "fh_loader": const.EDL_EXE,
+        "Qsaharaserver": const.QSAHARASERVER_EXE,
     }
 
     for path in const.KEY_MAP.values():

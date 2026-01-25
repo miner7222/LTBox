@@ -764,6 +764,8 @@ def entry_point():
             input(get_string("press_enter_to_exit"))
             sys.exit(1)
 
+        utils.check_dependencies()
+
         try:
             from . import actions, constants, device, utils, workflow
             from .patch import avb
