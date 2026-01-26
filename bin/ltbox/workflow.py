@@ -158,13 +158,14 @@ def _log_workflow_halt() -> None:
 
 @dataclass(frozen=True)
 class WorkflowStep:
-    label_key: str
+    label_key: Optional[str]
     action: Callable[[], None]
     after_label_key: Optional[str] = None
 
 
 def _run_step(ctx: TaskContext, step: WorkflowStep) -> None:
-    ctx.on_log(get_string(step.label_key))
+    if step.label_key:
+        ctx.on_log(get_string(step.label_key))
     step.action()
     if step.after_label_key:
         ctx.on_log(get_string(step.after_label_key))
@@ -175,15 +176,11 @@ def _run_steps(ctx: TaskContext, steps: list[WorkflowStep]) -> None:
         _run_step(ctx, step)
 
 
-def _build_initial_steps(ctx: TaskContext) -> list[WorkflowStep]:
+def _build_steps(ctx: TaskContext) -> list[WorkflowStep]:
     return [
         WorkflowStep("wf_step1_clean", lambda: _cleanup_previous_outputs(ctx)),
         WorkflowStep("wf_step2_device_info", lambda: _populate_device_info(ctx)),
-    ]
-
-
-def _build_processing_steps(ctx: TaskContext) -> list[WorkflowStep]:
-    return [
+        WorkflowStep(None, lambda: _log_active_slot(ctx)),
         WorkflowStep(
             "wf_step3_wait_image",
             lambda: _wait_for_input_images(ctx),
@@ -235,9 +232,7 @@ def patch_all(
                 ctx.on_log(get_string("wf_wipe_mode_start"))
             else:
                 ctx.on_log(get_string("wf_nowipe_mode_start"))
-            _run_steps(ctx, _build_initial_steps(ctx))
-            _log_active_slot(ctx)
-            _run_steps(ctx, _build_processing_steps(ctx))
+            _run_steps(ctx, _build_steps(ctx))
 
             ctx.on_log(get_string("wf_step6_dump"))
             skip_dp_workflow, boot_target, vbmeta_target = _dump_images(ctx)
