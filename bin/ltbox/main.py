@@ -628,6 +628,235 @@ def main_loop(device_controller_class, registry: CommandRegistry):
             run_task(action, dev, registry, extra_kwargs=extras)
 
 
+def _resolve_language_code(is_info_mode: bool) -> str:
+    return "en" if is_info_mode else prompt_for_language()
+
+
+def _prompt_for_update(current_version: str, latest_version: Optional[str]) -> None:
+    if not latest_version:
+        return
+
+    ui.echo(get_string("update_avail_title"))
+
+    prompt_msg = get_string("update_avail_prompt").format(
+        curr=current_version, new=latest_version
+    )
+    choice = input(prompt_msg).strip().lower()
+
+    if choice == "y":
+        ui.echo(get_string("update_open_web"))
+        webbrowser.open("https://github.com/miner7222/LTBox/releases")
+        sys.exit(0)
+
+    ui.clear()
+
+
+def _initialize_runtime(lang_code: str) -> Tuple[type, CommandRegistry, Any, Any]:
+    downloader.install_base_tools(lang_code)
+    utils.check_dependencies()
+
+    from . import actions, constants, device, workflow
+    from .patch import avb
+
+    registry = CommandRegistry()
+
+    @registry.register("change_language", get_string("lang_changed"), require_dev=False)
+    def change_language_task():
+        new_lang = prompt_for_language(force_prompt=True)
+        i18n.load_lang(new_lang)
+        return get_string("lang_changed")
+
+    command_specs = [
+        (
+            "convert",
+            actions.convert_region_images,
+            get_string("task_title_convert_rom"),
+            True,
+            {},
+        ),
+        (
+            "root_device_gki",
+            actions.root_device,
+            get_string("task_title_root_gki"),
+            True,
+            {"gki": True},
+        ),
+        (
+            "patch_root_image_file_gki",
+            actions.patch_root_image_file,
+            get_string("task_title_root_file_gki"),
+            False,
+            {"gki": True},
+        ),
+        (
+            "patch_root_image_file_flash_gki",
+            actions.patch_root_image_file_and_flash,
+            get_string("task_title_root_file_gki"),
+            True,
+            {"gki": True},
+        ),
+        (
+            "root_device_lkm",
+            actions.root_device,
+            get_string("task_title_root_lkm"),
+            True,
+            {"gki": False},
+        ),
+        (
+            "patch_root_image_file_lkm",
+            actions.patch_root_image_file,
+            get_string("task_title_root_file_lkm"),
+            False,
+            {"gki": False},
+        ),
+        (
+            "patch_root_image_file_flash_lkm",
+            actions.patch_root_image_file_and_flash,
+            get_string("task_title_root_file_lkm"),
+            True,
+            {"gki": False},
+        ),
+        (
+            "unroot_device",
+            actions.unroot_device,
+            get_string("task_title_unroot"),
+            True,
+            {},
+        ),
+        (
+            "sign_and_flash_twrp",
+            actions.sign_and_flash_twrp,
+            get_string("task_title_rec_flash"),
+            True,
+            {},
+        ),
+        (
+            "disable_ota",
+            actions.disable_ota,
+            get_string("task_title_disable_ota"),
+            True,
+            {},
+        ),
+        (
+            "rescue_ota",
+            actions.rescue_after_ota,
+            get_string("task_title_rescue"),
+            True,
+            {},
+        ),
+        (
+            "edit_dp",
+            actions.edit_devinfo_persist,
+            get_string("task_title_patch_devinfo"),
+            False,
+            {},
+        ),
+        (
+            "dump_partitions",
+            actions.dump_partitions,
+            get_string("task_title_dump_devinfo"),
+            True,
+            {},
+        ),
+        (
+            "flash_partitions",
+            actions.flash_partitions,
+            get_string("task_title_write_devinfo"),
+            True,
+            {},
+        ),
+        (
+            "read_anti_rollback",
+            actions.read_anti_rollback_from_device,
+            get_string("task_title_read_arb"),
+            True,
+            {},
+        ),
+        (
+            "patch_anti_rollback",
+            actions.patch_anti_rollback_in_rom,
+            get_string("task_title_patch_arb"),
+            False,
+            {},
+        ),
+        (
+            "write_anti_rollback",
+            actions.write_anti_rollback,
+            get_string("task_title_write_arb"),
+            True,
+            {},
+        ),
+        (
+            "decrypt_xml",
+            actions.decrypt_x_files,
+            get_string("task_title_decrypt_xml"),
+            False,
+            {},
+        ),
+        (
+            "modify_xml",
+            actions.modify_xml,
+            get_string("task_title_modify_xml_nowipe"),
+            False,
+            {"wipe": 0},
+        ),
+        (
+            "modify_xml_wipe",
+            actions.modify_xml,
+            get_string("task_title_modify_xml_wipe"),
+            False,
+            {"wipe": 1},
+        ),
+        (
+            "flash_full_firmware",
+            actions.flash_full_firmware,
+            get_string("task_title_flash_full_firmware"),
+            True,
+            {},
+        ),
+        (
+            "patch_all",
+            workflow.patch_all,
+            get_string("task_title_install_nowipe"),
+            True,
+            {"wipe": 0},
+        ),
+        (
+            "patch_all_wipe",
+            workflow.patch_all,
+            get_string("task_title_install_wipe"),
+            True,
+            {"wipe": 1},
+        ),
+    ]
+
+    for name, func, title, require_dev, extra_kwargs in command_specs:
+        registry.add(name, func, title, require_dev=require_dev, **extra_kwargs)
+
+    return device.DeviceController, registry, constants, avb
+
+
+def _run_entry_mode(
+    is_info_mode: bool,
+    device_controller_class: type,
+    registry: CommandRegistry,
+    constants_module: Any,
+    avb_patch_module: Any,
+) -> None:
+    check_path_encoding()
+
+    if is_info_mode:
+        if len(sys.argv) > 2:
+            run_info_scan(sys.argv[2:], constants_module, avb_patch_module)
+        else:
+            ui.error(get_string("info_no_files_dragged"))
+            ui.error(get_string("info_drag_files_prompt"))
+
+        input(get_string("press_enter_to_exit"))
+    else:
+        main_loop(device_controller_class, registry)
+
+
 # --- Singleton Check ---
 
 
@@ -657,11 +886,7 @@ def entry_point():
         setup_console()
 
         is_info_mode = len(sys.argv) > 1 and sys.argv[1].lower() == "info"
-
-        if is_info_mode:
-            lang_code = "en"
-        else:
-            lang_code = prompt_for_language()
+        lang_code = _resolve_language_code(is_info_mode)
 
         i18n.load_lang(lang_code)
 
@@ -674,220 +899,23 @@ def entry_point():
 
         ui.clear()
 
-        from . import utils
-
         current_version = _read_current_version()
         latest_version, _, _ = _get_latest_version(current_version)
 
-        if latest_version:
-            ui.echo(get_string("update_avail_title"))
-
-            prompt_msg = get_string("update_avail_prompt").format(
-                curr=current_version, new=latest_version
-            )
-            choice = input(prompt_msg).strip().lower()
-
-            if choice == "y":
-                ui.echo(get_string("update_open_web"))
-                webbrowser.open("https://github.com/miner7222/LTBox/releases")
-                sys.exit(0)
-
-            ui.clear()
+        _prompt_for_update(current_version, latest_version)
 
         try:
-            downloader.install_base_tools(lang_code)
+            (
+                device_controller_class,
+                registry,
+                constants_module,
+                avb_patch_module,
+            ) = _initialize_runtime(lang_code)
         except (subprocess.CalledProcessError, FileNotFoundError, ToolError) as e:
             ui.error(get_string("critical_err_base_tools").format(e=e))
             ui.error(get_string("err_run_install_manually"))
             input(get_string("press_enter_to_exit"))
             sys.exit(1)
-
-        utils.check_dependencies()
-
-        try:
-            from . import actions, constants, device, utils, workflow
-            from .patch import avb
-
-            registry = CommandRegistry()
-
-            @registry.register(
-                "change_language", get_string("lang_changed"), require_dev=False
-            )
-            def change_language_task():
-                new_lang = prompt_for_language(force_prompt=True)
-                i18n.load_lang(new_lang)
-                return get_string("lang_changed")
-
-            command_specs = [
-                (
-                    "convert",
-                    actions.convert_region_images,
-                    get_string("task_title_convert_rom"),
-                    True,
-                    {},
-                ),
-                (
-                    "root_device_gki",
-                    actions.root_device,
-                    get_string("task_title_root_gki"),
-                    True,
-                    {"gki": True},
-                ),
-                (
-                    "patch_root_image_file_gki",
-                    actions.patch_root_image_file,
-                    get_string("task_title_root_file_gki"),
-                    False,
-                    {"gki": True},
-                ),
-                (
-                    "patch_root_image_file_flash_gki",
-                    actions.patch_root_image_file_and_flash,
-                    get_string("task_title_root_file_gki"),
-                    True,
-                    {"gki": True},
-                ),
-                (
-                    "root_device_lkm",
-                    actions.root_device,
-                    get_string("task_title_root_lkm"),
-                    True,
-                    {"gki": False},
-                ),
-                (
-                    "patch_root_image_file_lkm",
-                    actions.patch_root_image_file,
-                    get_string("task_title_root_file_lkm"),
-                    False,
-                    {"gki": False},
-                ),
-                (
-                    "patch_root_image_file_flash_lkm",
-                    actions.patch_root_image_file_and_flash,
-                    get_string("task_title_root_file_lkm"),
-                    True,
-                    {"gki": False},
-                ),
-                (
-                    "unroot_device",
-                    actions.unroot_device,
-                    get_string("task_title_unroot"),
-                    True,
-                    {},
-                ),
-                (
-                    "sign_and_flash_twrp",
-                    actions.sign_and_flash_twrp,
-                    get_string("task_title_rec_flash"),
-                    True,
-                    {},
-                ),
-                (
-                    "disable_ota",
-                    actions.disable_ota,
-                    get_string("task_title_disable_ota"),
-                    True,
-                    {},
-                ),
-                (
-                    "rescue_ota",
-                    actions.rescue_after_ota,
-                    get_string("task_title_rescue"),
-                    True,
-                    {},
-                ),
-                (
-                    "edit_dp",
-                    actions.edit_devinfo_persist,
-                    get_string("task_title_patch_devinfo"),
-                    False,
-                    {},
-                ),
-                (
-                    "dump_partitions",
-                    actions.dump_partitions,
-                    get_string("task_title_dump_devinfo"),
-                    True,
-                    {},
-                ),
-                (
-                    "flash_partitions",
-                    actions.flash_partitions,
-                    get_string("task_title_write_devinfo"),
-                    True,
-                    {},
-                ),
-                (
-                    "read_anti_rollback",
-                    actions.read_anti_rollback_from_device,
-                    get_string("task_title_read_arb"),
-                    True,
-                    {},
-                ),
-                (
-                    "patch_anti_rollback",
-                    actions.patch_anti_rollback_in_rom,
-                    get_string("task_title_patch_arb"),
-                    False,
-                    {},
-                ),
-                (
-                    "write_anti_rollback",
-                    actions.write_anti_rollback,
-                    get_string("task_title_write_arb"),
-                    True,
-                    {},
-                ),
-                (
-                    "decrypt_xml",
-                    actions.decrypt_x_files,
-                    get_string("task_title_decrypt_xml"),
-                    False,
-                    {},
-                ),
-                (
-                    "modify_xml",
-                    actions.modify_xml,
-                    get_string("task_title_modify_xml_nowipe"),
-                    False,
-                    {"wipe": 0},
-                ),
-                (
-                    "modify_xml_wipe",
-                    actions.modify_xml,
-                    get_string("task_title_modify_xml_wipe"),
-                    False,
-                    {"wipe": 1},
-                ),
-                (
-                    "flash_full_firmware",
-                    actions.flash_full_firmware,
-                    get_string("task_title_flash_full_firmware"),
-                    True,
-                    {},
-                ),
-                (
-                    "patch_all",
-                    workflow.patch_all,
-                    get_string("task_title_install_nowipe"),
-                    True,
-                    {"wipe": 0},
-                ),
-                (
-                    "patch_all_wipe",
-                    workflow.patch_all,
-                    get_string("task_title_install_wipe"),
-                    True,
-                    {"wipe": 1},
-                ),
-            ]
-
-            for name, func, title, require_dev, extra_kwargs in command_specs:
-                registry.add(name, func, title, require_dev=require_dev, **extra_kwargs)
-
-            device_controller_class = device.DeviceController
-            constants_module = constants
-            avb_patch_module = avb
 
         except ImportError as e:
             ui.error(get_string("err_import_ltbox"))
@@ -896,18 +924,20 @@ def entry_point():
             input(get_string("press_enter_to_exit"))
             sys.exit(1)
 
-        check_path_encoding()
-
-        if is_info_mode:
-            if len(sys.argv) > 2:
-                run_info_scan(sys.argv[2:], constants_module, avb_patch_module)
-            else:
-                ui.error(get_string("info_no_files_dragged"))
-                ui.error(get_string("info_drag_files_prompt"))
-
+        try:
+            _run_entry_mode(
+                is_info_mode,
+                device_controller_class,
+                registry,
+                constants_module,
+                avb_patch_module,
+            )
+        except ImportError as e:
+            ui.error(get_string("err_import_ltbox"))
+            ui.error(get_string("err_details").format(e=e))
+            ui.error(get_string("err_ensure_ltbox_present"))
             input(get_string("press_enter_to_exit"))
-        else:
-            main_loop(device_controller_class, registry)
+            sys.exit(1)
 
     except (LTBoxError, RuntimeError) as e:
         ui.error(get_string("err_fatal_abort"))
