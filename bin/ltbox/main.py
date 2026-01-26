@@ -161,6 +161,47 @@ def _save_settings(data: Dict[str, Any]) -> None:
         print(f"Warning: Failed to save settings: {e}", file=sys.stderr)
 
 
+def _read_current_version() -> str:
+    config_file = APP_DIR / "config.json"
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+                return config_data.get("version", "v0.0.0")
+        except Exception:
+            return "v0.0.0"
+    return "v0.0.0"
+
+
+def _get_latest_version(
+    current_version: str,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    try:
+        latest_release, latest_prerelease = utils.get_latest_release_versions(
+            "miner7222", "LTBox"
+        )
+        latest_version = None
+
+        if latest_release and utils.is_update_available(
+            current_version, latest_release
+        ):
+            latest_version = latest_release
+        elif latest_release and utils.is_update_available(
+            latest_release, current_version
+        ):
+            if latest_prerelease and utils.is_update_available(
+                current_version, latest_prerelease
+            ):
+                latest_version = latest_prerelease
+        elif latest_release is None and latest_prerelease:
+            if utils.is_update_available(current_version, latest_prerelease):
+                latest_version = latest_prerelease
+
+        return latest_version, latest_release, latest_prerelease
+    except Exception:
+        return None, None, None
+
+
 def _abort_platform_check(messages: List[str]) -> None:
     for message in messages:
         print(message, file=sys.stderr)
@@ -517,62 +558,30 @@ def settings_menu(
             ui.clear()
             ui.echo(get_string("act_update_checking"))
 
-            current_version = "v0.0.0"
-            config_file = APP_DIR / "config.json"
-            if config_file.exists():
-                try:
-                    with open(config_file, "r", encoding="utf-8") as f:
-                        config_data = json.load(f)
-                        current_version = config_data.get("version", "v0.0.0")
-                except Exception:
-                    pass
+            current_version = _read_current_version()
+            latest_version, latest_release, latest_prerelease = _get_latest_version(
+                current_version
+            )
 
-            try:
-                latest_release, latest_prerelease = utils.get_latest_release_versions(
-                    "miner7222", "LTBox"
+            if latest_version:
+                ui.echo(get_string("update_avail_title"))
+                prompt_msg = get_string("update_avail_prompt").format(
+                    curr=current_version, new=latest_version
                 )
-                latest_version = None
-
-                if latest_release and utils.is_update_available(
-                    current_version, latest_release
-                ):
-                    latest_version = latest_release
-                elif latest_release and utils.is_update_available(
-                    latest_release, current_version
-                ):
-                    if latest_prerelease and utils.is_update_available(
-                        current_version, latest_prerelease
-                    ):
-                        latest_version = latest_prerelease
-                elif latest_release is None and latest_prerelease:
-                    if utils.is_update_available(current_version, latest_prerelease):
-                        latest_version = latest_prerelease
-
-                if latest_version:
-                    ui.echo(get_string("update_avail_title"))
-                    prompt_msg = get_string("update_avail_prompt").format(
-                        curr=current_version, new=latest_version
+                choice = input(prompt_msg).strip().lower()
+                if choice == "y":
+                    ui.echo(get_string("update_open_web"))
+                    webbrowser.open("https://github.com/miner7222/LTBox/releases")
+                    sys.exit(0)
+            else:
+                if latest_release or latest_prerelease:
+                    ui.echo(
+                        get_string("act_update_not_found").format(
+                            version=current_version
+                        )
                     )
-
-                    choice = input(prompt_msg).strip().lower()
-                    if choice == "y":
-                        ui.echo(get_string("update_open_web"))
-                        webbrowser.open("https://github.com/miner7222/LTBox/releases")
-                        sys.exit(0)
                 else:
-                    if latest_release or latest_prerelease:
-                        ui.echo(
-                            get_string("act_update_not_found").format(
-                                version=current_version
-                            )
-                        )
-                    else:
-                        ui.echo(
-                            get_string("act_update_error").format(e="Unknown version")
-                        )
-
-            except Exception as e:
-                ui.echo(get_string("act_update_error").format(e=e))
+                    ui.echo(get_string("act_update_error").format(e="Unknown version"))
 
             ui.echo("")
             input(get_string("press_enter_to_continue"))
@@ -710,36 +719,8 @@ def entry_point():
 
         from . import utils
 
-        current_version = "v0.0.0"
-        config_file = APP_DIR / "config.json"
-
-        if config_file.exists():
-            try:
-                with open(config_file, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-                    current_version = config_data.get("version", "v0.0.0")
-            except Exception:
-                pass
-
-        latest_release, latest_prerelease = utils.get_latest_release_versions(
-            "miner7222", "LTBox"
-        )
-        latest_version = None
-
-        if latest_release and utils.is_update_available(
-            current_version, latest_release
-        ):
-            latest_version = latest_release
-        elif latest_release and utils.is_update_available(
-            latest_release, current_version
-        ):
-            if latest_prerelease and utils.is_update_available(
-                current_version, latest_prerelease
-            ):
-                latest_version = latest_prerelease
-        elif latest_release is None and latest_prerelease:
-            if utils.is_update_available(current_version, latest_prerelease):
-                latest_version = latest_prerelease
+        current_version = _read_current_version()
+        latest_version, _, _ = _get_latest_version(current_version)
 
         if latest_version:
             ui.echo(get_string("update_avail_title"))
