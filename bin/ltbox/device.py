@@ -52,6 +52,21 @@ class AdbManager:
         except AdbError:
             return None
 
+    def _with_device(
+        self, action: Callable[[adbutils.AdbDevice], Any]
+    ) -> Optional[Any]:
+        if not self.wait_for_device():
+            return None
+        try:
+            device = self._get_device()
+        except Exception as e:
+            raise DeviceConnectionError(
+                get_string("device_err_wait_adb").format(e=e), e
+            )
+        if not device:
+            return None
+        return action(device)
+
     def wait_for_device(self) -> bool:
         if self.skip_adb:
             ui.warn(get_string("device_skip_adb"))
@@ -96,52 +111,49 @@ class AdbManager:
             return False
 
     def get_model(self) -> Optional[str]:
-        if not self.wait_for_device():
-            return None
         try:
-            d = self._get_device()
-            return d.prop.model if d else None
+            return self._with_device(lambda d: d.prop.model)
         except Exception as e:
             raise DeviceConnectionError(
                 get_string("device_err_get_model").format(e=e), e
             )
 
     def get_slot_suffix(self) -> Optional[str]:
-        if not self.wait_for_device():
-            return None
         try:
-            d = self._get_device()
-            if d:
-                suffix = d.getprop("ro.boot.slot_suffix")
+
+            def _read_suffix(device: adbutils.AdbDevice) -> Optional[str]:
+                suffix = device.getprop("ro.boot.slot_suffix")
                 return suffix if suffix in ["_a", "_b"] else None
-            return None
+
+            return self._with_device(_read_suffix)
         except Exception as e:
             raise DeviceConnectionError(
                 get_string("device_err_get_slot").format(e=e), e
             )
 
     def get_kernel_version(self) -> str:
-        if not self.wait_for_device():
-            raise DeviceConnectionError(
-                get_string("dl_lkm_kver_fail").format(ver="SKIP_ADB")
-            )
-
-        print(get_string("dl_lkm_get_kver"))
         try:
-            d = self._get_device()
-            if not d:
+            if not self.wait_for_device():
+                raise DeviceConnectionError(
+                    get_string("dl_lkm_kver_fail").format(ver="SKIP_ADB")
+                )
+
+            print(get_string("dl_lkm_get_kver"))
+
+            def _read_version(device: adbutils.AdbDevice) -> str:
+                version_string = device.shell("cat /proc/version")
+                match = re.search(r"Linux version (\d+\.\d+)", version_string)
+                if not match:
+                    raise DeviceCommandError(
+                        get_string("dl_lkm_kver_fail").format(ver=version_string)
+                    )
+                return match.group(1)
+
+            ver = self._with_device(_read_version)
+            if not ver:
                 raise DeviceConnectionError(
                     get_string("device_err_wait_adb").format(e="No device")
                 )
-
-            version_string = d.shell("cat /proc/version")
-            match = re.search(r"Linux version (\d+\.\d+)", version_string)
-            if not match:
-                raise DeviceCommandError(
-                    get_string("dl_lkm_kver_fail").format(ver=version_string)
-                )
-
-            ver = match.group(1)
             print(get_string("dl_lkm_kver_found").format(ver=ver))
             return ver
         except Exception as e:
@@ -150,57 +162,45 @@ class AdbManager:
             )
 
     def reboot(self, target: str) -> None:
-        if not self.wait_for_device():
-            if target == "edl":
-                ui.warn(get_string("device_manual_edl_req"))
-            return
-
         try:
-            d = self._get_device()
-            if d:
+            if not self.wait_for_device():
+                if target == "edl":
+                    ui.warn(get_string("device_manual_edl_req"))
+                return
+
+            def _reboot(device: adbutils.AdbDevice) -> None:
                 if target == "edl":
                     try:
-                        with d.open_transport() as c:
+                        with device.open_transport() as c:
                             c.send_command("reboot:edl")
                             c.check_okay()
                     except Exception:
-                        d.shell("reboot edl")
+                        device.shell("reboot edl")
                 elif target == "bootloader":
                     try:
-                        with d.open_transport() as c:
+                        with device.open_transport() as c:
                             c.send_command("reboot:bootloader")
                             c.check_okay()
                     except Exception:
-                        d.shell("reboot bootloader")
+                        device.shell("reboot bootloader")
                 else:
-                    d.shell(f"reboot {target}")
+                    device.shell(f"reboot {target}")
+
+            self._with_device(_reboot)
         except Exception as e:
             raise DeviceCommandError(get_string("device_err_reboot").format(e=e), e)
 
     def install(self, apk_path: str) -> None:
-        if self.wait_for_device():
-            d = self._get_device()
-            if d:
-                d.install(apk_path)
+        self._with_device(lambda d: d.install(apk_path))
 
     def push(self, local: str, remote: str) -> None:
-        if self.wait_for_device():
-            d = self._get_device()
-            if d:
-                d.sync.push(local, remote)
+        self._with_device(lambda d: d.sync.push(local, remote))
 
     def pull(self, remote: str, local: str) -> None:
-        if self.wait_for_device():
-            d = self._get_device()
-            if d:
-                d.sync.pull(remote, local)
+        self._with_device(lambda d: d.sync.pull(remote, local))
 
     def shell(self, cmd: str) -> str:
-        if self.wait_for_device():
-            d = self._get_device()
-            if d:
-                return d.shell(cmd)
-        return ""
+        return self._with_device(lambda d: d.shell(cmd)) or ""
 
     def force_kill_server(self):
         try:
