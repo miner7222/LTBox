@@ -67,33 +67,26 @@ def _get_tool_env() -> dict:
     return _CACHED_ENV
 
 
-def _run_command_capture(
+def _run_command(
     command: Union[List[str], str],
     shell: bool,
     check: bool,
     env: dict,
     cwd: Optional[Union[str, Path]],
-) -> subprocess.CompletedProcess:
-    run_kwargs = _get_subprocess_kwargs(env, cwd)
-    return subprocess.run(
-        command,
-        shell=shell,
-        check=check,
-        capture_output=True,
-        text=True,
-        **run_kwargs,
-    )
-
-
-def _run_command_stream(
-    command: Union[List[str], str],
-    shell: bool,
-    check: bool,
-    env: dict,
-    cwd: Optional[Union[str, Path]],
+    capture: bool,
     on_output: Optional[Callable[[str], None]],
 ) -> subprocess.CompletedProcess:
     run_kwargs = _get_subprocess_kwargs(env, cwd)
+    if capture:
+        return subprocess.run(
+            command,
+            shell=shell,
+            check=check,
+            capture_output=True,
+            text=True,
+            **run_kwargs,
+        )
+
     process = subprocess.Popen(
         command,
         shell=shell,
@@ -137,10 +130,9 @@ def run_command(
 ) -> subprocess.CompletedProcess:
     run_env = env if env is not None else _get_tool_env()
 
-    if capture:
-        return _run_command_capture(command, shell, check, run_env, cwd)
-
-    return _run_command_stream(command, shell, check, run_env, cwd, on_output)
+    return _run_command(
+        command, shell, check, run_env, cwd, capture=capture, on_output=on_output
+    )
 
 
 def _get_subprocess_kwargs(env: dict, cwd: Optional[Union[str, Path]]) -> dict:
