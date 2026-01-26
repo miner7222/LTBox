@@ -12,8 +12,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from . import downloader, i18n, menu_data, utils
 from .i18n import get_string
 from .logger import logging_context
+from .menu import TerminalMenu, select_menu_action
 from .menu_data import (
-    MenuItem,
     get_advanced_menu_data,
     get_main_menu_data,
     get_settings_menu_data,
@@ -83,71 +83,6 @@ class CommandRegistry:
 
 
 # --- UI Helper Class ---
-
-
-class TerminalMenu:
-    def __init__(self, title: str):
-        self.title = title
-        self.options: List[Tuple[Optional[str], str, bool]] = []
-        self.valid_keys: List[str] = []
-
-    def add_option(self, key: str, text: str) -> None:
-        self.options.append((key, text, True))
-        self.valid_keys.append(key.lower())
-
-    def add_label(self, text: str) -> None:
-        self.options.append((None, text, False))
-
-    def add_separator(self) -> None:
-        self.options.append((None, "", False))
-
-    def populate(self, items: List[MenuItem]) -> None:
-        for item in items:
-            if item.item_type == "label":
-                self.add_label(item.text)
-            elif item.item_type == "separator":
-                self.add_separator()
-            elif item.item_type == "option" and item.key is not None:
-                self.add_option(str(item.key), item.text)
-
-    def show(self) -> None:
-        ui.clear()
-        ui.echo("\n" + "=" * 78)
-        ui.echo(f"   {self.title}")
-        ui.echo("=" * 78 + "\n")
-
-        for key, text, is_selectable in self.options:
-            if is_selectable:
-                ui.echo(f"   {key}. {text}")
-            else:
-                if text:
-                    ui.echo(f"  {text}")
-                else:
-                    ui.echo("")
-
-        ui.echo("\n" + "=" * 78 + "\n")
-
-    def ask(self, prompt_msg: str, error_msg: str) -> str:
-        while True:
-            self.show()
-            choice = input(prompt_msg).strip().lower()
-            if choice in self.valid_keys:
-                return choice
-
-            ui.echo(error_msg)
-            input(get_string("press_enter_to_continue"))
-
-
-def _select_menu_action(menu_items: List[MenuItem], title_key: str) -> Optional[str]:
-    menu = TerminalMenu(get_string(title_key))
-    menu.populate(menu_items)
-
-    action_map = {
-        item.key: item.action for item in menu_items if item.item_type == "option"
-    }
-
-    choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
-    return action_map.get(choice)
 
 
 def _format_command_failure_messages(
@@ -422,7 +357,7 @@ def run_info_scan(paths, constants, avb_patch):
 def advanced_menu(dev, registry: CommandRegistry, target_region: str):
     while True:
         menu_items = get_advanced_menu_data(target_region)
-        action = _select_menu_action(menu_items, "menu_adv_title")
+        action = select_menu_action(menu_items, "menu_adv_title")
 
         if action == "back":
             return
@@ -440,7 +375,7 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
 def _root_action_menu(dev, registry: CommandRegistry, gki: bool, root_type: str):
     while True:
         menu_items = menu_data.get_root_menu_data(gki)
-        action = _select_menu_action(menu_items, "menu_root_title")
+        action = select_menu_action(menu_items, "menu_root_title")
 
         if action == "back":
             return
@@ -524,7 +459,7 @@ def settings_menu(
         menu_items = get_settings_menu_data(
             skip_adb_state, skip_rb_state, target_region
         )
-        action = _select_menu_action(menu_items, "menu_settings_title")
+        action = select_menu_action(menu_items, "menu_settings_title")
 
         if action == "back":
             return skip_adb, skip_rollback, target_region
@@ -629,7 +564,7 @@ def main_loop(device_controller_class, registry: CommandRegistry):
 
     while True:
         menu_items = get_main_menu_data(target_region)
-        action = _select_menu_action(menu_items, "menu_main_title")
+        action = select_menu_action(menu_items, "menu_main_title")
 
         if action == "exit":
             break

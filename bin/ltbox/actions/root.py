@@ -10,7 +10,7 @@ from .. import device, downloader, utils
 from ..downloader import ensure_magiskboot
 from ..errors import ToolError
 from ..i18n import get_string
-from ..main import TerminalMenu
+from ..menu import TerminalMenu
 from ..partition import ensure_params_or_fail
 from ..patch.avb import process_boot_image_avb, rebuild_vbmeta_with_chained_images
 from ..patch.root import patch_boot_with_root_algo
