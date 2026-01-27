@@ -61,7 +61,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
+          key: fw-extracted-v1-${{ hashFiles('tests/scripts/cache_fw.py') }}
           restore-keys: |
             fw-extracted-v1-
 
@@ -85,7 +85,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONPATH: "bin"
         run: |
-          python tests/cache_fw.py
+          python tests/scripts/cache_fw.py
 
       - name: Install Tools from Cache
         run: |

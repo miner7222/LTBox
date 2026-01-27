@@ -20,7 +20,7 @@ FW_URL = (
 )
 FW_PW = os.environ.get("TEST_FW_PASSWORD")
 
-CACHE_DIR = Path(__file__).parent / "data"
+CACHE_DIR = Path(__file__).resolve().parent.parent / "data"
 ARCHIVE = CACHE_DIR / "fw_archive.7z"
 EXTRACT_DIR = CACHE_DIR / "extracted"
 URL_RECORD_FILE = CACHE_DIR / "url.txt"

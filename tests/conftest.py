@@ -3,9 +3,10 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import cache_fw
 import pytest
 from ltbox import downloader, i18n
+
+from tests.scripts import cache_fw
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../bin")))
 sys.path.append(str(Path(__file__).parent))

@@ -50,7 +50,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
+          key: fw-extracted-v1-${{ hashFiles('tests/scripts/cache_fw.py') }}
           restore-keys: |
             fw-extracted-v1-
 
@@ -60,7 +60,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONPATH: "bin"
         run: |
-          python tests/cache_fw.py
+          python tests/scripts/cache_fw.py
 
       - name: Save FW cache
         if: ${{ always() && hashFiles('tests/data/url.txt') != '' && steps.cache-fw.outputs.cache-hit != 'true' }}
@@ -69,7 +69,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
+          key: fw-extracted-v1-${{ hashFiles('tests/scripts/cache_fw.py') }}
 
   build:
     runs-on: windows-latest
@@ -108,7 +108,7 @@ jobs:
           path: |
             tests/data/extracted
             tests/data/url.txt
-          key: fw-extracted-v1-${{ hashFiles('tests/cache_fw.py') }}
+          key: fw-extracted-v1-${{ hashFiles('tests/scripts/cache_fw.py') }}
           restore-keys: |
             fw-extracted-v1-
 
