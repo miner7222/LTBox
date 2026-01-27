@@ -30,20 +30,20 @@ jobs:
 
       - name: Run Flake8 (Errors)
         run: |
-          flake8 bin/ltbox --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 bin/ltbox tests --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run Flake8 (Warnings)
         run: |
-          flake8 bin/ltbox --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          flake8 bin/ltbox tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
       - name: Check Imports (isort)
         run: |
-          isort bin/ltbox --check-only --profile black
+          isort bin/ltbox tests --check-only --profile black
 
       - name: Check Black Formatting
         run: |
-          black --check bin/ltbox
+          black --check bin/ltbox tests
 
       - name: Run Mypy (Type Check)
         run: |
-          mypy bin/ltbox --ignore-missing-imports
+          mypy bin/ltbox tests --ignore-missing-imports
