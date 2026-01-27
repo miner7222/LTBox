@@ -303,6 +303,27 @@ def check_path_encoding():
 # --- Task Execution ---
 
 
+def _handle_task_error(error: Exception, title: str) -> None:
+    if isinstance(error, LTBoxError):
+        ui.box_output(
+            [get_string("task_failed").format(title=title), str(error)], err=True
+        )
+        return
+    if isinstance(error, subprocess.CalledProcessError):
+        ui.box_output(_format_command_failure_messages(error), err=True)
+        return
+    if isinstance(error, (FileNotFoundError, RuntimeError, KeyError)):
+        if not isinstance(error, SystemExit):
+            ui.box_output([get_string("unexpected_error").format(e=error)], err=True)
+        return
+    if isinstance(error, SystemExit):
+        ui.error(get_string("process_halted"))
+        return
+    if isinstance(error, KeyboardInterrupt):
+        ui.error(get_string("process_cancelled"))
+        return
+
+
 def run_task(
     command: str,
     dev: Any,
@@ -342,17 +363,8 @@ def run_task(
         elif result:
             ui.echo(get_string("act_unhandled_success_result").format(res=result))
 
-    except LTBoxError as e:
-        ui.box_output([get_string("task_failed").format(title=title), str(e)], err=True)
-    except subprocess.CalledProcessError as e:
-        ui.box_output(_format_command_failure_messages(e), err=True)
-    except (FileNotFoundError, RuntimeError, KeyError) as e:
-        if not isinstance(e, SystemExit):
-            ui.box_output([get_string("unexpected_error").format(e=e)], err=True)
-    except SystemExit:
-        ui.error(get_string("process_halted"))
-    except KeyboardInterrupt:
-        ui.error(get_string("process_cancelled"))
+    except Exception as e:
+        _handle_task_error(e, title)
     finally:
         if dev and hasattr(dev, "adb"):
             dev.adb.force_kill_server()
