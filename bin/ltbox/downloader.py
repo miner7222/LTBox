@@ -15,6 +15,12 @@ from .i18n import get_string
 from .i18n import load_lang as i18n_load_lang
 
 
+def _get_owner_repo(repo_url: str) -> str:
+    if "github.com/" in repo_url:
+        return repo_url.split("github.com/")[-1]
+    return repo_url
+
+
 def _extract_zip_member(
     zip_file: zipfile.ZipFile, member: zipfile.ZipInfo, target_path: Path
 ) -> None:
@@ -97,10 +103,7 @@ def _download_github_asset(
     import requests
     from requests.exceptions import RequestException
 
-    if "github.com/" in repo_url:
-        owner_repo = repo_url.split("github.com/")[-1]
-    else:
-        owner_repo = repo_url
+    owner_repo = _get_owner_repo(repo_url)
 
     if not tag or tag.lower() == "latest":
         api_url = f"https://api.github.com/repos/{owner_repo}/releases/latest"
