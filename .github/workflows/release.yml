@@ -108,6 +108,7 @@ jobs:
             ".gitattributes",
             ".editorconfig",
             ".pre-commit-config.yaml",
+            "pytest.ini",
             "tests",
             "tests\\*"
           )

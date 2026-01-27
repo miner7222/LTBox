@@ -565,6 +565,7 @@ def settings_menu(
     skip_adb: bool,
     skip_rollback: bool,
     target_region: str,
+    settings_store: SettingsStore = SETTINGS_STORE,
 ) -> Tuple[bool, bool, str]:
     while True:
         skip_adb_state = "ON" if skip_adb else "OFF"
@@ -581,7 +582,7 @@ def settings_menu(
             return skip_adb, skip_rollback, target_region
         elif action == "toggle_region":
             target_region = "ROW" if target_region == "PRC" else "PRC"
-            SETTINGS_STORE.update(target_region=target_region)
+            settings_store.update(target_region=target_region)
         elif action == "toggle_adb":
             skip_adb = not skip_adb
             dev.skip_adb = skip_adb
@@ -624,9 +625,11 @@ def settings_menu(
             input(get_string("press_enter_to_continue"))
 
 
-def prompt_for_language(force_prompt: bool = False) -> str:
+def prompt_for_language(
+    force_prompt: bool = False, settings_store: SettingsStore = SETTINGS_STORE
+) -> str:
     if not force_prompt:
-        settings = SETTINGS_STORE.load()
+        settings = settings_store.load()
         saved_lang = settings.language
 
         if saved_lang:
@@ -662,13 +665,17 @@ def prompt_for_language(force_prompt: bool = False) -> str:
     choice = menu.ask(prompt, error_msg)
     selected_lang = lang_map[choice]
 
-    SETTINGS_STORE.update(language=selected_lang)
+    settings_store.update(language=selected_lang)
 
     return selected_lang
 
 
-def main_loop(device_controller_class, registry: CommandRegistry):
-    settings = SETTINGS_STORE.load()
+def main_loop(
+    device_controller_class,
+    registry: CommandRegistry,
+    settings_store: SettingsStore = SETTINGS_STORE,
+):
+    settings = settings_store.load()
 
     skip_adb = False
     skip_rollback = False
@@ -684,7 +691,12 @@ def main_loop(device_controller_class, registry: CommandRegistry):
             break
         elif action == "menu_settings":
             skip_adb, skip_rollback, target_region = settings_menu(
-                dev, registry, skip_adb, skip_rollback, target_region
+                dev,
+                registry,
+                skip_adb,
+                skip_rollback,
+                target_region,
+                settings_store=settings_store,
             )
         elif action == "menu_root":
             root_menu(dev, registry)
@@ -698,8 +710,10 @@ def main_loop(device_controller_class, registry: CommandRegistry):
             run_task(action, dev, registry, extra_kwargs=extras)
 
 
-def _resolve_language_code(is_info_mode: bool) -> str:
-    return "en" if is_info_mode else prompt_for_language()
+def _resolve_language_code(
+    is_info_mode: bool, settings_store: SettingsStore = SETTINGS_STORE
+) -> str:
+    return "en" if is_info_mode else prompt_for_language(settings_store=settings_store)
 
 
 def _prompt_for_update(current_version: str, latest_version: Optional[str]) -> None:
@@ -923,6 +937,7 @@ def _run_entry_mode(
     registry: CommandRegistry,
     constants_module: Any,
     avb_patch_module: Any,
+    settings_store: Optional[SettingsStore] = None,
 ) -> None:
     check_path_encoding()
 
@@ -935,7 +950,7 @@ def _run_entry_mode(
 
         input(get_string("press_enter_to_exit"))
     else:
-        main_loop(device_controller_class, registry)
+        main_loop(device_controller_class, registry, settings_store=settings_store)
 
 
 # --- Singleton Check ---
@@ -967,7 +982,7 @@ def entry_point():
         setup_console()
 
         is_info_mode = len(sys.argv) > 1 and sys.argv[1].lower() == "info"
-        lang_code = _resolve_language_code(is_info_mode)
+        lang_code = _resolve_language_code(is_info_mode, settings_store=SETTINGS_STORE)
 
         i18n.load_lang(lang_code)
 
@@ -1012,6 +1027,7 @@ def entry_point():
                 registry,
                 constants_module,
                 avb_patch_module,
+                settings_store=SETTINGS_STORE,
             )
         except ImportError as e:
             ui.error(get_string("err_import_ltbox"))

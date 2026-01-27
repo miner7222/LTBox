@@ -15,6 +15,8 @@ from ltbox.actions.root import GkiRootStrategy, LkmRootStrategy, MagiskRootStrat
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../bin")))
 
+pytestmark = pytest.mark.integration
+
 
 def create_xmls(img_dir, names):
     for n in names:

@@ -8,6 +8,8 @@ from ltbox.patch import avb
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../bin")))
 
+pytestmark = pytest.mark.integration
+
 
 def test_vbmeta_parse(fw_pkg):
     path = fw_pkg.get("vbmeta.img")

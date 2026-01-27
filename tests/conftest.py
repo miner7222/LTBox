@@ -17,8 +17,30 @@ def setup_language():
     i18n.load_lang("en")
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests that require external tools or downloads.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-integration"):
+        return
+    skip_integration = pytest.mark.skip(
+        reason="integration tests require --run-integration"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)
+
+
 @pytest.fixture(scope="session", autouse=True)
-def setup_external_tools():
+def setup_external_tools(request):
+    if not request.config.getoption("--run-integration"):
+        return
     print("\n[INFO] Setting up external tools for integration tests...", flush=True)
     try:
         downloader.ensure_avb_tools()

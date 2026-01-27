@@ -6,6 +6,8 @@ import pytest
 from ltbox import partition
 from ltbox.actions import edl
 
+pytestmark = pytest.mark.integration
+
 
 def _copy_firmware_xml(fw_pkg, image_dir):
     candidates = [

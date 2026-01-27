@@ -72,7 +72,7 @@ def test_main_loop_settings_flow(monkeypatch, tmp_path):
             self.skip_adb = skip_adb
             DummyController.last_instance = self
 
-    main.main_loop(DummyController, main.CommandRegistry())
+    main.main_loop(DummyController, main.CommandRegistry(), settings_store=store)
 
     assert DummyController.last_instance.skip_adb is True
     assert store.load().target_region == "ROW"

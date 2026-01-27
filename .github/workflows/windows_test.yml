@@ -119,4 +119,13 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONPATH: "bin"
         run: |
-          pytest -s tests/
+          pytest -s tests/ -m "not integration"
+
+      - name: Run Integration Tests
+        env:
+          TEST_FW_URL: ${{ secrets.TEST_FW_URL }}
+          TEST_FW_PASSWORD: ${{ secrets.TEST_FW_PASSWORD }}
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "bin"
+        run: |
+          pytest -s tests/ -m integration --run-integration
