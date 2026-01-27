@@ -8,8 +8,10 @@ import zipfile
 from pathlib import Path
 from typing import Dict
 
+import requests
+
 from . import constants as const
-from . import utils
+from . import net, utils
 from .errors import ToolError
 from .i18n import get_string
 from .i18n import load_lang as i18n_load_lang
@@ -29,14 +31,10 @@ def _extract_zip_member(
 
 
 def download_resource(url: str, dest_path: Path, show_progress: bool = True) -> None:
-    import requests
-    from requests.exceptions import RequestException
-
     msg = get_string("dl_downloading").format(filename=dest_path.name)
     utils.ui.echo(msg)
     try:
-        with requests.get(url, stream=True) as response:
-            response.raise_for_status()
+        with net.request_with_retries("GET", url, stream=True) as response:
             downloaded = 0
 
             with open(dest_path, "wb") as f:
@@ -47,7 +45,7 @@ def download_resource(url: str, dest_path: Path, show_progress: bool = True) -> 
 
         msg_success = get_string("dl_download_success").format(filename=dest_path.name)
         utils.ui.echo(msg_success)
-    except (RequestException, OSError) as e:
+    except (requests.RequestException, OSError) as e:
         msg_err = get_string("dl_download_failed").format(url=url, error=e)
         utils.ui.error(msg_err)
         if dest_path.exists():
