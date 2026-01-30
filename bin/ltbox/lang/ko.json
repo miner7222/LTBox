@@ -220,7 +220,7 @@
   "act_unroot_gki_detected": "[+] GKI 백업(boot.img)을 감지했습니다. GKI 언루팅을 진행합니다.",
   "act_unroot_lkm_detected": "[+] LKM 백업(init_boot.img, vbmeta.img)을 감지했습니다. LKM 언루팅을 진행합니다.",
   "act_unroot_magisk_detected": "[+] Magisk 백업(init_boot.img, vbmeta.img)을 감지했습니다. Magisk 언루팅을 진행합니다.",
-  "act_unroot_menu_1_magisk": "   1. Magisk 복원 (init_boot, vbmeta)",
+  "act_unroot_menu_1_magisk": "   1. Magisk 복원",
   "act_unroot_menu_2_lkm": "   2. KernelSU Next & SukiSU Ultra (LKM) 복원",
   "act_unroot_menu_3_gki": "   3. KernelSU Next (GKI) 복원",
   "act_unroot_menu_m": "   m. 메인으로 돌아가기",

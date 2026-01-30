@@ -220,7 +220,7 @@
   "act_unroot_gki_detected": "[+] GKI backup (boot.img) detected. Proceeding with GKI unroot.",
   "act_unroot_lkm_detected": "[+] LKM backup (init_boot.img, vbmeta.img) detected. Proceeding with LKM unroot.",
   "act_unroot_magisk_detected": "[+] Magisk backup (init_boot.img, vbmeta.img) detected. Proceeding with Magisk unroot.",
-  "act_unroot_menu_1_magisk": "   1. Restore Magisk (init_boot, vbmeta)",
+  "act_unroot_menu_1_magisk": "   1. Restore Magisk",
   "act_unroot_menu_2_lkm": "   2. Restore KernelSU Next & SukiSU Ultra (LKM)",
   "act_unroot_menu_3_gki": "   3. Restore KernelSU Next (GKI)",
   "act_unroot_menu_m": "   m. Back to Main Menu",

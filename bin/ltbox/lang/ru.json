@@ -220,7 +220,7 @@
   "act_unroot_gki_detected": "[+] Обнаружена резервная копия GKI (boot.img). Продолжение в режиме GKI.",
   "act_unroot_lkm_detected": "[+] Обнаружена резервная копия LKM (init_boot.img, vbmeta.img). Продолжение в режиме LKM.",
   "act_unroot_magisk_detected": "[+] Обнаружена резервная копия Magisk (init_boot.img, vbmeta.img). Продолжение в режиме Magisk.",
-  "act_unroot_menu_1_magisk": "   1. Восстановление Magisk (init_boot, vbmeta)",
+  "act_unroot_menu_1_magisk": "   1. Восстановление Magisk",
   "act_unroot_menu_2_lkm": "   2. Восстановление KernelSU Next & SukiSU Ultra (LKM)",
   "act_unroot_menu_3_gki": "   3. Восстановление KernelSU Next (GKI)",
   "act_unroot_menu_m": "   m. Назад в меню",
