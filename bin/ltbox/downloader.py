@@ -6,7 +6,7 @@ import sys
 import tarfile
 import zipfile
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import requests
 
@@ -134,6 +134,64 @@ def _download_github_asset(
     except RequestException as e:
         utils.ui.error(get_string("dl_err_check_network"))
         raise ToolError(get_string("dl_github_failed").format(e=e))
+
+
+def _get_latest_release_tag(owner_repo: str) -> str:
+    api_url = f"https://api.github.com/repos/{owner_repo}/releases/latest"
+    try:
+        response = requests.get(api_url, timeout=15)
+        response.raise_for_status()
+        release_data = response.json()
+    except requests.RequestException as e:
+        utils.ui.error(get_string("dl_err_check_network"))
+        raise ToolError(get_string("dl_github_failed").format(e=e))
+
+    tag_name = release_data.get("tag_name")
+    if not tag_name:
+        raise ToolError("Failed to resolve latest KernelSU Next tag.")
+    return tag_name
+
+
+def _resolve_release_tag(owner_repo: str, tag: Optional[str]) -> str:
+    if not tag or tag.lower() == "latest":
+        return _get_latest_release_tag(owner_repo)
+    return tag
+
+
+def _select_workflow_run_for_tag(runs: list[dict], tag: str) -> Optional[dict]:
+    for run in runs:
+        head_branch = run.get("head_branch") or ""
+        if head_branch == tag or head_branch == f"refs/tags/{tag}":
+            return run
+    for run in runs:
+        head_branch = run.get("head_branch") or ""
+        if head_branch.endswith(f"/{tag}"):
+            return run
+    return None
+
+
+def _get_workflow_run_id_for_tag(owner_repo: str, tag: str) -> str:
+    api_url = f"https://api.github.com/repos/{owner_repo}/actions/runs"
+    params = {"per_page": 30, "status": "completed", "branch": tag}
+    try:
+        response = requests.get(api_url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        run = _select_workflow_run_for_tag(data.get("workflow_runs", []), tag)
+        if run:
+            return str(run["id"])
+
+        response = requests.get(api_url, params={"per_page": 50}, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        run = _select_workflow_run_for_tag(data.get("workflow_runs", []), tag)
+        if run:
+            return str(run["id"])
+    except requests.RequestException as e:
+        utils.ui.error(get_string("dl_err_check_network"))
+        raise ToolError(get_string("dl_github_failed").format(e=e))
+
+    raise ToolError(f"Failed to find workflow run for tag {tag}.")
 
 
 def _ensure_tool_from_github_release(
@@ -517,8 +575,28 @@ def download_ksuinit_release(target_path: Path) -> None:
     if target_path.exists():
         target_path.unlink()
 
-    url = f"https://github.com/{const.KSU_APK_REPO}/raw/refs/tags/{const.KSU_APK_TAG}/userspace/ksud/bin/aarch64/ksuinit"
-    download_resource(url, target_path)
+    owner_repo = _get_owner_repo(f"https://github.com/{const.KSU_APK_REPO}")
+    tag = _resolve_release_tag(owner_repo, const.KSU_APK_TAG)
+    workflow_id = _get_workflow_run_id_for_tag(owner_repo, tag)
+    base_url = f"https://nightly.link/{owner_repo}/actions/runs/{workflow_id}"
+    temp_zip = target_path.parent / "ksuinit.zip"
+
+    try:
+        download_resource(f"{base_url}/ksuinit.zip", temp_zip)
+        with zipfile.ZipFile(temp_zip, "r") as zf:
+            ksuinit_member = None
+            for member in zf.namelist():
+                if member.endswith("ksuinit"):
+                    ksuinit_member = member
+                    break
+            if not ksuinit_member:
+                raise ToolError("ksuinit not found in workflow artifact.")
+
+            with zf.open(ksuinit_member) as src, open(target_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    finally:
+        if temp_zip.exists():
+            temp_zip.unlink()
 
 
 def get_lkm_kernel_release(target_path: Path, kernel_version: str) -> None:

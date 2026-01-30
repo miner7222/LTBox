@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -29,6 +30,41 @@ def check_github_api(owner_repo: str, tag: str, description: str) -> bool:
         url = f"https://api.github.com/repos/{owner_repo}/releases/tags/{tag}"
 
     return check_url(url, f"GitHub API ({description})")
+
+
+def resolve_latest_tag(owner_repo: str, tag: str) -> Optional[str]:
+    if not tag or tag == "latest":
+        api_url = f"https://api.github.com/repos/{owner_repo}/releases/latest"
+        try:
+            response = requests.get(api_url, timeout=15)
+            response.raise_for_status()
+            return response.json().get("tag_name")
+        except Exception:
+            return None
+    return tag
+
+
+def fetch_workflow_run_id(owner_repo: str, tag: str) -> Optional[str]:
+    api_url = f"https://api.github.com/repos/{owner_repo}/actions/runs"
+    params = {"per_page": 30, "status": "completed", "branch": tag}
+    try:
+        response = requests.get(api_url, params=params, timeout=15)
+        response.raise_for_status()
+        runs = response.json().get("workflow_runs", [])
+        for run in runs:
+            if run.get("head_branch") == tag:
+                return str(run.get("id"))
+
+        response = requests.get(api_url, params={"per_page": 50}, timeout=15)
+        response.raise_for_status()
+        runs = response.json().get("workflow_runs", [])
+        for run in runs:
+            head_branch = run.get("head_branch") or ""
+            if head_branch == tag or head_branch == f"refs/tags/{tag}":
+                return str(run.get("id"))
+    except Exception:
+        return None
+    return None
 
 
 def main() -> None:
@@ -69,13 +105,22 @@ def main() -> None:
     if not check_github_api(ksu_repo, ksu_tag, "KernelSU-Next Release"):
         has_error = True
 
-    # 3-2. KSUInit (Raw)
-    ksuinit_url = (
-        f"https://github.com/{ksu_repo}/raw/refs/tags/"
-        f"{ksu_tag}/userspace/ksud/bin/aarch64/ksuinit"
-    )
-    if not check_url(ksuinit_url, "KSUInit Binary"):
+    # 3-2. KSUInit (Nightly artifact from latest tag workflow)
+    resolved_tag = resolve_latest_tag(ksu_repo, ksu_tag)
+    if not resolved_tag:
+        print("FAILED (Unable to resolve latest KernelSU-Next tag)")
         has_error = True
+    else:
+        run_id = fetch_workflow_run_id(ksu_repo, resolved_tag)
+        if not run_id:
+            print("FAILED (Unable to find KernelSU-Next workflow run)")
+            has_error = True
+        else:
+            ksuinit_url = (
+                f"https://nightly.link/{ksu_repo}/actions/runs/{run_id}/ksuinit.zip"
+            )
+            if not check_url(ksuinit_url, "KSUInit Artifact"):
+                has_error = True
 
     # 3-3. KernelSU Next (Nightly)
     nightly_wf = ksu.get("nightly_workflow")
