@@ -242,6 +242,7 @@ class LkmRootStrategy(RootStrategy):
     def __init__(self, root_type: str = "ksu"):
         self.root_type = root_type
         self.is_nightly = False
+        self.is_tagged_build = False
         self.workflow_id: Optional[str] = None
         self.repo_config: Dict[str, Any] = {}
         self.staging_dir = const.TOOLS_DIR / "lkm_staging"
@@ -307,11 +308,25 @@ class LkmRootStrategy(RootStrategy):
         settings = const.load_settings_raw()
 
         if self.root_type == "sukisu":
-            self.is_nightly = True
-            self.repo_config = settings.get("sukisu-ultra", {})
-            self.workflow_id = self._prompt_workflow(
-                "SukiSU Ultra", str(self.repo_config.get("workflow", ""))
+            menu = TerminalMenu(get_string("menu_root_subtype_title"))
+            menu.add_option("1", get_string("menu_root_subtype_release"))
+            menu.add_option("2", get_string("menu_root_subtype_nightly"))
+
+            choice = menu.ask(
+                get_string("prompt_select"), get_string("err_invalid_selection")
             )
+
+            self.repo_config = settings.get("sukisu-ultra", {})
+
+            if choice == "2":
+                self.is_nightly = True
+                self.is_tagged_build = False
+                self.workflow_id = self._prompt_workflow(
+                    "SukiSU Ultra", str(self.repo_config.get("workflow", ""))
+                )
+            else:
+                self.is_nightly = False
+                self.is_tagged_build = True
         else:
             menu = TerminalMenu(get_string("menu_root_subtype_title"))
             menu.add_option("1", get_string("menu_root_subtype_release"))
@@ -331,7 +346,12 @@ class LkmRootStrategy(RootStrategy):
                 self.is_nightly = False
 
     def _perform_nightly_download(
-        self, repo, workflow_id, manager_zip, kernel_version
+        self,
+        repo,
+        workflow_id,
+        manager_zip,
+        kernel_version,
+        download_all_ksuinit: bool = False,
     ) -> bool:
         mapped_name = self._get_mapped_kernel_name(kernel_version)
         if not mapped_name:
@@ -352,6 +372,7 @@ class LkmRootStrategy(RootStrategy):
                 manager_name=manager_zip,
                 mapped_name=mapped_name,
                 target_dir=temp_dl_dir,
+                download_all_ksuinit=download_all_ksuinit,
             )
 
             mgr_zip_path = temp_dl_dir / manager_zip
@@ -403,6 +424,33 @@ class LkmRootStrategy(RootStrategy):
 
     def download_resources(self, kernel_version: Optional[str] = None) -> bool:
         _cleanup_manager_apk(show_message=False)
+
+        if self.root_type == "sukisu":
+            repo = self.repo_config.get("repo")
+            manager = self.repo_config.get("manager")
+            if self.is_nightly:
+                workflow_id = self.workflow_id
+            else:
+                tag = self.repo_config.get("tag")
+                try:
+                    workflow_id, resolved_tag = (
+                        downloader.get_latest_tagged_workflow_run(repo, tag)
+                    )
+                    utils.ui.info(
+                        f"Using latest tagged CI run for {resolved_tag} ({workflow_id})"
+                    )
+                except Exception as e:
+                    utils.ui.error(f"{e}")
+                    utils.ui.error(get_string("err_download_workflow"))
+                    return False
+
+            return self._perform_nightly_download(
+                repo,
+                workflow_id,
+                manager,
+                kernel_version,
+                download_all_ksuinit=self.is_tagged_build,
+            )
 
         if self.is_nightly:
             repo = self.repo_config.get("repo")

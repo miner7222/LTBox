@@ -27,6 +27,7 @@
   },
   "sukisu-ultra": {
     "repo": "SukiSU-Ultra/SukiSU-Ultra",
+    "tag": "latest",
     "workflow": "21065531649",
     "manager": "Spoofed-Manager.zip"
   },

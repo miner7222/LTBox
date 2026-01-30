@@ -148,8 +148,25 @@ def _get_latest_release_tag(owner_repo: str) -> str:
 
     tag_name = release_data.get("tag_name")
     if not tag_name:
-        raise ToolError("Failed to resolve latest KernelSU Next tag.")
+        raise ToolError("Failed to resolve latest release tag.")
     return tag_name
+
+
+def _get_latest_tag_name(owner_repo: str) -> str:
+    tags_url = f"https://api.github.com/repos/{owner_repo}/tags"
+    try:
+        response = requests.get(tags_url, params={"per_page": 1}, timeout=15)
+        response.raise_for_status()
+        tags = response.json()
+        if tags:
+            tag_name = tags[0].get("name")
+            if tag_name:
+                return tag_name
+    except requests.RequestException as e:
+        utils.ui.error(get_string("dl_err_check_network"))
+        raise ToolError(get_string("dl_github_failed").format(e=e))
+
+    return _get_latest_release_tag(owner_repo)
 
 
 def _resolve_release_tag(owner_repo: str, tag: Optional[str]) -> str:
@@ -192,6 +209,33 @@ def _get_workflow_run_id_for_tag(owner_repo: str, tag: str) -> str:
         raise ToolError(get_string("dl_github_failed").format(e=e))
 
     raise ToolError(f"Failed to find workflow run for tag {tag}.")
+
+
+def _get_workflow_run_artifacts(owner_repo: str, run_id: str) -> list[str]:
+    api_url = (
+        f"https://api.github.com/repos/{owner_repo}/actions/runs/{run_id}/artifacts"
+    )
+    try:
+        response = requests.get(api_url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as e:
+        utils.ui.error(get_string("dl_err_check_network"))
+        raise ToolError(get_string("dl_github_failed").format(e=e))
+
+    artifacts = data.get("artifacts", [])
+    return [artifact.get("name", "") for artifact in artifacts if artifact.get("name")]
+
+
+def get_latest_tagged_workflow_run(
+    repo: str, tag: Optional[str] = None
+) -> tuple[str, str]:
+    owner_repo = _get_owner_repo(repo)
+    resolved_tag = (
+        _get_latest_tag_name(owner_repo) if not tag or tag.lower() == "latest" else tag
+    )
+    run_id = _get_workflow_run_id_for_tag(owner_repo, resolved_tag)
+    return run_id, resolved_tag
 
 
 def _ensure_tool_from_github_release(
@@ -417,7 +461,13 @@ def get_gki_kernel(kernel_version: str, work_dir: Path) -> Path:
 
 
 def download_nightly_artifacts(
-    repo: str, workflow_id: str, manager_name: str, mapped_name: str, target_dir: Path
+    repo: str,
+    workflow_id: str,
+    manager_name: str,
+    mapped_name: str,
+    target_dir: Path,
+    ksuinit_variants: Optional[list[str]] = None,
+    download_all_ksuinit: bool = False,
 ):
     base_url = f"https://nightly.link/{repo}/actions/runs/{workflow_id}"
 
@@ -433,10 +483,32 @@ def download_nightly_artifacts(
     try:
         download_resource(manager_url, manager_zip)
 
-        ksuinit_variants = ["ksuinit", "ksuinit-aarch64-linux-android"]
-        ksuinit_downloaded = False
+        artifact_names: list[str] = []
+        if download_all_ksuinit:
+            try:
+                owner_repo = _get_owner_repo(repo)
+                artifact_names = _get_workflow_run_artifacts(owner_repo, workflow_id)
+            except ToolError:
+                artifact_names = []
 
-        for variant in ksuinit_variants:
+        ksuinit_candidates = (
+            [name for name in artifact_names if name.startswith("ksuinit")]
+            if artifact_names
+            else (ksuinit_variants or ["ksuinit", "ksuinit-aarch64-linux-android"])
+        )
+
+        preferred = [
+            "ksuinit-aarch64-linux-android",
+            "ksuinit",
+        ]
+        ksuinit_candidates.sort(
+            key=lambda name: (
+                preferred.index(name) if name in preferred else len(preferred)
+            )
+        )
+
+        ksuinit_downloaded = False
+        for variant in ksuinit_candidates:
             ksuinit_url = f"{base_url}/{variant}.zip"
             temp_ksuinit_zip = target_dir / f"temp_{variant}.zip"
             try:
@@ -450,10 +522,17 @@ def download_nightly_artifacts(
                             ) as dst:
                                 shutil.copyfileobj(src, dst)
                             ksuinit_downloaded = True
+                            if download_all_ksuinit:
+                                variant_name = variant.replace("/", "_")
+                                variant_dest = target_dir / f"{variant_name}.ksuinit"
+                                with zf.open(member) as src, open(
+                                    variant_dest, "wb"
+                                ) as dst:
+                                    shutil.copyfileobj(src, dst)
                             break
                 temp_ksuinit_zip.unlink()
 
-                if ksuinit_downloaded:
+                if ksuinit_downloaded and not download_all_ksuinit:
                     break
             except Exception:
                 if temp_ksuinit_zip.exists():
