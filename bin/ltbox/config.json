@@ -15,7 +15,7 @@
   },
   "kernelsu-next": {
     "repo": "KernelSU-Next/KernelSU-Next",
-    "tag": "v3.0.0",
+    "tag": "latest",
     "nightly_manager": "manager-spoofed.zip",
     "nightly_workflow": "21007168033"
   },
