@@ -107,7 +107,7 @@ pub(crate) fn flash_parts_scan(
             num_sectors: p.num_sectors,
             size_bytes: p.size_bytes,
             file_path: None,
-            state: FlashRowState::Unchecked,
+            state: FlashRowState::Skip,
         })
         .collect();
 
@@ -137,7 +137,7 @@ pub(crate) fn flash_parts_scan(
 pub(crate) fn preflight_flash_part_sources(rows: &[FlashPartRow]) -> Result<(), String> {
     let mut missing = Vec::new();
     for row in rows {
-        if row.state != FlashRowState::Flash {
+        if row.state != FlashRowState::Write {
             continue;
         }
         match row.file_path.as_ref() {
@@ -242,7 +242,7 @@ pub(crate) fn flash_parts_execute(
     ltbox_core::live!(log, "[FlashParts] {}", phases.marker(2));
     for row in &rows {
         match row.state {
-            FlashRowState::Flash => {
+            FlashRowState::Write => {
                 // Sources were preflighted; treat absence as a hard error if
                 // state races somehow remove the path between checks.
                 let Some(path) = row.file_path.as_ref() else {
@@ -345,7 +345,7 @@ pub(crate) fn flash_parts_execute(
                     ));
                 }
             }
-            FlashRowState::Unchecked => {}
+            FlashRowState::Skip => {}
         }
     }
 
@@ -856,7 +856,7 @@ mod tests {
         let rows = vec![flash_row(
             "boot_a",
             Some("Z:/ltbox-definitely-missing-boot_a.img"),
-            FlashRowState::Flash,
+            FlashRowState::Write,
         )];
         let err = preflight_flash_part_sources(&rows).expect_err("missing image must fail");
         assert!(err.contains("boot_a"), "err={err}");
@@ -874,7 +874,7 @@ mod tests {
         let rows = vec![flash_row(
             "boot_a",
             Some(img.to_str().unwrap()),
-            FlashRowState::Flash,
+            FlashRowState::Write,
         )];
         preflight_flash_part_sources(&rows).expect("existing image must pass");
     }
@@ -891,7 +891,7 @@ mod tests {
         let rows = vec![flash_row(
             "boot_a",
             Some(dir.path().to_str().unwrap()),
-            FlashRowState::Flash,
+            FlashRowState::Write,
         )];
 
         let err = preflight_flash_part_sources(&rows)

@@ -82,6 +82,8 @@ const EDL_SESSION_OPEN_TIMEOUT: Duration = Duration::from_secs(45);
 pub struct FlashProgress {
     pub partition: String,
     pub percent: u8,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
 }
 
 fn flash_progress_slot() -> &'static Mutex<Option<FlashProgress>> {
@@ -106,10 +108,12 @@ pub fn clear_flash_progress() {
     }
 }
 
-fn publish_flash_progress(partition: &str, percent: u8) {
+fn publish_flash_progress(partition: &str, percent: u8, completed_bytes: u64, total_bytes: u64) {
     let next = FlashProgress {
         partition: partition.to_string(),
         percent,
+        completed_bytes,
+        total_bytes,
     };
     match flash_progress_slot().lock() {
         Ok(mut guard) => *guard = Some(next),
@@ -139,7 +143,7 @@ fn update_flash_progress(
     let percent = flash_percent(completed, total);
     if *last_percent != Some(percent) {
         *last_percent = Some(percent);
-        publish_flash_progress(partition, percent);
+        publish_flash_progress(partition, percent, completed, total);
     }
 }
 
@@ -2041,6 +2045,8 @@ mod tests {
             Some(FlashProgress {
                 partition: "system".into(),
                 percent: 0,
+                completed_bytes: 0,
+                total_bytes: 400,
             })
         );
         clear_flash_progress();

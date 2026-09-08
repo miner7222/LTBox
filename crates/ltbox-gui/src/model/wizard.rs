@@ -579,6 +579,14 @@ impl DeviceRegion {
     }
 }
 
+/// Selection state for the Flash wizard's region step. Automatic lookup is a
+/// method for resolving a [`DeviceRegion`], never a region passed downstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlashRegionSelection {
+    Auto,
+    Manual(DeviceRegion),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FlashTarget {
     OtherRegion,
@@ -747,7 +755,9 @@ const FLASH_STEPS_WITH_BOOTLOADER: &[FlashStep] = &[
 #[derive(Default)]
 pub(crate) struct FlashWizard {
     pub(crate) step: usize,
+    pub(crate) region_selection: Option<FlashRegionSelection>,
     pub(crate) device_region: Option<DeviceRegion>,
+    pub(crate) region_auto_unknown: bool,
     pub(crate) target: Option<FlashTarget>,
     pub(crate) data_mode: Option<DataMode>,
     pub(crate) firmware_folder: Option<String>,
@@ -882,7 +892,11 @@ impl Wizard for FlashWizard {
     }
     fn can_next(&self) -> bool {
         match self.current_step() {
-            FlashStep::Region => self.device_region.is_some(),
+            FlashStep::Region => match self.region_selection {
+                Some(FlashRegionSelection::Auto) => true,
+                Some(FlashRegionSelection::Manual(region)) => self.device_region == Some(region),
+                None => false,
+            },
             FlashStep::Target => self.target.is_some(),
             FlashStep::Data => self.data_mode.is_some(),
             // Folder picked, and — when it ships no loader — a loader provided.
@@ -1041,28 +1055,20 @@ impl Wizard for SysUpdateWizard {
     }
 }
 
-/// Tri-state row action — clicking the checkbox cycles through these
-/// in order. Flash requires a `file_path`; Erase wipes the sector range.
+/// The only three actions a partition row can represent.
+///
+/// `Write` always owns a selected file, while `Skip` and `Erase` never do.
+/// Keeping that invariant in [`FlashPartRow`] prevents stale images from being
+/// written after a user changes a row to erase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum FlashRowState {
     #[default]
-    Unchecked,
-    Flash,
+    Skip,
+    Write,
     Erase,
 }
 
-impl FlashRowState {
-    pub(crate) fn cycle(self) -> Self {
-        match self {
-            Self::Unchecked => Self::Flash,
-            Self::Flash => Self::Erase,
-            Self::Erase => Self::Unchecked,
-        }
-    }
-}
-
-/// One GPT entry surfaced in the wizard table. `file_path` is populated
-/// when the user double-clicks the row and picks an image file.
+/// One GPT entry surfaced in the wizard table.
 #[derive(Debug, Clone)]
 pub(crate) struct FlashPartRow {
     pub(crate) lun: u8,
@@ -1072,6 +1078,77 @@ pub(crate) struct FlashPartRow {
     pub(crate) size_bytes: u64,
     pub(crate) file_path: Option<String>,
     pub(crate) state: FlashRowState,
+}
+
+impl FlashPartRow {
+    /// Assigning an image is the sole transition into `Write`.
+    pub(crate) fn assign_file(&mut self, path: String) {
+        self.file_path = Some(path);
+        self.state = FlashRowState::Write;
+    }
+
+    /// Removing an assigned image returns the row to the assignable skip state.
+    pub(crate) fn clear_file(&mut self) {
+        self.file_path = None;
+        self.state = FlashRowState::Skip;
+    }
+
+    /// Advance an already-actionable row. Entering erase always drops its file.
+    pub(crate) fn advance_action(&mut self) {
+        match self.state {
+            FlashRowState::Skip => {}
+            FlashRowState::Write => {
+                self.file_path = None;
+                self.state = FlashRowState::Erase;
+            }
+            FlashRowState::Erase => {
+                self.file_path = None;
+                self.state = FlashRowState::Skip;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod flash_part_row_tests {
+    use super::*;
+
+    fn row() -> FlashPartRow {
+        FlashPartRow {
+            lun: 0,
+            label: "userdata".to_string(),
+            start_sector: 0,
+            num_sectors: 1,
+            size_bytes: 512,
+            file_path: None,
+            state: FlashRowState::Skip,
+        }
+    }
+
+    #[test]
+    fn assignment_and_action_transitions_preserve_file_invariants() {
+        let mut row = row();
+        row.assign_file("userdata.img".to_string());
+        assert_eq!(row.state, FlashRowState::Write);
+        assert_eq!(row.file_path.as_deref(), Some("userdata.img"));
+
+        row.advance_action();
+        assert_eq!(row.state, FlashRowState::Erase);
+        assert_eq!(row.file_path, None);
+
+        row.advance_action();
+        assert_eq!(row.state, FlashRowState::Skip);
+        assert_eq!(row.file_path, None);
+    }
+
+    #[test]
+    fn clearing_any_selected_file_returns_to_skip() {
+        let mut row = row();
+        row.assign_file("boot.img".to_string());
+        row.clear_file();
+        assert_eq!(row.state, FlashRowState::Skip);
+        assert_eq!(row.file_path, None);
+    }
 }
 
 /// Column the partition table is currently sorted by. Header click
@@ -1121,9 +1198,9 @@ impl FlashPartsWizard {
         self.rows
             .iter()
             .filter(|r| match r.state {
-                FlashRowState::Flash => r.file_path.is_some(),
+                FlashRowState::Write => r.file_path.is_some(),
                 FlashRowState::Erase => true,
-                FlashRowState::Unchecked => false,
+                FlashRowState::Skip => false,
             })
             .cloned()
             .collect()
@@ -1183,9 +1260,9 @@ impl Wizard for FlashPartsWizard {
         match self.step {
             0 => self.loader_path.is_some() && self.loader_error.is_none() && !self.scanning,
             1 => self.rows.iter().any(|r| match r.state {
-                FlashRowState::Flash => r.file_path.is_some(),
+                FlashRowState::Write => r.file_path.is_some(),
                 FlashRowState::Erase => true,
-                FlashRowState::Unchecked => false,
+                FlashRowState::Skip => false,
             }),
             2 => true,
             _ => false,

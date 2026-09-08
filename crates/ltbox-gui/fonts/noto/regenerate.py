@@ -36,6 +36,10 @@ from fontTools.ttLib import TTFont
 HERE = pathlib.Path(__file__).parent
 LANG_DIR = HERE.parent.parent / "lang"
 UPSTREAM = "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF"
+MONO_UPSTREAM = (
+    "https://github.com/notofonts/notofonts.github.io/raw/main"
+    "/fonts/NotoSansMono/hinted/ttf"
+)
 REGIONS = {"KR": "Noto Sans KR", "JP": "Noto Sans JP", "SC": "Noto Sans SC"}
 WEIGHTS = {"Regular": 400, "Medium": 500, "Bold": 700}
 
@@ -57,9 +61,15 @@ def ui_glyphs() -> str:
     for path in sorted(LANG_DIR.glob("*.json")):
         walk(json.loads(path.read_text(encoding="utf-8")))
 
-    chars |= {chr(c) for c in range(0x20, 0x7F)}      # ASCII
+    chars |= set(latin_glyphs())
+    return "".join(sorted(chars))
+
+
+def latin_glyphs() -> str:
+    """ASCII, Latin-1 and the punctuation the UI draws, in one place."""
+    chars = {chr(c) for c in range(0x20, 0x7F)}        # ASCII
     chars |= {chr(c) for c in range(0xA0, 0x100)}     # Latin-1 supplement
-    chars |= set("—–…“”‘’·•→←↑↓✓×∙")                  # punctuation used in UI
+    chars |= set("—–…“”‘’·•→←↑↓⇅✓×∙")                 # punctuation used in UI
     return "".join(sorted(chars))
 
 
@@ -98,7 +108,29 @@ def main() -> int:
             font.save(dest)
             print(f"  {dest.name}: {dest.stat().st_size // 1024} KB")
 
-    for tmp in list(HERE.glob("_*.otf")) + [glyphs]:
+    # Fixed-width face for file paths and country codes. Latin only: a CJK
+    # monospace runs to megabytes, and localized copy must not ask for this
+    # face anyway. Upstream already names the family "Noto Sans Mono", so
+    # unlike the CJK faces it needs no name-table repair.
+    mono_src = HERE / "_Mono-Regular.ttf"
+    if not mono_src.exists():
+        url = f"{MONO_UPSTREAM}/NotoSansMono-Regular.ttf"
+        print(f"  downloading {url}")
+        urllib.request.urlretrieve(url, mono_src)
+    mono_glyphs = HERE / "_mono_glyphs.txt"
+    mono_glyphs.write_text(latin_glyphs(), encoding="utf-8")
+    mono_dest = HERE / "NotoSansMono-Regular.subset.ttf"
+    subprocess.run([
+        sys.executable, "-m", "fontTools.subset", str(mono_src),
+        f"--text-file={mono_glyphs}", f"--output-file={mono_dest}",
+        "--layout-features=*", "--no-hinting",
+    ], check=True)
+    print(f"  {mono_dest.name}: {mono_dest.stat().st_size // 1024} KB")
+
+    for tmp in list(HERE.glob("_*.otf")) + list(HERE.glob("_*.ttf")) + [
+        glyphs,
+        mono_glyphs,
+    ]:
         tmp.unlink(missing_ok=True)
     return 0
 

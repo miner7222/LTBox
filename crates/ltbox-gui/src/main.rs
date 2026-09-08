@@ -84,7 +84,7 @@ pub(crate) use workers::unroot::*;
 
 use ltbox_core::{live, tr_args};
 
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, button, column, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use theme::{Palette, ThemeSeed, palette_for, with_alpha};
@@ -119,11 +119,11 @@ const APP_ID: &str = "io.github.miner7222.LTBox";
 const DEFAULT_WINDOW_WIDTH: f32 = 820.0;
 const DEFAULT_WINDOW_HEIGHT: f32 = 720.0;
 /// Floor for cursor-drag resize and for the launch-time geometry
-/// (`window::Settings::min_size`). Anything below the width stops laying
-/// out cleanly — wizard cards overlap, sidebar tween jumps. The height fits
-/// the common Flash-confirm step (keep-data flow, editable override rows)
-/// without scrolling while staying within a 1366×768 work area; the taller
-/// wipe-flow confirm (extra country row) still scrolls inside its panel.
+/// (`window::Settings::min_size`). Anything below the width stops laying out
+/// cleanly — wizard cards overlap, the sidebar tween jumps.
+///
+/// The 720px height fits the common Flash-confirm step without scrolling.
+/// Taller step bodies and the navigation list scroll within their panels.
 const MIN_WINDOW_WIDTH: f32 = 820.0;
 const MIN_WINDOW_HEIGHT: f32 = 720.0;
 /// macOS uses the native window chrome (system title bar + traffic lights +
@@ -138,13 +138,13 @@ pub(crate) const SYSTEM_WINDOW_CHROME: bool = cfg!(target_os = "macos");
 /// while still capturing the final geometry quickly after the drag ends.
 const WINDOW_SIZE_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// Upstream repo for the sidebar update pill.
+/// Upstream repo for the status-bar update affordance.
 const UPDATE_REPO: &str = "miner7222/LTBox";
 
-/// Background probe for the sidebar update pill. Walks
+/// Background probe for the status-bar update affordance. Walks
 /// `/releases?per_page=100`, returns the latest non-draft /
 /// non-prerelease whose semver beats `CARGO_PKG_VERSION`. `None` on
-/// network/parse failure or already-current — pill stays hidden.
+/// network/parse failure or already-current — the status bar stays unchanged.
 ///
 /// Runs synchronously on a `spawn_blocking` worker so the async runtime
 /// stays free; the result lands as `Message::UpdateCheckDone`.
@@ -393,6 +393,7 @@ fn main() -> iced::Result {
     // Bind the UI face before the iced settings below read it. The saved
     // language decides which of the three bundled Noto faces renders Han
     // idiomatically; `App::default` reads the same value for its translations.
+    theme::set_use_system_font(persisted.use_system_font);
     theme::set_font_family(theme::font_family_for_language(&persisted.language));
     let window_settings = iced::window::Settings {
         size: persisted_size,
@@ -429,7 +430,7 @@ fn main() -> iced::Result {
         // keeps it future-proof against a renamed binary.
         .settings(iced::Settings {
             id: Some(APP_ID.to_string()),
-            default_font: iced::Font::with_name(theme::font_family()),
+            default_font: theme::default_font(),
             ..iced::Settings::default()
         })
         .theme(App::theme)
@@ -446,6 +447,11 @@ fn main() -> iced::Result {
         include_bytes!("../fonts/noto/NotoSansSC-Regular.subset.otf") as &[u8],
         include_bytes!("../fonts/noto/NotoSansSC-Medium.subset.otf") as &[u8],
         include_bytes!("../fonts/noto/NotoSansSC-Bold.subset.otf") as &[u8],
+        // Latin-only, for the few slots that want fixed-width digits and
+        // letters: file paths and country codes. `iced::Font::MONOSPACE` names
+        // a family the bundle does not carry, so it fell through to whatever
+        // the system offered — Courier New on Windows.
+        include_bytes!("../fonts/noto/NotoSansMono-Regular.subset.ttf") as &[u8],
     ] {
         app = app.font(bytes);
     }
@@ -589,15 +595,6 @@ impl RebootTarget {
             Self::Edl => "reboot_edl",
         }
     }
-    fn desc_key(&self) -> &'static str {
-        match self {
-            Self::System => "reboot_system_desc",
-            Self::Recovery => "reboot_recovery_desc",
-            Self::Bootloader => "reboot_bootloader_desc",
-            Self::Fastbootd => "reboot_fastbootd_desc",
-            Self::Edl => "reboot_edl_desc",
-        }
-    }
     /// Short-name key used inside the confirm popup so "Reboot to
     /// {Reboot to System}?" doesn't double-phrase.
     fn short_name_key(&self) -> &'static str {
@@ -631,6 +628,19 @@ impl RebootTarget {
             (ConnectionStatus::Edl, Self::System | Self::Edl) => true,
             (ConnectionStatus::Edl, _) => false,
         }
+    }
+    /// Whether this target is the mode represented by the current transport.
+    /// A no-op reboot is shown as "current state" rather than as an action.
+    fn is_current_from(&self, conn: ConnectionStatus, fastboot_userspace: bool) -> bool {
+        matches!(
+            (conn, self, fastboot_userspace),
+            (ConnectionStatus::Adb, Self::System, _)
+                | (ConnectionStatus::AdbRecovery, Self::Recovery, _)
+                | (ConnectionStatus::AdbSideload, Self::Recovery, _)
+                | (ConnectionStatus::Fastboot, Self::Bootloader, false)
+                | (ConnectionStatus::Fastboot, Self::Fastbootd, true)
+                | (ConnectionStatus::Edl, Self::Edl, _)
+        )
     }
     fn all() -> &'static [RebootTarget] {
         &[
@@ -1182,6 +1192,30 @@ pub(crate) struct WorkflowConfig {
 /// Renders `label` followed by either ▲/▼ (active sort, direction
 /// reflects `desc`) or ⇅ (sortable but inactive). Click fires `msg`.
 /// Transparent button so the cell reads as text first.
+/// Sort marker for a table column head.
+///
+/// The active column shows the direction it is sorted in; the others show that
+/// they *can* be sorted. Both are arrows so the pair reads as one control in
+/// two states rather than two different marks, and the idle arrow drops to the
+/// disabled tone so the sorted column is the one that stands out.
+fn parts_sort_marker(is_active: bool, desc: bool) -> Element<'static, Message> {
+    let glyph = if is_active {
+        if desc { "\u{2193}" } else { "\u{2191}" }
+    } else {
+        "\u{21c5}"
+    };
+    text(glyph)
+        .size(11)
+        .style(move |t: &Theme| iced::widget::text::Style {
+            color: Some(if is_active {
+                pal_of(t).on_surface
+            } else {
+                with_alpha(pal_of(t).on_surface, 0.38)
+            }),
+        })
+        .into()
+}
+
 fn parts_sort_header(
     label: String,
     is_active: bool,
@@ -1189,21 +1223,22 @@ fn parts_sort_header(
     width: Length,
     msg: Message,
 ) -> Element<'static, Message> {
-    let arrow = if is_active {
-        if desc { " ▼" } else { " ▲" }
-    } else {
-        " ⇅"
-    };
-    let lbl = format!("{label}{arrow}");
-    button(text(lbl).size(11).style(muted_style))
-        .padding(0)
-        .width(width)
-        .style(|_t: &Theme, _s| button::Style {
-            background: None,
-            ..Default::default()
-        })
-        .on_press(msg)
-        .into()
+    button(
+        row![
+            text(label).size(11).style(muted_style),
+            parts_sort_marker(is_active, desc),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding(0)
+    .width(width)
+    .style(|_t: &Theme, _s| button::Style {
+        background: None,
+        ..Default::default()
+    })
+    .on_press(msg)
+    .into()
 }
 
 /// Human-readable auto-unit byte formatter (B/KB/MB/GB).
@@ -1235,6 +1270,9 @@ struct DevicePollResult {
     /// behavioural branch treats the two the same.
     fastboot_userspace: bool,
     model: String,
+    /// Trimmed `ro.build.version.release`. Only populated by ADB polls;
+    /// fastboot and EDL do not expose Android system properties.
+    android_version: String,
     slot: String,
     /// Trimmed `ro.build.display.id` — leading device-model prefix
     /// stripped so the dashboard cell stays readable.
@@ -1749,6 +1787,9 @@ struct App {
     dark_mode: bool,
     theme_choice: ThemeChoice,
     theme_seed: ThemeSeed,
+    /// Persisted font-source preference. The runtime font is bound before iced
+    /// starts, so editing this field only affects the next launch.
+    use_system_font: bool,
     settings: SettingsState,
     translations: Translations,
     /// Per-launch disclaimer gate. It is deliberately absent from persisted settings.
@@ -1786,6 +1827,10 @@ struct App {
     /// back to midnight.
     manual_rollback_values: (Option<u64>, Option<u64>),
     country_popup_open: bool,
+    /// Live search text and the row staged inside the country popup. The
+    /// committed workflow value is only changed by the popup footer action.
+    country_popup_search: String,
+    country_popup_draft: CountryAction,
     /// Routes `SelectCountry` back to the Advanced wizard instead of
     /// the Flash flow when PatchDevinfo opened the popup.
     adv_needs_country: bool,
@@ -1796,6 +1841,10 @@ struct App {
     region_target_popup_open: bool,
     /// Staging slot for the Reboot confirm popup.
     reboot_confirm_target: Option<RebootTarget>,
+    /// True while the current tracked Reboot operation is waiting for EDL.
+    /// Kept separate from visibility so Close can hide only the dialog.
+    reboot_wait_transition: bool,
+    reboot_wait_dialog_open: bool,
     // Device & operation state
     software_fix: software_fix::State,
     device: DeviceSnapshot,
@@ -1807,12 +1856,11 @@ struct App {
     ota_popup: Option<(String, String, OtaPopupState)>,
     /// Selectable mirror of OTA changelog — `text` widget can't be selected.
     ota_changelog_editor: iced::widget::text_editor::Content,
-    /// Firmware-version dropdown (QFIL Firmware / OTA Package) open state.
-    firmware_menu_open: bool,
     /// QFIL-firmware popup state. `Some((serial, state))` while open.
     qfil_popup: Option<(String, QfilPopupState)>,
     /// Manual-serial prompt for region detection. `Some(buffer)` = open;
-    /// buffer holds the in-progress input. Opened by the Auto FAB when no
+    /// buffer holds the in-progress input. Opened by the automatic-selection
+    /// option when no
     /// usable polled serial is available.
     flash_serial_prompt: Option<String>,
     /// PatchArb wizard's unix-timestamp input popup.
@@ -1827,9 +1875,10 @@ struct App {
     manual_rollback_format: RollbackValueFormat,
     /// Transient toast message; auto-cleared by a delayed task.
     toast_msg: Option<String>,
-    /// Sidebar hover state — true when mouse is over the rail.
+    /// Compact-sidebar hover state — true when the mouse is over the rail.
     sidebar_expanded: bool,
-    /// Tween progress in [0.0, 1.0]. Width = lerp(64, 210, anim).
+    /// Compact overlay tween progress in [0.0, 1.0].
+    /// Width = lerp(64, 232, anim); Expanded layout ignores this value.
     /// Driven by an M3 Expressive Spatial spring (see `SidebarAnimTick`).
     sidebar_anim: f32,
     /// Spring velocity for `sidebar_anim`. Settle requires both the
@@ -1901,8 +1950,9 @@ struct App {
     /// Model the open dual-USB-C port guide describes. Session-only so the
     /// guide keeps its subject while the live device disconnects or changes.
     dual_usb_help_model: String,
-    /// Normalized 0..1 phase for the guide's 1.8 s cable animation loop.
-    dual_usb_cable_phase: f32,
+    /// Friendly name captured with the model so the guide subtitle survives
+    /// a disconnect while the dialog remains open.
+    dual_usb_help_name: String,
     /// Newest stable (`prerelease == false && draft == false`) release on
     /// `miner7222/LTBox` whose semver is strictly greater than the
     /// running build's. `None` either before the background probe lands
@@ -1997,6 +2047,7 @@ impl Default for App {
             dark_mode,
             theme_choice,
             theme_seed,
+            use_system_font: persisted.use_system_font,
             settings: SettingsState { language: lang },
             translations,
             startup_disclaimer_open: true,
@@ -2016,9 +2067,13 @@ impl Default for App {
             manual_rollback_buffers: None,
             manual_rollback_values: (None, None),
             country_popup_open: false,
+            country_popup_search: String::new(),
+            country_popup_draft: CountryAction::Unset,
             adv_needs_country: false,
             region_target_popup_open: false,
             reboot_confirm_target: None,
+            reboot_wait_transition: false,
+            reboot_wait_dialog_open: false,
             software_fix: software_fix::State::default(),
             device: DeviceSnapshot::default(),
             queries: DeviceQueries::default(),
@@ -2026,7 +2081,6 @@ impl Default for App {
             device_info_popup: None,
             ota_popup: None,
             ota_changelog_editor: iced::widget::text_editor::Content::with_text(""),
-            firmware_menu_open: false,
             qfil_popup: None,
             flash_serial_prompt: None,
             arb_index_popup_open: false,
@@ -2070,7 +2124,7 @@ impl Default for App {
             dual_usb_advisory_closed: Vec::new(),
             dual_usb_help_open: false,
             dual_usb_help_model: String::new(),
-            dual_usb_cable_phase: 0.0,
+            dual_usb_help_name: String::new(),
             update_available: None,
             update_dialog_source: None,
             flash_parts: FlashPartsWizard::default(),
@@ -2620,6 +2674,8 @@ impl App {
     }
 
     fn should_show_busy_progress_dialog(&self) -> bool {
+        let dedicated_reboot_wait =
+            self.reboot_wait_transition && self.operation.view() == Some(View::Reboot);
         self.operation.is_running()
             // The temp-file cleanup borrows `busy` only to lock out racing
             // device ops; it's a sub-second maintenance action with its own
@@ -2628,6 +2684,10 @@ impl App {
             && self.current_view != View::Dashboard
             && !self.blocking_popup_open()
             && !self.current_view_has_inline_exec_surface()
+            // The EDL transition has its own truthful checklist. Keep the
+            // generic spinner suppressed even after that modeless dialog is
+            // closed; the tracked operation itself continues unchanged.
+            && !dedicated_reboot_wait
     }
 
     fn advanced_operation_label(&self) -> Option<String> {
@@ -2772,19 +2832,31 @@ impl App {
         region_from_salearea(info)
     }
 
-    /// Kick off region auto-detection on entering the Flash wizard (called
-    /// right after `flash.reset()`):
-    /// * PRC-only model (TB322FC) → preselect PRC and jump to the target step.
+    /// Prepare the Flash region step after `flash.reset()` without initiating
+    /// a lookup. Demo scenes keep their deterministic state, while PRC-only
+    /// models still skip the single-choice step.
+    fn prepare_flash_region_on_entry(&mut self) -> Task<Message> {
+        #[cfg(feature = "demo")]
+        if demo::prepare_flash_region_on_entry(self) {
+            return Task::none();
+        }
+        if self.is_prc_only() {
+            self.flash.region_selection = Some(FlashRegionSelection::Manual(DeviceRegion::Prc));
+            self.flash.device_region = Some(DeviceRegion::Prc);
+            self.flash.step = 1;
+        }
+        Task::none()
+    }
+
+    /// Kick off region auto-detection after the automatic-selection option is
+    /// chosen and Next is pressed:
+    /// * PRC-only model → preselect PRC and jump to the target step.
     /// * usable polled serial → probe PTSTPD (region step shows an indicator).
     /// * no usable serial → open the manual-serial prompt.
     ///
     /// On a fetch failure / inconclusive SaleArea the handler falls back to the
     /// manual PRC/ROW cards, so this never blocks the wizard.
     fn begin_flash_region_auto(&mut self) -> Task<Message> {
-        #[cfg(feature = "demo")]
-        if demo::prepare_flash_region_on_entry(self) {
-            return Task::none();
-        }
         if self.is_prc_only() {
             // PRC-only SKU: no lookup needed; skip straight to the target step.
             self.flash.device_region = Some(DeviceRegion::Prc);
@@ -2963,6 +3035,7 @@ impl App {
             language: self.settings.language.code().to_string(),
             theme: self.theme_choice.code().to_string(),
             theme_seed: self.theme_seed.code().to_string(),
+            use_system_font: self.use_system_font,
             // Legacy field kept readable by older builds.
             dark_mode: self.dark_mode,
             recent_paths: self.recent_paths.clone(),
@@ -3104,23 +3177,20 @@ impl App {
         subs.push(
             iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::PollSoftwareFix),
         );
-        // Sidebar width tween: only emit ticks while the spring
-        // hasn't settled at its target so the GPU isn't woken every
-        // 16 ms forever. Velocity check catches the overshoot tail.
-        let sidebar_settled = (self.sidebar_anim - self.sidebar_anim_target()).abs() < 0.001
-            && self.sidebar_velocity.abs() < 0.05;
+        // Compact hover drives the sidebar width spring. Expanded uses a
+        // fixed drawer, but a single tick still clears compact hover state
+        // inherited across a resize before the hidden spring settles closed.
+        // Once both state and spring are settled, no 16 ms subscription runs.
+        let sidebar_target = self.sidebar_anim_target();
+        let sidebar_hover_settled =
+            self.window_size_class() == WindowSizeClass::Compact || !self.sidebar_expanded;
+        let sidebar_settled = (self.sidebar_anim - sidebar_target).abs() < 0.001
+            && self.sidebar_velocity.abs() < 0.05
+            && sidebar_hover_settled;
         if !sidebar_settled {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(16))
                     .map(|_| Message::SidebarAnimTick),
-            );
-        }
-        // The cable guide is the only consumer of this animation tick. Stop
-        // the subscription with the popup so idle GPU wakeups do not continue.
-        if self.dual_usb_help_open {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(16))
-                    .map(|_| Message::DualUsbCableAnimTick),
             );
         }
         // Listen for window resize events so the user's preferred
@@ -3165,7 +3235,7 @@ impl App {
     ) -> Element<'_, Message> {
         column![
             text(self.t(error_key).to_string())
-                .size(13)
+                .size(theme::text_size::BODY_MEDIUM)
                 .style(|t: &Theme| iced::widget::text::Style {
                     color: Some(pal_of(t).error),
                 }),
@@ -3177,11 +3247,25 @@ impl App {
         .into()
     }
 
-    /// Sidebar tween target — `1.0` while hovered, `0.0` otherwise.
-    /// `SidebarAnimTick` lerps `sidebar_anim` toward this each frame
-    /// and the subscription stops once the two match.
+    /// Sidebar tween target for the compact hover overlay.
+    ///
+    /// Expanded has a separate fixed-width rendering path, so its compact
+    /// animation state settles closed and cannot react to pointer proximity.
     fn sidebar_anim_target(&self) -> f32 {
-        if self.sidebar_expanded { 1.0 } else { 0.0 }
+        if self.window_size_class() == WindowSizeClass::Compact && self.sidebar_expanded {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Visual openness used by drawer labels.
+    /// Expanded labels are always fully visible; Compact follows the spring.
+    fn sidebar_visual_progress(&self) -> f32 {
+        match self.window_size_class() {
+            WindowSizeClass::Compact => self.sidebar_anim,
+            WindowSizeClass::Expanded => 1.0,
+        }
     }
 
     /// Whether the Dashboard's rollback cell opens the floor breakdown.
@@ -3192,6 +3276,7 @@ impl App {
     /// a breakdown behind a cell that reads "No" — the two would
     /// contradict each other even if its bootloader did report two
     /// populated locations.
+    #[cfg(test)]
     pub(crate) fn rollback_detail_available(&self) -> bool {
         self.device.rollback_floors.is_some() && is_rollback_protected_model(&self.device.model)
     }
@@ -3406,100 +3491,42 @@ impl App {
         self.queries.track_lookup(LookupKind::Qfil, task)
     }
 
-    /// Bottom-of-sidebar pill linking to the GitHub release when a
-    /// newer stable build is available.
-    fn update_available_pill(&self) -> Element<'_, Message> {
-        let label = self.t("sidebar_update_available").to_string();
-        // Pill label rides the same opacity tween as nav-button labels
-        // for visual coherence. Mount text at any non-zero alpha so it
-        // fades in alongside the sidebar width spring rather than
-        // popping in at a threshold.
-        let label_t = ((self.sidebar_anim - 0.4) / 0.5).clamp(0.0, 1.0);
-        let label_alpha = ease_out_cubic(label_t);
-        let show_label = label_alpha > 0.0;
-        let inner: Element<'_, Message> = if show_label {
-            row![
-                icon::tile_update_on()
-                    .size(16)
-                    .style(|t: &Theme| iced::widget::text::Style {
-                        color: Some(pal_of(t).on_tertiary)
-                    }),
-                text(label)
-                    .size(13)
-                    .line_height(1.2)
-                    // No-wrap during sidebar spring: pill label
-                    // ("업데이트 가능" / "Доступно обновление") must
-                    // not wrap into 2 lines while the panel is narrow.
-                    .wrapping(iced::widget::text::Wrapping::None)
-                    .style(move |t: &Theme| iced::widget::text::Style {
-                        color: Some(with_alpha(pal_of(t).on_tertiary, label_alpha)),
-                    }),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center)
-            .into()
-        } else {
-            // Force the lucide glyph itself to center inside its
-            // measured text box. Wrapping in a center container
-            // alone left the glyph anchored to the text widget's
-            // top-left, so the bell still rode the left edge.
-            // `align_x = Center` on the text widget pulls the glyph
-            // onto the box's geometric midpoint.
+    /// Compact update action attached to the version at the status bar's
+    /// trailing edge. It deliberately has no sidebar-animation dependency.
+    fn status_update_available_button(&self) -> Element<'_, Message> {
+        let content = row![
             icon::tile_update_on()
-                .size(16)
-                .width(Length::Fixed(20.0))
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
+                .size(12)
+                .line_height(1.0)
                 .style(|t: &Theme| iced::widget::text::Style {
                     color: Some(pal_of(t).on_tertiary),
-                })
-                .into()
-        };
-        // Horizontal padding tweens with label_alpha so the pill grows
-        // smoothly from icon-only (10) to label-bearing (16) rather
-        // than jumping in a single frame.
-        let pad_x = 10.0 + 6.0 * label_alpha;
-        let btn_padding = [10.0, pad_x];
-        container(
-            button(inner)
-                .on_press(Message::OpenUpdate)
-                .padding(btn_padding)
-                .style(|t: &Theme, status| {
-                    let p = pal_of(t);
-                    let hover = matches!(status, button::Status::Hovered);
-                    let bg = if hover {
-                        with_alpha(p.tertiary, 1.0 - theme::state::HOVER * 0.5)
-                    } else {
-                        p.tertiary
-                    };
-                    button::Style {
-                        background: Some(bg.into()),
-                        text_color: p.on_tertiary,
-                        border: iced::Border {
-                            radius: theme::shape::FULL.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
                 }),
-        )
-        // The button widget itself sizes to its content (label + icon),
-        // so its width is locale-dependent — Korean "업데이트 가능"
-        // renders narrower than Russian "Доступно обновление".
-        // `center_x(Length::Fill)` centers the pill in the sidebar
-        // column regardless of which language is active. Bottom padding
-        // is intentionally larger than the top so the pill clears the
-        // sidebar's bottom edge with breathing room rather than hugging
-        // the connection-status bar that sits below the sidebar frame.
-        .padding(iced::Padding {
-            top: 12.0,
-            right: 16.0,
-            bottom: 24.0,
-            left: 16.0,
-        })
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .into()
+            text(self.t("status_update_available").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .line_height(1.0)
+                .wrapping(iced::widget::text::Wrapping::None),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
+        button(content)
+            .on_press(Message::OpenUpdate)
+            .padding([0, 6])
+            .style(|t: &Theme, status| {
+                let p = pal_of(t);
+                button::Style {
+                    background: Some(
+                        theme::mix_color(p.tertiary, p.on_tertiary, theme::state_alpha(status))
+                            .into(),
+                    ),
+                    text_color: p.on_tertiary,
+                    border: iced::Border {
+                        radius: theme::shape::FULL.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
     }
 
     /// Per-extension recents strip for file pickers.
@@ -3604,6 +3631,7 @@ mod tests {
         DevicePollResult {
             status: ConnectionStatus::Adb,
             model: model.to_string(),
+            market_name: "Legion Y700".to_string(),
             ..DevicePollResult::default()
         }
     }
@@ -3895,6 +3923,55 @@ mod tests {
     }
 
     #[test]
+    fn reboot_targets_recognize_the_current_transport_state() {
+        assert!(RebootTarget::System.is_current_from(ConnectionStatus::Adb, false));
+        assert!(RebootTarget::Recovery.is_current_from(ConnectionStatus::AdbRecovery, false));
+        assert!(RebootTarget::Edl.is_current_from(ConnectionStatus::Edl, false));
+        assert!(RebootTarget::Bootloader.is_current_from(ConnectionStatus::Fastboot, false));
+        assert!(RebootTarget::Fastbootd.is_current_from(ConnectionStatus::Fastboot, true));
+        assert!(!RebootTarget::Fastbootd.is_current_from(ConnectionStatus::Fastboot, false));
+    }
+
+    #[test]
+    fn closing_the_edl_wait_dialog_keeps_the_reboot_operation_running() {
+        let mut app = App::default();
+        app.device.connection = ConnectionStatus::Adb;
+
+        drop(app.update(Message::Reboot(RebootMsg::RebootTo(RebootTarget::Edl))));
+        let operation_id = app.operation.id();
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Reboot));
+        assert!(app.reboot_wait_transition);
+        assert!(app.reboot_wait_dialog_open);
+        assert!(!app.should_show_busy_progress_dialog());
+
+        drop(app.update(Message::RebootWaitDismiss));
+
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.id(), operation_id);
+        assert!(app.reboot_wait_transition);
+        assert!(!app.reboot_wait_dialog_open);
+        assert!(!app.should_show_busy_progress_dialog());
+    }
+
+    #[test]
+    fn edl_wait_state_clears_when_the_reboot_operation_completes() {
+        let mut app = App::default();
+        app.device.connection = ConnectionStatus::Adb;
+        drop(app.update(Message::Reboot(RebootMsg::RebootTo(RebootTarget::Edl))));
+        let operation_id = app.operation.id().expect("reboot operation id");
+
+        drop(app.update(Message::OperationEvent(
+            operation_id,
+            Box::new(Message::Reboot(RebootMsg::RebootDone(Vec::new()))),
+        )));
+
+        assert!(!app.operation.is_running());
+        assert!(!app.reboot_wait_transition);
+        assert!(!app.reboot_wait_dialog_open);
+    }
+
+    #[test]
     fn dual_usb_guide_auto_opens_on_first_eligible_poll() {
         let mut app = App {
             startup_disclaimer_open: false,
@@ -3904,14 +3981,11 @@ mod tests {
         };
         assert!(!app.dual_usb_help_open);
         assert!(app.dual_usb_help_model.is_empty());
-        assert_eq!(app.dual_usb_cable_phase, 0.0);
 
         let _ = app.update(Message::DevicePolled(device_poll("TB323FU")));
         assert!(app.dual_usb_help_open);
         assert_eq!(app.dual_usb_help_model, "TB323FU");
-
-        let _ = app.update(Message::DualUsbCableAnimTick);
-        assert!(app.dual_usb_cable_phase > 0.0);
+        assert_eq!(app.dual_usb_help_name, "Legion Y700");
     }
 
     #[test]
@@ -3951,6 +4025,7 @@ mod tests {
         let _ = app.update(Message::DevicePolled(DevicePollResult::default()));
         assert!(app.dual_usb_help_open);
         assert_eq!(app.dual_usb_help_model, "TB323FU");
+        assert_eq!(app.dual_usb_help_name, "Legion Y700");
 
         let _ = app.update(Message::DevicePolled(device_poll("TB323FU")));
         assert!(app.dual_usb_help_open);
@@ -3967,12 +4042,10 @@ mod tests {
         };
 
         let _ = app.update(Message::DevicePolled(device_poll("TB323FU")));
-        let _ = app.update(Message::DualUsbCableAnimTick);
         let _ = app.update(Message::CloseDualUsbAdvisory("TB323FU".to_string()));
 
         assert!(!app.dual_usb_help_open);
         assert_eq!(app.dual_usb_help_model, "TB323FU");
-        assert_eq!(app.dual_usb_cable_phase, 0.0);
         assert_eq!(app.dual_usb_advisory_closed, ["TB323FU"]);
 
         let _ = app.update(Message::DevicePolled(DevicePollResult::default()));
@@ -4053,6 +4126,26 @@ mod tests {
             View::Dashboard.sidebar_label_key(),
             View::Dashboard.label_key()
         );
+    }
+
+    #[test]
+    fn sidebar_animation_is_hover_driven_only_in_compact_layout() {
+        let mut app = App::default();
+        app.window_size.0 = MIN_WINDOW_WIDTH;
+        assert_eq!(app.window_size_class(), WindowSizeClass::Compact);
+        assert_eq!(app.sidebar_anim_target(), 0.0);
+
+        let _ = app.update(Message::SidebarHoverEnter);
+        assert!(app.sidebar_expanded);
+        assert_eq!(app.sidebar_anim_target(), 1.0);
+
+        app.window_size.0 = 1320.0;
+        app.sidebar_expanded = false;
+        let _ = app.update(Message::SidebarHoverEnter);
+        assert_eq!(app.window_size_class(), WindowSizeClass::Expanded);
+        assert!(!app.sidebar_expanded);
+        assert_eq!(app.sidebar_anim_target(), 0.0);
+        assert_eq!(app.sidebar_visual_progress(), 1.0);
     }
 
     #[test]
@@ -4150,7 +4243,7 @@ mod tests {
             num_sectors: 0,
             size_bytes: 0,
             file_path: None,
-            state: FlashRowState::Unchecked,
+            state: FlashRowState::Skip,
         };
         let mut app = App {
             device: DeviceSnapshot {
@@ -4214,6 +4307,19 @@ mod tests {
         assert_eq!(app.operation.current_step(), 0);
         let _ = next.marker(2);
         assert_eq!(app.operation.current_step(), 1);
+    }
+
+    #[test]
+    fn clear_log_empties_history_and_rebuilds_the_editor() {
+        let mut app = App::default();
+        app.log_lines = vec!["first".into(), "second".into()];
+        app.rebuild_log_editor();
+
+        drop(app.update(Message::ClearLog));
+
+        assert!(app.log_lines.is_empty());
+        assert_eq!(app.log_editor.text(), "");
+        assert!(!app.log_dirty);
     }
 
     #[test]
@@ -4441,6 +4547,7 @@ mod tests {
         assert_eq!(w.step, 0);
         // Can't advance without a region selected.
         assert!(!w.can_next());
+        w.region_selection = Some(FlashRegionSelection::Manual(DeviceRegion::Prc));
         w.device_region = Some(DeviceRegion::Prc);
         assert!(w.can_next());
         w.next();
@@ -4451,7 +4558,30 @@ mod tests {
         w.next();
         w.reset();
         assert_eq!(w.step, 0);
+        assert!(w.region_selection.is_none());
         assert!(w.device_region.is_none());
+    }
+
+    #[test]
+    fn flash_region_auto_lookup_is_user_initiated() {
+        let mut app = App::default();
+
+        drop(app.prepare_flash_region_on_entry());
+        assert!(app.flash.region_selection.is_none());
+        assert!(app.flash_serial_prompt.is_none());
+        assert!(app.queries.region_pending.is_none());
+
+        drop(app.update_flash(FlashMsg::FlashRegionAuto));
+        assert_eq!(app.flash.region_selection, Some(FlashRegionSelection::Auto));
+        assert!(app.flash_serial_prompt.is_none());
+
+        drop(app.update_flash(FlashMsg::FlashNext));
+        assert_eq!(app.flash.step, 0);
+        assert!(app.flash_serial_prompt.is_some());
+
+        drop(app.update_flash(FlashMsg::FlashSerialPromptSkip));
+        assert!(app.flash_serial_prompt.is_none());
+        assert!(app.flash.region_auto_unknown);
     }
 
     #[test]
@@ -4726,6 +4856,28 @@ mod tests {
     }
 
     #[test]
+    fn country_popup_stages_a_row_until_footer_confirmation() {
+        let mut app = App {
+            country_popup_open: true,
+            country_popup_draft: CountryAction::Set("CN".to_string()),
+            wf_config: WorkflowConfig {
+                country_action: CountryAction::Set("US".to_string()),
+                ..WorkflowConfig::default()
+            },
+            ..App::default()
+        };
+
+        let _ = app.update(Message::SelectCountry("KR".to_string()));
+        assert!(app.country_popup_open);
+        assert_eq!(app.country_popup_draft.target(), Some("KR"));
+        assert_eq!(app.wf_config.country_action.target(), Some("US"));
+
+        let _ = app.update(Message::CountryPopupConfirm);
+        assert!(!app.country_popup_open);
+        assert_eq!(app.wf_config.country_action.target(), Some("KR"));
+    }
+
+    #[test]
     fn flash_keep_data_preserves_confirm_country_override() {
         let mut app = App {
             wf_config: WorkflowConfig {
@@ -4794,10 +4946,10 @@ mod tests {
             num_sectors: 8192,
             size_bytes: 4 * 1024 * 1024,
             file_path: None,
-            state: FlashRowState::Unchecked,
+            state: FlashRowState::Skip,
         });
         assert!(!w.can_next()); // Unchecked doesn't count
-        w.rows[0].state = FlashRowState::Flash;
+        w.rows[0].state = FlashRowState::Write;
         assert!(!w.can_next()); // Flash w/o file still invalid
         w.rows[0].file_path = Some("/tmp/boot.img".into());
         assert!(w.can_next());
@@ -4925,12 +5077,11 @@ mod tests {
     #[test]
     fn flash_parts_erase_marker_keeps_checkbox_square_footprint() {
         assert_eq!(FLASH_PARTS_MARKER_CELL_WIDTH, 32.0);
-        assert_eq!(FLASH_PARTS_MARKER_CELL_HEIGHT, 20.0);
         assert_eq!(FLASH_PARTS_MARKER_SIZE, 16.0);
         let dash_width = std::hint::black_box(FLASH_PARTS_ERASE_DASH_WIDTH);
         let marker_size = std::hint::black_box(FLASH_PARTS_MARKER_SIZE);
         assert!(dash_width < marker_size);
-        assert!(marker_size < FLASH_PARTS_MARKER_CELL_HEIGHT);
+        assert!(marker_size < FLASH_PARTS_MARKER_CELL_WIDTH);
     }
 
     #[test]
@@ -5002,19 +5153,23 @@ mod tests {
     }
 
     #[test]
-    fn log_popup_groups_utility_actions() {
+    fn log_popup_uses_labeled_action_bar_buttons() {
         let source = include_str!("view/popups.rs");
         let popup = source
             .split_once("pub(crate) fn log_popup_view")
             .expect("log popup view must exist")
             .1;
         assert!(
-            popup.contains("wizard_utility_toolbar(utility_actions)"),
-            "save and close must share the compact utility toolbar"
+            popup.contains("wizard_secondary_action("),
+            "save and close must use visible-label action buttons"
         );
         assert!(
-            !popup.contains("wizard_surface_fab("),
-            "the log popup must not render utility actions as separate FABs"
+            popup.contains("wizard_action_footer("),
+            "the log popup must use the compact action bar"
+        );
+        assert!(
+            !popup.contains("floating_surface_action("),
+            "the log popup must not render navigation as a FAB"
         );
     }
 
@@ -5035,10 +5190,10 @@ mod tests {
             .split_once("pub(crate) fn view_simple_flash_wizard")
             .expect("simple flash view must follow image info")
             .0;
-        assert!(result.contains("wizard_utility_toolbar"));
-        assert!(result.contains("wizard_primary_extended_fab"));
-        assert!(!result.contains("wizard_surface_fab"));
-        assert!(!result.contains("wizard_error_fab"));
+        assert!(result.contains("wizard_secondary_action"));
+        assert!(result.contains("wizard_primary_action"));
+        assert!(result.contains("wizard_action_footer"));
+        assert!(!result.contains("floating_surface_action"));
     }
 
     /// An unidentified device must not be reported as rollback-protected:
@@ -5366,6 +5521,8 @@ mod tests {
             flash_progress: Some(ltbox_device::edl::FlashProgress {
                 partition: "super".into(),
                 percent: 42,
+                completed_bytes: 42,
+                total_bytes: 100,
             }),
             operation_error: err.map(str::to_string),
             ..App::default()
@@ -5380,6 +5537,8 @@ mod tests {
         simple.flash_progress = Some(ltbox_device::edl::FlashProgress {
             partition: "boot_a".into(),
             percent: 7,
+            completed_bytes: 7,
+            total_bytes: 100,
         });
         assert_eq!(
             simple.firmware_flash_progress_label().as_deref(),
@@ -5435,6 +5594,8 @@ mod tests {
             app.flash_progress = Some(ltbox_device::edl::FlashProgress {
                 partition: "super".into(),
                 percent: 10,
+                completed_bytes: 10,
+                total_bytes: 100,
             });
             clear(&mut app);
             assert!(app.flash_progress.is_none());
@@ -5462,35 +5623,29 @@ mod tests {
     fn shared_execution_error_is_inline_instead_of_floating() {
         let exec = include_str!("view/sysupdate.rs");
         assert!(exec.contains("concise_error_summary"));
-        assert!(exec.contains("exec_error_log_hint"));
+        assert!(exec.contains("m3_log_text_field_with_action"));
 
         let chrome = include_str!("view/chrome.rs");
         assert!(chrome.contains("should_show_error_banner"));
     }
 
     #[test]
-    fn execution_error_log_hint_exists_in_every_locale() {
-        let en = Translations::load(Language::En);
-        assert!(en.fallback.contains_key("exec_error_log_hint"));
-        for lang in [Language::Ko, Language::Zh, Language::Ru, Language::Ja] {
-            let translations = Translations::load(lang);
-            assert!(translations.primary.contains_key("exec_error_log_hint"));
-        }
-    }
-
-    #[test]
-    fn extended_fab_content_is_vertically_centered() {
+    fn action_bar_buttons_have_visible_centered_labels() {
         let source = include_str!("widgets.rs");
         let implementation = source
-            .split_once("pub(crate) fn wizard_primary_extended_fab")
-            .expect("extended FAB helper must exist")
+            .split_once("fn action_button")
+            .expect("labeled action-button helper must exist")
             .1
-            .split_once("pub(crate) fn wizard_fab_footer")
-            .expect("footer helper must follow the extended FAB")
+            .split_once("pub(crate) fn wizard_secondary_action")
+            .expect("secondary action helper must follow the shared button")
             .0;
         assert!(
             implementation.contains(".center_y(Length::Fill)"),
-            "the extended FAB must explicitly center its content vertically"
+            "action-bar button content must be centered vertically"
+        );
+        assert!(
+            implementation.contains("text(label)"),
+            "every action-bar button must render its label"
         );
     }
 
@@ -5562,13 +5717,16 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_active_operation_uses_guarded_clickable_card() {
+    fn dashboard_offers_resume_only_while_an_operation_runs() {
+        // The idle "no operation" card is gone, but the running state still
+        // has to offer a way back into the flow the user navigated away from,
+        // behind the same guard.
         let source = include_str!("view/dashboard.rs");
-        assert!(source.contains("clickable_card("));
         assert!(source.contains("Message::ResumeBusyOperation"));
         assert!(source.contains(
             "busy_navigation_target(self.operation.is_running(), self.operation.view()).is_some()"
         ));
+        assert!(!source.contains("dash_no_operation"));
     }
 
     #[test]

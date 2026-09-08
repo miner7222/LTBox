@@ -1,142 +1,330 @@
 //! Modal popup views (device info, OTA, ARB index, country, region, rescue region, log). Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, scrollable, text};
+use iced::widget::{self, Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Theme};
 use theme::with_alpha;
 
+const COUNTRY_LIST_HEIGHT: f32 = 300.0;
+const COUNTRY_ROW_HEIGHT: f32 = 44.0;
+const COUNTRY_FLAG_WIDTH: f32 = 20.0;
+const COUNTRY_FLAG_HEIGHT: f32 = 14.0;
+const COUNTRY_FLAG_RADIUS: f32 = 4.0;
+
+fn popup_sections<'a>(
+    header: impl Into<Element<'a, Message>>,
+    body: impl Into<Element<'a, Message>>,
+    footer: impl Into<Element<'a, Message>>,
+    width: f32,
+    scrolling: bool,
+) -> Element<'a, Message> {
+    dialog_sections(header.into(), body.into(), footer.into(), width, scrolling)
+}
+
+fn country_matches_search(entry: &CountryEntry, query: &str) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    query.is_empty()
+        || entry.code.to_ascii_lowercase().contains(&query)
+        || entry.name.to_ascii_lowercase().contains(&query)
+}
+
+/// Country-list row with an optional future flag slot. No placeholder is
+/// inserted when `leading` is `None`; when an asset is supplied later, this
+/// wrapper locks it to the mockup's 20x14 / 4px-radius geometry.
+fn country_popup_row<'a>(
+    leading: Option<Element<'a, Message>>,
+    code: &'static str,
+    name: &'static str,
+    selected: bool,
+    disabled: bool,
+) -> Element<'a, Message> {
+    let foreground =
+        move |t: &Theme| with_alpha(pal_of(t).on_surface, if disabled { 0.38 } else { 1.0 });
+    let code_foreground = move |t: &Theme| {
+        with_alpha(
+            if selected {
+                pal_of(t).on_surface
+            } else {
+                pal_of(t).on_surface_variant
+            },
+            if disabled { 0.38 } else { 1.0 },
+        )
+    };
+    let mut contents = row![].spacing(11).align_y(iced::Alignment::Center);
+    if let Some(leading) = leading {
+        contents = contents.push(
+            container(leading)
+                .width(Length::Fixed(COUNTRY_FLAG_WIDTH))
+                .height(Length::Fixed(COUNTRY_FLAG_HEIGHT))
+                .clip(true)
+                .style(|_: &Theme| container::Style {
+                    border: iced::Border {
+                        radius: COUNTRY_FLAG_RADIUS.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+        );
+    }
+    contents = contents
+        .push(
+            text(code)
+                .font(theme::mono_font())
+                .size(theme::text_size::BODY_SMALL)
+                .width(Length::Fixed(26.0))
+                .style(move |t: &Theme| iced::widget::text::Style {
+                    color: Some(code_foreground(t)),
+                }),
+        )
+        .push(
+            text(name)
+                .size(theme::text_size::BODY_MEDIUM)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .style(move |t: &Theme| iced::widget::text::Style {
+                    color: Some(foreground(t)),
+                }),
+        );
+    if selected {
+        contents = contents.push(lucide_icon(icon::mark_check(), 16.0, |t: &Theme| {
+            pal_of(t).primary
+        }));
+    }
+
+    // A button lays its content out at its natural height and pins it to the
+    // top, so the row has to claim the button's fixed height before centring
+    // inside it.
+    let mut row_button = button(contents.width(Length::Fill).height(Length::Fill))
+        .height(Length::Fixed(COUNTRY_ROW_HEIGHT))
+        .width(Length::Fill)
+        .padding([0, 20])
+        .style(move |t: &Theme, status| {
+            let p = pal_of(t);
+            let state_alpha = if disabled {
+                0.0
+            } else {
+                theme::state_alpha(status)
+            };
+            button::Style {
+                background: if selected {
+                    Some(p.secondary_container.into())
+                } else if state_alpha > 0.0 {
+                    Some(with_alpha(p.on_surface, state_alpha).into())
+                } else {
+                    None
+                },
+                text_color: foreground(t),
+                ..Default::default()
+            }
+        });
+    if !disabled {
+        row_button = row_button.on_press(Message::SelectCountry(code.to_string()));
+    }
+    row_button.into()
+}
+
 impl App {
     pub(crate) fn software_fix_confirm_dialog(&self) -> Element<'_, Message> {
-        let d = self.density();
-        m3_dialog(
-            column![
-                text(self.t("software_fix_confirm_title").to_string()).size(d.text(20.0)),
-                text(self.t("software_fix_elevation_hint").to_string())
-                    .size(d.text(13.0))
-                    .style(muted_style),
-                row![
-                    Space::new().width(Length::Fill),
-                    m3_text_button(self.t("btn_cancel").to_string())
-                        .on_press(Message::CancelCloseSoftwareFix),
-                    m3_filled_button(self.t("btn_ok").to_string()).on_press_maybe(
-                        self.can_close_software_fix()
-                            .then_some(Message::ConfirmCloseSoftwareFix)
-                    ),
-                ]
-                .spacing(d.space(10.0))
-                .align_y(iced::Alignment::Center),
+        m3_dialog(popup_sections(
+            text(self.t("software_fix_confirm_title").to_string())
+                .size(theme::text_size::TITLE_LARGE),
+            text(self.t("software_fix_elevation_hint").to_string())
+                .size(theme::text_size::BODY_MEDIUM)
+                .style(muted_style),
+            row![
+                Space::new().width(Length::Fill),
+                m3_outlined_button(self.t("btn_cancel").to_string())
+                    .on_press(Message::CancelCloseSoftwareFix),
+                m3_filled_button(self.t("btn_ok").to_string()).on_press_maybe(
+                    self.can_close_software_fix()
+                        .then_some(Message::ConfirmCloseSoftwareFix)
+                ),
             ]
-            .spacing(d.space(16.0))
-            .padding(d.space(24.0))
-            .width(Length::Fixed(d.width(380.0)))
-            .into(),
-        )
+            .spacing(10.0)
+            .align_y(iced::Alignment::Center),
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
     }
 
     /// Illustrated guide for the data-capable port on dual-USB-C tablets.
     pub(crate) fn dual_usb_help_dialog(&self) -> Element<'_, Message> {
         let model = self.dual_usb_help_model.clone();
+        let marker_dot = |success: bool| {
+            let icon = if success {
+                icon::mark_check()
+            } else {
+                icon::win_close()
+            };
+            container(icon.size(16))
+                .width(26)
+                .height(26)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center)
+                .style(move |t: &Theme| {
+                    let p = pal_of(t);
+                    container::Style {
+                        background: Some((if success { p.success } else { p.error }).into()),
+                        text_color: Some(iced::Color::WHITE),
+                        border: iced::Border {
+                            radius: theme::shape::FULL.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                })
+        };
+        let marker_caption = |label: String, muted: bool| {
+            container(
+                text(label)
+                    .size(theme::text_size::LABEL_SMALL)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            )
+            .padding([2, 9])
+            .style(move |t: &Theme| {
+                let p = pal_of(t);
+                container::Style {
+                    background: Some(p.surface_container_low.into()),
+                    text_color: Some(if muted {
+                        p.on_surface_variant
+                    } else {
+                        p.on_surface
+                    }),
+                    border: iced::Border {
+                        color: p.outline_variant,
+                        width: 1.0,
+                        radius: theme::shape::FULL.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+        };
+
+        // Every dual-USB model ships the same 500x300 front-on portrait, so a
+        // 300x180 box holds it edge to edge with no letterboxing and a marker
+        // pinned to one side names the same physical port on all of them.
+        const PORTRAIT_W: f32 = 300.0;
+        const PORTRAIT_H: f32 = 180.0;
+        const MARKER_H: f32 = 48.0;
+        let figure_h = PORTRAIT_H + MARKER_H;
+
         let portrait: Element<'_, Message> = match device_portrait(&self.dual_usb_help_model) {
             DevicePortrait::Png(handle) => widget::image(handle)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .content_fit(iced::ContentFit::ScaleDown)
+                .content_fit(iced::ContentFit::Contain)
                 .into(),
             DevicePortrait::Svg(handle) => widget::svg(handle)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .content_fit(iced::ContentFit::ScaleDown)
+                .content_fit(iced::ContentFit::Contain)
                 .into(),
         };
-        let portrait = container(portrait)
-            .width(Length::Fixed(380.0))
-            .height(Length::Fixed(190.0))
-            .center_x(Length::Fill)
-            .center_y(Length::Fill);
+        let portrait_layer = container(
+            container(portrait)
+                .width(Length::Fixed(PORTRAIT_W))
+                .height(Length::Fixed(PORTRAIT_H)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Start);
 
-        let side_port_x = container(icon::win_close().size(22))
-            .width(40)
-            .height(40)
-            .center_x(40)
-            .center_y(40)
-            .style(|_: &Theme| container::Style {
-                background: Some(iced::Color::from_rgb8(186, 26, 26).into()),
-                text_color: Some(iced::Color::WHITE),
+        let marker = |success: bool, label: String| {
+            column![marker_dot(success), marker_caption(label, !success)]
+                .spacing(4)
+                .align_x(iced::Alignment::Center)
+        };
+        // Hangs just past the portrait's lower edge, as the mockup drops its
+        // bottom-port marker below the tablet outline.
+        let bottom_layer = container(marker(
+            true,
+            self.t("dual_usb_help_bottom_label").to_string(),
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::End);
+        // Centred on the portrait rather than on the taller stack, so it meets
+        // the side port instead of drifting down with the caption row.
+        let side_layer = container(
+            container(marker(
+                false,
+                self.t("dual_usb_help_side_label").to_string(),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fixed(PORTRAIT_H))
+            .align_x(iced::Alignment::End)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(iced::Alignment::Start);
+
+        let portrait_guide = container(
+            widget::stack![portrait_layer, bottom_layer, side_layer]
+                // Only a marker's width of overhang past the portrait, so the
+                // side dot lands on the edge it names instead of floating off
+                // in the card's margin.
+                .width(Length::Fixed(PORTRAIT_W + 40.0))
+                .height(Length::Fixed(figure_h)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(figure_h + 24.0))
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .style(|t: &Theme| {
+            let p = pal_of(t);
+            container::Style {
+                background: Some(p.surface.into()),
                 border: iced::Border {
-                    radius: theme::shape::FULL.into(),
-                    ..Default::default()
+                    color: p.outline_variant,
+                    width: 1.0,
+                    radius: theme::shape::LG.into(),
                 },
                 ..Default::default()
-            });
-        let side_port_overlay = container(side_port_x)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(8)
-            .align_x(iced::Alignment::End)
-            .align_y(iced::Alignment::Center);
-        let portrait_guide = widget::stack![portrait, side_port_overlay]
-            .width(Length::Fixed(380.0))
-            .height(Length::Fixed(190.0));
+            }
+        });
 
-        let palette = self.pal();
-        let rgb = |color: iced::Color| {
-            format!(
-                "#{:02X}{:02X}{:02X}",
-                (color.r * 255.0).round() as u8,
-                (color.g * 255.0).round() as u8,
-                (color.b * 255.0).round() as u8,
-            )
-        };
-        let cable_svg = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 96" fill="none">
-<rect x="19" y="3" width="22" height="20" rx="2" stroke="{}" stroke-width="3"/>
-<rect x="12" y="23" width="36" height="47" rx="3" fill="{}" stroke="{}" stroke-width="3"/>
-<rect x="18" y="70" width="24" height="20" rx="3" fill="{}"/>
-</svg>"#,
-            rgb(palette.on_surface),
-            rgb(palette.primary),
-            rgb(palette.on_surface),
-            rgb(palette.on_surface),
-        );
-        let cable = widget::svg(widget::svg::Handle::from_memory(cable_svg.into_bytes()))
-            .width(Length::Fixed(60.0))
-            .height(Length::Fixed(96.0));
-        let travel = 0.5 - 0.5 * (std::f32::consts::TAU * self.dual_usb_cable_phase).cos();
-        let cable_offset = 2.0 + 14.0 * travel;
-        let cable_motion = column![Space::new().height(cable_offset), cable]
-            .width(Length::Fixed(60.0))
-            .height(Length::Fixed(112.0))
-            .align_x(iced::Alignment::Center);
-
-        let dont_show = m3_text_button(self.t("driver_dont_show_again").to_string())
+        let dont_show = m3_outlined_button(self.t("driver_dont_show_again").to_string())
             .on_press(Message::DismissDualUsbAdvisory(model.clone()));
-        let close = m3_text_button(self.t("btn_close").to_string())
+        let close = m3_filled_button(self.t("btn_close").to_string())
             .on_press(Message::CloseDualUsbAdvisory(model));
         let actions = row![dont_show, Space::new().width(Length::Fill), close];
-        let content = column![
-            text(self.t("dual_usb_help_title").to_string())
-                .size(theme::text_size::WIZARD_STEP_TITLE)
-                .font(theme::emphasis::bold()),
-            widget::rule::horizontal(1),
-            container(portrait_guide)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-            container(cable_motion)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-            text(self.t("dual_usb_help_body").to_string())
-                .size(theme::text_size::BODY_MEDIUM)
-                .style(muted_style)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                .width(Length::Fill),
-            widget::rule::horizontal(1),
+        let subtitle = if self.dual_usb_help_name.is_empty()
+            || self
+                .dual_usb_help_name
+                .eq_ignore_ascii_case(&self.dual_usb_help_model)
+        {
+            self.dual_usb_help_model.clone()
+        } else {
+            format!("{} · {}", self.dual_usb_help_name, self.dual_usb_help_model)
+        };
+        let content = popup_sections(
+            column![
+                text(self.t("dual_usb_help_title").to_string())
+                    .size(theme::text_size::TITLE_LARGE)
+                    .font(theme::emphasis::bold()),
+                text(subtitle)
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
+            ]
+            .spacing(4),
+            column![
+                portrait_guide,
+                text(self.t("dual_usb_help_body").to_string())
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .style(muted_style)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                    .width(Length::Fill),
+            ]
+            .spacing(16),
             actions,
-        ]
-        .spacing(14)
-        .padding(24)
-        .width(Length::Fixed(460.0));
+            theme::DIALOG_WIDTH_MD,
+            false,
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     /// Scrollable inventory of components bundled or linked into LTBox, plus
@@ -194,31 +382,28 @@ impl App {
         .spacing(14)
         .width(Length::Fill);
 
-        let close =
-            m3_text_button(self.t("btn_close").to_string()).on_press(Message::AboutLicensesClose);
+        let close = m3_outlined_button(self.t("btn_close").to_string())
+            .on_press(Message::AboutLicensesClose);
         let actions =
             row![Space::new().width(Length::Fill), close].align_y(iced::Alignment::Center);
 
-        let content = column![
+        let content = popup_sections(
             text(self.t("about_licenses_title").to_string())
-                .size(theme::text_size::WIZARD_STEP_TITLE)
+                .size(theme::text_size::TITLE_LARGE)
                 .font(theme::emphasis::bold()),
-            widget::rule::horizontal(1),
             scrollable(body)
                 .style(m3_scrollable_style)
                 .height(Length::Fixed(420.0))
                 .width(Length::Fill),
-            widget::rule::horizontal(1),
             actions,
-        ]
-        .spacing(14)
-        .padding(24)
-        .width(600);
+            theme::DIALOG_WIDTH_MD,
+            true,
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
-    /// Update flow opened from the sidebar pill. Direct downloads get the
+    /// Update flow opened from the status-bar version affordance. Direct downloads get the
     /// verified self-updater; package-managed installs keep their command.
     pub(crate) fn update_dialog_view(&self) -> Element<'_, Message> {
         let (Some(source), Some(release)) =
@@ -232,7 +417,7 @@ impl App {
 
         let upgrade = package_upgrade_command(source);
         let title = text(self.t("update_dialog_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE)
+            .size(theme::text_size::TITLE_LARGE)
             .font(theme::emphasis::bold());
         let version = text(
             // Tags carry a leading `v`; the string already says "version",
@@ -240,7 +425,7 @@ impl App {
             self.t("update_dialog_version")
                 .replace("{version}", release.tag.trim_start_matches('v')),
         )
-        .size(theme::text_size::BODY_LARGE);
+        .size(theme::text_size::TITLE_MEDIUM);
         let body_key = if upgrade.available {
             "update_dialog_package_body"
         } else {
@@ -257,15 +442,14 @@ impl App {
                 // Keep the field selectable without allowing the displayed
                 // package-manager command to be changed.
                 .on_input(|_| Message::Noop)
-                .padding([10, 12])
+                .padding([8, 12])
+                .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
                 .size(theme::text_size::BODY_MEDIUM)
                 .style(m3_text_input_style);
             let copy = m3_text_button(self.t("update_dialog_copy").to_string())
                 .on_press(Message::CopyToClipboard(upgrade.command.to_string()));
             column![
-                text(self.t("update_dialog_command_label").to_string())
-                    .size(theme::text_size::LABEL_SMALL)
-                    .style(muted_style),
+                dialog_field_label(self.t("update_dialog_command_label").to_string()),
                 row![command, copy]
                     .spacing(8)
                     .align_y(iced::Alignment::Center),
@@ -276,27 +460,23 @@ impl App {
             column![].into()
         };
 
-        let close =
-            m3_text_button(self.t("btn_close").to_string()).on_press(Message::UpdateDialogClose);
+        let close = m3_outlined_button(self.t("btn_close").to_string())
+            .on_press(Message::UpdateDialogClose);
         let release_page = m3_filled_button(self.t("update_dialog_release_page").to_string())
             .on_press(Message::OpenUpdateReleasePage);
         let actions = row![Space::new().width(Length::Fill), close, release_page]
             .spacing(8)
             .align_y(iced::Alignment::Center);
 
-        let content = column![
+        let content = popup_sections(
             title,
-            version,
-            body,
-            command_area,
-            widget::rule::horizontal(1),
+            column![version, body, command_area].spacing(14),
             actions,
-        ]
-        .spacing(14)
-        .padding(24)
-        .width(520);
+            theme::DIALOG_WIDTH_MD,
+            false,
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     fn direct_update_dialog_view(
@@ -304,13 +484,13 @@ impl App {
         release: &ltbox_core::github::StableRelease,
     ) -> Element<'_, Message> {
         let title = text(self.t("update_dialog_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE)
+            .size(theme::text_size::TITLE_LARGE)
             .font(theme::emphasis::bold());
         let version = text(
             self.t("update_dialog_version")
                 .replace("{version}", release.tag.trim_start_matches('v')),
         )
-        .size(theme::text_size::BODY_LARGE);
+        .size(theme::text_size::TITLE_MEDIUM);
 
         let state_body: Element<'_, Message> = match &self.operation.direct_update {
             DirectUpdateState::Ready => text(self.t("update_dialog_direct_body").to_string())
@@ -378,7 +558,7 @@ impl App {
             DirectUpdateState::Ready | DirectUpdateState::Failed(_)
         ) {
             actions = actions.push(
-                m3_text_button(self.t("btn_close").to_string())
+                m3_outlined_button(self.t("btn_close").to_string())
                     .on_press(Message::UpdateDialogClose),
             );
             actions = actions.push(
@@ -399,7 +579,7 @@ impl App {
             );
         }
 
-        let mut content = column![title, version, state_body];
+        let mut content = column![version, state_body].spacing(14);
         if let Some(reason) = self.self_update_blocked_reason() {
             content = content.push(
                 text(reason)
@@ -409,13 +589,8 @@ impl App {
                     .width(Length::Fill),
             );
         }
-        let content = content
-            .push(widget::rule::horizontal(1))
-            .push(actions)
-            .spacing(14)
-            .padding(DIRECT_UPDATE_DIALOG_PADDING)
-            .width(DIRECT_UPDATE_DIALOG_WIDTH);
-        m3_dialog(content.into())
+        let content = popup_sections(title, content, actions, DIRECT_UPDATE_DIALOG_WIDTH, false);
+        m3_dialog(content)
     }
 
     /// Device-info popup: render the Lenovo PTSTPD `data` block as a
@@ -426,8 +601,8 @@ impl App {
         let Some((serial, state)) = self.device_info_popup.clone() else {
             return container(text("")).into();
         };
-        let title = text(self.t("device_info_popup_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE);
+        let title =
+            text(self.t("device_info_popup_title").to_string()).size(theme::text_size::TITLE_LARGE);
         // Copy-icon button — only enabled once the upstream payload is
         // cached; clicking copies the unmodified `data` JSON to the
         // clipboard and surfaces a toast.
@@ -530,21 +705,18 @@ impl App {
         };
 
         let close_btn =
-            m3_filled_button(self.t("btn_close").to_string()).on_press(Message::DeviceInfoClose);
+            m3_outlined_button(self.t("btn_close").to_string()).on_press(Message::DeviceInfoClose);
 
-        let content = column![
-            header,
-            serial_line,
-            widget::rule::horizontal(1),
+        let content = popup_sections(
+            column![header, serial_line].spacing(12),
             body,
             iced::widget::row![Space::new().width(Length::Fill), close_btn]
                 .align_y(iced::Alignment::Center),
-        ]
-        .spacing(12)
-        .padding(20)
-        .width(640);
+            theme::DIALOG_WIDTH_MD,
+            matches!(state, DeviceInfoState::Ready),
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     /// Lenovo OTA "querynewfirmware" popup. Opens when the user clicks
@@ -556,8 +728,7 @@ impl App {
         let Some((_serial, _firmware_id, state)) = self.ota_popup.clone() else {
             return container(text("")).into();
         };
-        let title =
-            text(self.t("ota_popup_title").to_string()).size(theme::text_size::WIZARD_STEP_TITLE);
+        let title = text(self.t("ota_popup_title").to_string()).size(theme::text_size::TITLE_LARGE);
         let header = iced::widget::row![title, Space::new().width(Length::Fill)]
             .align_y(iced::Alignment::Center);
 
@@ -591,13 +762,14 @@ impl App {
                     text(format!("{}: {}", self.t("ota_popup_from"), update.from))
                         .size(12)
                         .style(muted_style),
-                    text(format!("{}: {}", self.t("ota_popup_to"), update.to)).size(13),
+                    text(format!("{}: {}", self.t("ota_popup_to"), update.to))
+                        .size(theme::text_size::BODY_MEDIUM),
                 ]
                 .spacing(4);
 
                 let meta_row = iced::widget::row![
-                    info_kv(Density::MIN, self.t("ota_popup_size"), &size_str),
-                    info_kv(Density::MIN, self.t("ota_popup_md5"), &update.md5),
+                    info_kv(self.t("ota_popup_size"), &size_str),
+                    info_kv(self.t("ota_popup_md5"), &update.md5),
                 ]
                 .spacing(40);
 
@@ -646,17 +818,15 @@ impl App {
             }
         };
 
-        // Bottom action row: Download (when Ready + url present) sits
-        // left of Close so the scrollable body's right-edge gutter
-        // can't overlap the action — both buttons live on the dialog
-        // chrome below the scrollable, not inside it.
+        // Both buttons live on the fixed dialog footer below the scrollable.
+        // Dismiss stays outlined to the left of the filled download action.
         let download_url: Option<String> = match &state {
             OtaPopupState::Ready(u) if !u.download_url.is_empty() => Some(u.download_url.clone()),
             _ => None,
         };
         let close_btn =
-            m3_filled_button(self.t("btn_close").to_string()).on_press(Message::OtaClose);
-        let mut action_row = iced::widget::row![Space::new().width(Length::Fill)]
+            m3_outlined_button(self.t("btn_close").to_string()).on_press(Message::OtaClose);
+        let mut action_row = iced::widget::row![Space::new().width(Length::Fill), close_btn]
             .spacing(8)
             .align_y(iced::Alignment::Center);
         if let Some(url) = download_url {
@@ -664,14 +834,16 @@ impl App {
                 .on_press(Message::OtaOpenDownload(url));
             action_row = action_row.push(download_btn);
         }
-        action_row = action_row.push(close_btn);
 
-        let content = column![header, widget::rule::horizontal(1), body, action_row,]
-            .spacing(12)
-            .padding(20)
-            .width(640);
+        let content = popup_sections(
+            header,
+            body,
+            action_row,
+            theme::DIALOG_WIDTH_MD,
+            matches!(state, OtaPopupState::Ready(_)),
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     /// QFIL-firmware popup: the official flash-tool package for a CN device
@@ -682,7 +854,7 @@ impl App {
             return container(text("")).into();
         };
         let title =
-            text(self.t("qfil_popup_title").to_string()).size(theme::text_size::WIZARD_STEP_TITLE);
+            text(self.t("qfil_popup_title").to_string()).size(theme::text_size::TITLE_LARGE);
         let header = row![title, Space::new().width(Length::Fill)].align_y(iced::Alignment::Center);
 
         let placeholder = |key: &str| -> Element<'_, Message> {
@@ -714,38 +886,22 @@ impl App {
                     .unwrap_or_default();
                 let mut rows = column![].spacing(10).width(Length::Fill);
                 if !pkg.version.is_empty() {
-                    rows = rows.push(info_kv(
-                        Density::MIN,
-                        self.t("qfil_popup_version"),
-                        &pkg.version,
-                    ));
+                    rows = rows.push(info_kv(self.t("qfil_popup_version"), &pkg.version));
                 }
                 if !pkg.file_name.is_empty() {
-                    rows = rows.push(info_kv(
-                        Density::MIN,
-                        self.t("qfil_popup_file"),
-                        &pkg.file_name,
-                    ));
+                    rows = rows.push(info_kv(self.t("qfil_popup_file"), &pkg.file_name));
                 }
                 if !pkg.platform.is_empty() {
-                    rows = rows.push(info_kv(
-                        Density::MIN,
-                        self.t("qfil_popup_platform"),
-                        &pkg.platform,
-                    ));
+                    rows = rows.push(info_kv(self.t("qfil_popup_platform"), &pkg.platform));
                 }
                 if !updated.is_empty() {
-                    rows = rows.push(info_kv(
-                        Density::MIN,
-                        self.t("qfil_popup_updated"),
-                        &updated,
-                    ));
+                    rows = rows.push(info_kv(self.t("qfil_popup_updated"), &updated));
                 }
                 // Archive password (fixed constant) with a copy affordance —
                 // it isn't discoverable and the user needs it to extract.
                 let pw = ltbox_core::lenovo_qfil::package_password();
                 let pw_row = row![
-                    info_kv(Density::MIN, self.t("qfil_popup_password"), &pw),
+                    info_kv(self.t("qfil_popup_password"), &pw),
                     Space::new().width(Length::Fill),
                     m3_filled_button(self.t("qfil_popup_copy").to_string())
                         .on_press(Message::CopyToClipboard(pw.clone())),
@@ -762,8 +918,8 @@ impl App {
             _ => None,
         };
         let close_btn =
-            m3_filled_button(self.t("btn_close").to_string()).on_press(Message::QfilClose);
-        let mut action_row = row![Space::new().width(Length::Fill)]
+            m3_outlined_button(self.t("btn_close").to_string()).on_press(Message::QfilClose);
+        let mut action_row = row![Space::new().width(Length::Fill), close_btn]
             .spacing(8)
             .align_y(iced::Alignment::Center);
         if let Some(url) = download_url {
@@ -772,14 +928,10 @@ impl App {
                     .on_press(Message::OpenExternalUrl(url)),
             );
         }
-        action_row = action_row.push(close_btn);
 
-        let content = column![header, widget::rule::horizontal(1), body, action_row,]
-            .spacing(12)
-            .padding(20)
-            .width(560);
+        let content = popup_sections(header, body, action_row, theme::DIALOG_WIDTH_MD, false);
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     /// The global-device message with an inline "Software Fix" hyperlink. The
@@ -794,18 +946,18 @@ impl App {
             let before = msg[..idx].to_string();
             let after = msg[idx + LINK_TERM.len()..].to_string();
             iced::widget::rich_text([
-                iced::widget::span(before).size(13),
+                iced::widget::span(before).size(theme::text_size::BODY_MEDIUM),
                 iced::widget::span(LINK_TERM)
-                    .size(13)
+                    .size(theme::text_size::BODY_MEDIUM)
                     .color(primary)
                     .underline(true)
                     .link(SOFTWARE_FIX_URL.to_string()),
-                iced::widget::span(after).size(13),
+                iced::widget::span(after).size(theme::text_size::BODY_MEDIUM),
             ])
             .on_link_click(Message::OpenExternalUrl)
             .into()
         } else {
-            text(msg).size(13).into()
+            text(msg).size(theme::text_size::BODY_MEDIUM).into()
         };
         container(content)
             .padding([12, 4])
@@ -823,7 +975,7 @@ impl App {
         let rendered = self.rollback_value_format.render(index);
         let value_btn = button(
             text(rendered.clone())
-                .size(theme::text_size::BODY_LARGE)
+                .size(theme::text_size::TITLE_MEDIUM)
                 .font(theme::emphasis::medium())
                 .wrapping(iced::widget::text::Wrapping::None),
         )
@@ -848,7 +1000,7 @@ impl App {
                 background: theme::state_layer_bg(status, p.on_surface).map(Into::into),
                 text_color: p.on_surface_variant,
                 border: iced::Border {
-                    radius: theme::shape::FULL.into(),
+                    radius: theme::shape::SM.into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -892,7 +1044,7 @@ impl App {
         let slot = active_slot_suffix(Some(&self.device.slot));
 
         let title = text(self.t("rollback_popup_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE)
+            .size(theme::text_size::TITLE_LARGE)
             .font(theme::emphasis::bold());
         let desc = text(self.t("rollback_popup_desc").to_string())
             .size(theme::text_size::BODY_MEDIUM)
@@ -924,22 +1076,18 @@ impl App {
         ]
         .spacing(4);
 
-        let close_btn = m3_filled_button(self.t("btn_close").to_string())
+        let close_btn = m3_outlined_button(self.t("btn_close").to_string())
             .on_press(Message::RollbackDetailClose);
 
-        let content = column![
+        let content = popup_sections(
             title,
-            desc,
-            widget::rule::horizontal(1),
-            format_hint,
-            rows,
+            column![desc, format_hint, rows].spacing(14),
             row![Space::new().width(Length::Fill), close_btn].align_y(iced::Alignment::Center),
-        ]
-        .spacing(14)
-        .padding(24)
-        .width(480);
+            theme::DIALOG_WIDTH_MD,
+            false,
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     /// Manual rollback-index editor opened from the Flash-confirm rollback
@@ -951,7 +1099,7 @@ impl App {
         };
 
         let title = text(self.t("rollback_popup_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE)
+            .size(theme::text_size::TITLE_LARGE)
             .font(theme::emphasis::bold());
         let desc = text(self.t("rollback_manual_desc").to_string())
             .size(theme::text_size::BODY_MEDIUM)
@@ -997,7 +1145,7 @@ impl App {
             ManualRollbackEditor::VbmetaSystem,
         );
 
-        let cancel_btn = m3_text_button(self.t("btn_cancel").to_string())
+        let cancel_btn = m3_outlined_button(self.t("btn_cancel").to_string())
             .on_press(Message::Flash(FlashMsg::FlashManualRollbackCancel));
         let ok_btn = {
             let btn = m3_filled_button(self.t("btn_ok").to_string());
@@ -1008,22 +1156,17 @@ impl App {
             }
         };
 
-        let content = column![
+        let content = popup_sections(
             title,
-            desc,
-            widget::rule::horizontal(1),
-            format_hint,
-            boot_field,
-            vbmeta_field,
+            column![desc, format_hint, boot_field, vbmeta_field].spacing(14),
             row![Space::new().width(Length::Fill), cancel_btn, ok_btn]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
-        ]
-        .spacing(14)
-        .padding(24)
-        .width(480);
+            theme::DIALOG_WIDTH_LG,
+            false,
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     fn manual_rollback_input<'a>(
@@ -1050,20 +1193,26 @@ impl App {
                         ..Default::default()
                     }
                 });
+        let invalid = result.is_err();
         let input = iced::widget::text_input(self.t("rollback_manual_placeholder"), buffer)
             .on_input(move |value| Message::Flash(FlashMsg::FlashManualRollbackInput(field, value)))
             .padding([8, 12])
-            .size(theme::text_size::BODY_LARGE)
+            .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
+            .size(theme::text_size::TITLE_MEDIUM)
             .width(Length::Fill)
-            .style(m3_text_input_style);
+            .style(move |t, status| {
+                if invalid {
+                    m3_text_input_error_style(t, status)
+                } else {
+                    m3_text_input_style(t, status)
+                }
+            });
+        let input = container(input).height(Length::Fixed(40.0)).center_y(40);
 
         let status: Element<'_, Message> = match (&result, original) {
             // What the user typed is what they can act on, so its error wins
             // the one line this row has.
-            (Err(reason), _) => text(self.t(reason).to_string())
-                .size(12)
-                .style(warning_style)
-                .into(),
+            (Err(reason), _) => dialog_field_error(self.t(reason).to_string()),
             (Ok(_), Some(Ok(index))) => text(tr_args!(
                 "rollback_manual_original",
                 index = self.manual_rollback_format.render(*index)
@@ -1079,15 +1228,14 @@ impl App {
             (Ok(_), None) => Space::new().into(),
         };
 
-        row![
-            text(partition)
-                .size(theme::text_size::BODY_MEDIUM)
-                .style(muted_style)
-                .width(Length::Fixed(150.0)),
-            column![row![input, format_button].spacing(8), status].spacing(4),
+        column![
+            dialog_field_label(partition),
+            row![input, format_button]
+                .spacing(8)
+                .align_y(iced::Alignment::Center),
+            status,
         ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center)
+        .spacing(6)
         .into()
     }
 
@@ -1105,31 +1253,44 @@ impl App {
         let utc_preview: Element<'_, Message> = if valid {
             let ts: u64 = buf.parse().unwrap_or(0);
             let formatted = format_unix_timestamp_utc(ts);
-            text(formatted).size(13).style(success_style).into()
+            text(formatted)
+                .size(theme::text_size::BODY_MEDIUM)
+                .style(success_style)
+                .into()
         } else {
             // Keep a fixed-height placeholder so the layout doesn't
             // jump when the preview appears / disappears.
-            container(text("").size(13)).height(20).into()
+            container(text("").size(theme::text_size::BODY_MEDIUM))
+                .height(20)
+                .into()
         };
 
-        let title = text(self.t("arb_index_popup_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE);
-        let subtitle = text(self.t("arb_index_popup_subtitle").to_string())
-            .size(12)
-            .style(muted_style);
+        let header = column![
+            text(self.t("arb_index_popup_title").to_string()).size(theme::text_size::TITLE_LARGE),
+            text(self.t("arb_index_popup_subtitle").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+        ]
+        .spacing(3);
 
         let input = iced::widget::text_input(
             self.t("arb_index_popup_placeholder"),
             &self.adv_wizard.arb_index_buffer,
         )
         .on_input(|s| Message::Adv(AdvMsg::AdvWizArbIndexInput(s)))
-        .on_submit(Message::Adv(AdvMsg::AdvWizArbIndexConfirm))
         .padding([8, 12])
+        .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
         .size(14)
         .width(Length::Fill)
         .style(m3_text_input_style);
+        let input = if valid {
+            input.on_submit(Message::Adv(AdvMsg::AdvWizArbIndexConfirm))
+        } else {
+            input
+        };
 
-        let cancel_btn = m3_text_button(self.t("btn_cancel").to_string())
+        let input = container(input).height(Length::Fixed(40.0)).center_y(40);
+        let cancel_btn = m3_outlined_button(self.t("btn_cancel").to_string())
             .on_press(Message::Adv(AdvMsg::AdvWizArbIndexCancel));
         let ok_btn = {
             let btn = m3_filled_button(self.t("btn_ok").to_string());
@@ -1140,20 +1301,17 @@ impl App {
             }
         };
 
-        let content = column![
-            title,
-            subtitle,
-            utc_preview,
-            input,
+        let content = popup_sections(
+            header,
+            column![input, utc_preview].spacing(6),
             iced::widget::row![Space::new().width(Length::Fill), cancel_btn, ok_btn]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
-        ]
-        .spacing(12)
-        .padding(20)
-        .width(420);
+            theme::DIALOG_WIDTH_SM,
+            false,
+        );
 
-        m3_dialog(content.into())
+        m3_dialog(content)
     }
 
     /// Manual serial-number prompt for auto region detection. Shown by the
@@ -1164,19 +1322,28 @@ impl App {
             return container(text("")).into();
         };
         let valid = !buf.trim().is_empty();
-        let title = text(self.t("flash_serial_prompt_title").to_string())
-            .size(theme::text_size::WIZARD_STEP_TITLE);
-        let subtitle = text(self.t("flash_serial_prompt_subtitle").to_string())
-            .size(12)
-            .style(muted_style);
+        let header = column![
+            text(self.t("flash_serial_prompt_title").to_string())
+                .size(theme::text_size::TITLE_LARGE),
+            text(self.t("flash_serial_prompt_subtitle").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+        ]
+        .spacing(3);
         let input = iced::widget::text_input(self.t("flash_serial_prompt_placeholder"), &buf)
             .on_input(|s| Message::Flash(FlashMsg::FlashSerialPromptInput(s)))
-            .on_submit(Message::Flash(FlashMsg::FlashSerialPromptSubmit))
             .padding([8, 12])
+            .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
             .size(14)
             .width(Length::Fill)
             .style(m3_text_input_style);
-        let skip_btn = m3_text_button(self.t("flash_serial_prompt_skip").to_string())
+        let input = if valid {
+            input.on_submit(Message::Flash(FlashMsg::FlashSerialPromptSubmit))
+        } else {
+            input
+        };
+        let input = container(input).height(Length::Fixed(40.0)).center_y(40);
+        let skip_btn = m3_outlined_button(self.t("flash_serial_prompt_skip").to_string())
             .on_press(Message::Flash(FlashMsg::FlashSerialPromptSkip));
         let ok_btn = {
             let btn = m3_filled_button(self.t("btn_ok").to_string());
@@ -1186,118 +1353,157 @@ impl App {
                 btn
             }
         };
-        let content = column![
-            title,
-            subtitle,
+        let content = popup_sections(
+            header,
             input,
             row![Space::new().width(Length::Fill), skip_btn, ok_btn]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
-        ]
-        .spacing(12)
-        .padding(20)
-        .width(420);
-        m3_dialog(content.into())
+            theme::DIALOG_WIDTH_SM,
+            false,
+        );
+        m3_dialog(content)
     }
 
     pub(crate) fn country_popup_view(&self) -> Element<'_, Message> {
-        let mut list = column![].spacing(2);
-        let selected_code = self.country_popup_selected_code();
+        let query = self.country_popup_search.trim().to_ascii_lowercase();
+        let filtered: Vec<&CountryEntry> = COUNTRY_CODES
+            .iter()
+            .filter(|entry| country_matches_search(entry, &query))
+            .collect();
+        let selected_code = self.country_popup_draft.target();
+        let mut list = column![].spacing(0).width(Length::Fill);
+        let mut has_row = false;
+
         // Flash wizard only — hide "Do not change" from the Advanced
-        // PatchDevinfo flow because that action requires a concrete target
-        // code to write into devinfo/persist.
-        if !self.adv_needs_country {
-            let no_change_selected = self.wf_config.country_action.target().is_none()
-                && (!self.wf_config.wipe || self.wf_config.country_action.is_skipped());
+        // PatchDevinfo flow because that action requires a concrete target.
+        // Once search starts, only matching countries remain in the results.
+        if !self.adv_needs_country && query.is_empty() {
+            let no_change_selected = self.country_popup_draft.is_skipped()
+                || (matches!(self.country_popup_draft, CountryAction::Unset)
+                    && !self.wf_config.wipe);
+            let mut contents = row![
+                text(self.t("popup_country_do_not_change").to_string())
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .width(Length::Fill),
+            ]
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill);
+            if no_change_selected {
+                contents = contents.push(lucide_icon(icon::mark_check(), 16.0, |t: &Theme| {
+                    pal_of(t).primary
+                }));
+            }
             list = list.push(
-                button(text(self.t("popup_country_do_not_change").to_string()).size(13))
+                button(contents.height(Length::Fill))
                     .on_press(Message::SkipCountryPatch)
-                    .padding([6, 14])
+                    .height(Length::Fixed(COUNTRY_ROW_HEIGHT))
                     .width(Length::Fill)
+                    .padding([0, 20])
                     .style(move |t: &Theme, status| {
                         let p = pal_of(t);
+                        let alpha = theme::state_alpha(status);
                         button::Style {
-                            background: Some(if no_change_selected {
-                                p.primary.into()
+                            background: if no_change_selected {
+                                Some(p.secondary_container.into())
+                            } else if alpha > 0.0 {
+                                Some(with_alpha(p.on_surface, alpha).into())
                             } else {
-                                // M3 list-item state layer on hover / press.
-                                let a = theme::state_alpha(status);
-                                if a > 0.0 {
-                                    with_alpha(p.on_surface, a).into()
-                                } else {
-                                    iced::Color::TRANSPARENT.into()
-                                }
-                            }),
-                            text_color: if no_change_selected {
-                                p.on_primary
-                            } else {
-                                p.on_surface
+                                None
                             },
+                            text_color: p.on_surface,
                             ..Default::default()
                         }
                     }),
             );
-            list = list.push(widget::rule::horizontal(1));
-        }
-        // TB322FC PRC-only: only CN is selectable in the Flash wizard. Non-CN
-        // rows render as disabled buttons so the constraint stays visible. The
-        // Advanced "Change Country Code" op has no such restriction (any country,
-        // any model), so the gate is lifted there. "Do not change" stays usable.
-        let tb322fc = self.model_capabilities().prc_only && !self.adv_needs_country;
-        for entry in COUNTRY_CODES {
-            let code = entry.code.to_string();
-            let selected = selected_code == Some(entry.code);
-            let label = format!("{} — {}", entry.code, entry.name);
-            let disabled = tb322fc && !entry.code.eq_ignore_ascii_case("CN");
-            let mut btn = button(text(label).size(13))
-                .padding([6, 14])
-                .width(Length::Fill)
-                .style(move |t: &Theme, status| {
-                    let p = pal_of(t);
-                    if disabled {
-                        return button::Style {
-                            background: Some(iced::Color::TRANSPARENT.into()),
-                            text_color: with_alpha(p.on_surface, 0.38),
-                            ..Default::default()
-                        };
-                    }
-                    button::Style {
-                        background: Some(if selected {
-                            p.primary.into()
-                        } else {
-                            // M3 list-item state layer on hover / press.
-                            let a = theme::state_alpha(status);
-                            if a > 0.0 {
-                                with_alpha(p.on_surface, a).into()
-                            } else {
-                                iced::Color::TRANSPARENT.into()
-                            }
-                        }),
-                        text_color: if selected { p.on_primary } else { p.on_surface },
-                        ..Default::default()
-                    }
-                });
-            if !disabled {
-                btn = btn.on_press(Message::SelectCountry(code));
-            }
-            list = list.push(btn);
+            has_row = true;
         }
 
-        let popup_content: Element<'_, Message> = column![
-            row![
-                text(self.t("popup_select_country").to_string()).size(16),
-                Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
-                    .on_press(Message::DismissCountryPopup),
+        // TB322FC PRC-only: only CN is selectable in the Flash wizard. The
+        // Advanced operation permits every country, so the gate is lifted there.
+        let tb322fc = self.model_capabilities().prc_only && !self.adv_needs_country;
+        for entry in &filtered {
+            if has_row {
+                list = list.push(widget::rule::horizontal(1).style(shell_rule_style));
+            }
+            let selected = selected_code == Some(entry.code);
+            let disabled = tb322fc && !entry.code.eq_ignore_ascii_case("CN");
+            list = list.push(country_popup_row(
+                None, entry.code, entry.name, selected, disabled,
+            ));
+            has_row = true;
+        }
+
+        let search = text_input(self.t("popup_country_search"), &self.country_popup_search)
+            .on_input(Message::CountrySearchInput)
+            .width(Length::Fill)
+            .padding([8, 12])
+            .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
+            .size(theme::text_size::BODY_MEDIUM)
+            .style(m3_text_input_style);
+        let header = container(
+            column![
+                text(self.t("adv_country_title").to_string())
+                    .size(theme::text_size::TITLE_MEDIUM)
+                    .font(theme::emphasis::medium()),
+                text(self.t("adv_country_subtitle").to_string())
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style)
+                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             ]
-            .align_y(iced::Alignment::Center),
-            widget::rule::horizontal(1),
-            scrollable(list).style(m3_scrollable_style).height(300),
+            .spacing(3)
+            .width(Length::Fill),
+        )
+        .padding(iced::Padding {
+            top: 18.0,
+            right: 20.0,
+            bottom: 10.0,
+            left: 20.0,
+        })
+        .width(Length::Fill);
+        let search_area = container(container(search).height(Length::Fixed(40.0)).center_y(40))
+            .padding([16, 20])
+            .width(Length::Fill);
+        let list_area = column![
+            widget::rule::horizontal(1).style(shell_rule_style),
+            scrollable(list)
+                .style(m3_scrollable_style)
+                .height(Length::Fixed(COUNTRY_LIST_HEIGHT))
+                .width(Length::Fill),
+            widget::rule::horizontal(1).style(shell_rule_style),
         ]
-        .spacing(10)
-        .padding(20)
-        .width(400)
-        .into();
+        .spacing(0)
+        .width(Length::Fill);
+
+        let count = tr_args!("adv_country_pick_count", count = filtered.len().to_string());
+        let can_confirm = if self.adv_needs_country {
+            self.country_popup_draft.target().is_some()
+        } else {
+            !self.wf_config.wipe || !matches!(self.country_popup_draft, CountryAction::Unset)
+        };
+        let footer = container(
+            row![
+                text(count)
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
+                Space::new().width(Length::Fill),
+                m3_outlined_button(self.t("btn_cancel").to_string())
+                    .on_press(Message::DismissCountryPopup),
+                m3_filled_button(self.t("btn_select").to_string())
+                    .on_press_maybe(can_confirm.then_some(Message::CountryPopupConfirm),),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill),
+        )
+        .padding([14, 20])
+        .width(Length::Fill);
+
+        let popup_content: Element<'_, Message> = column![header, search_area, list_area, footer]
+            .spacing(0)
+            .width(Length::Fixed(theme::DIALOG_WIDTH_MD))
+            .into();
         m3_dialog(popup_content)
     }
 
@@ -1311,21 +1517,25 @@ impl App {
             let is_selected = selected == Some(target);
             let label = self.t(target.label_key()).to_string();
             list = list.push(
-                button(text(label).size(13))
+                button(text(label).size(theme::text_size::BODY_MEDIUM))
                     .on_press(Message::SelectRegionTarget(target))
                     .padding([6, 14])
                     .width(Length::Fill)
                     .style(move |t: &Theme, status| {
                         let p = pal_of(t);
-                        let hover = matches!(status, button::Status::Hovered);
                         button::Style {
-                            background: Some(if is_selected {
-                                p.primary.into()
-                            } else if hover {
-                                with_alpha(p.primary, theme::state::HOVER).into()
+                            background: if is_selected {
+                                Some(
+                                    theme::mix_color(
+                                        p.primary,
+                                        p.on_primary,
+                                        theme::state_alpha(status),
+                                    )
+                                    .into(),
+                                )
                             } else {
-                                iced::Color::TRANSPARENT.into()
-                            }),
+                                theme::state_layer_bg(status, p.on_surface).map(Into::into)
+                            },
                             text_color: if is_selected {
                                 p.on_primary
                             } else {
@@ -1337,22 +1547,19 @@ impl App {
             );
         }
 
-        let popup_content: Element<'_, Message> = column![
+        let popup_content = popup_sections(
+            text(self.t("popup_select_region_target").to_string())
+                .size(REGION_TARGET_POPUP_TITLE_SIZE),
+            list,
             row![
-                text(self.t("popup_select_region_target").to_string())
-                    .size(REGION_TARGET_POPUP_TITLE_SIZE),
                 Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
+                m3_outlined_button(self.t("btn_cancel").to_string())
                     .on_press(Message::DismissRegionTargetPopup),
             ]
             .align_y(iced::Alignment::Center),
-            widget::rule::horizontal(1),
-            list,
-        ]
-        .spacing(10)
-        .padding(REGION_TARGET_POPUP_PADDING)
-        .width(REGION_TARGET_POPUP_WIDTH)
-        .into();
+            REGION_TARGET_POPUP_WIDTH,
+            false,
+        );
         m3_dialog(popup_content)
     }
 
@@ -1451,7 +1658,7 @@ impl App {
 
         let mut list = column![].spacing(2);
         for (label, is_selected, on_press, disabled) in opts {
-            let mut btn = button(text(label).size(13))
+            let mut btn = button(text(label).size(theme::text_size::BODY_MEDIUM))
                 .padding([6, 14])
                 .width(Length::Fill)
                 .style(move |t: &Theme, status| {
@@ -1463,15 +1670,19 @@ impl App {
                             ..Default::default()
                         };
                     }
-                    let hover = matches!(status, button::Status::Hovered);
                     button::Style {
-                        background: Some(if is_selected {
-                            p.primary.into()
-                        } else if hover {
-                            with_alpha(p.primary, theme::state::HOVER).into()
+                        background: if is_selected {
+                            Some(
+                                theme::mix_color(
+                                    p.primary,
+                                    p.on_primary,
+                                    theme::state_alpha(status),
+                                )
+                                .into(),
+                            )
                         } else {
-                            iced::Color::TRANSPARENT.into()
-                        }),
+                            theme::state_layer_bg(status, p.on_surface).map(Into::into)
+                        },
                         text_color: if is_selected {
                             p.on_primary
                         } else {
@@ -1486,21 +1697,18 @@ impl App {
             list = list.push(btn);
         }
 
-        let popup_content: Element<'_, Message> = column![
+        let popup_content = popup_sections(
+            text(self.t("flash_confirm_edit_title").to_string()).size(16),
+            list,
             row![
-                text(self.t("flash_confirm_edit_title").to_string()).size(16),
                 Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
+                m3_outlined_button(self.t("btn_cancel").to_string())
                     .on_press(Message::Flash(FlashMsg::FlashConfirmClose)),
             ]
             .align_y(iced::Alignment::Center),
-            widget::rule::horizontal(1),
-            list,
-        ]
-        .spacing(10)
-        .padding(20)
-        .width(320)
-        .into();
+            theme::DIALOG_WIDTH_MD,
+            false,
+        );
         m3_dialog(popup_content)
     }
 
@@ -1555,26 +1763,27 @@ impl App {
                     .into()
             }
             FirmwareIdentityDialog::Failed(error) => text(error.clone())
-                .size(13)
+                .size(theme::text_size::BODY_MEDIUM)
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
                 .into(),
         };
 
         let action_label = if ready { "btn_next" } else { "btn_close" };
-        let popup_content: Element<'_, Message> = column![
+        let action = if ready {
+            m3_filled_button(self.t(action_label).to_string())
+        } else {
+            m3_outlined_button(self.t(action_label).to_string())
+        };
+        let popup_content = popup_sections(
             text(self.t(title_key).to_string()).size(16),
-            widget::rule::horizontal(1),
             details,
             row![
                 Space::new().width(Length::Fill),
-                m3_filled_button(self.t(action_label).to_string())
-                    .on_press(Message::Flash(FlashMsg::FlashFirmwareIdentityDialogAction,)),
+                action.on_press(Message::Flash(FlashMsg::FlashFirmwareIdentityDialogAction,)),
             ],
-        ]
-        .spacing(12)
-        .padding(20)
-        .width(360)
-        .into();
+            theme::DIALOG_WIDTH_MD,
+            false,
+        );
         m3_dialog(popup_content)
     }
 
@@ -1585,7 +1794,9 @@ impl App {
             let selected = self.sysupdate.rescue_region == Some(region);
             button(
                 column![
-                    text(label).size(15).style(on_surface_style),
+                    text(label)
+                        .size(theme::text_size::BODY_MEDIUM)
+                        .style(on_surface_style),
                     text(desc).size(12).style(muted_style),
                 ]
                 .spacing(4),
@@ -1595,23 +1806,23 @@ impl App {
             .width(Length::Fill)
             .style(move |t: &Theme, status| {
                 let p = pal_of(t);
-                let hover = matches!(status, button::Status::Hovered);
-                let bg = if selected {
-                    p.primary_container.into()
-                } else if hover {
-                    with_alpha(p.primary, theme::state::HOVER).into()
+                let background = if selected {
+                    Some(
+                        theme::mix_color(
+                            p.primary_container,
+                            p.on_primary_container,
+                            theme::state_alpha(status),
+                        )
+                        .into(),
+                    )
                 } else {
-                    iced::Color::TRANSPARENT.into()
+                    theme::state_layer_bg(status, p.on_surface).map(Into::into)
                 };
                 button::Style {
-                    background: Some(bg),
+                    background,
                     text_color: p.on_surface,
                     border: iced::Border {
-                        color: if selected {
-                            p.primary
-                        } else {
-                            p.outline_variant
-                        },
+                        color: if selected { p.primary } else { p.outline },
                         width: 1.0,
                         radius: theme::shape::SM.into(),
                     },
@@ -1619,25 +1830,25 @@ impl App {
                 }
             })
         };
-        let popup_content: Element<'_, Message> = column![
+        let popup_content = popup_sections(
+            text(self.t("rescue_region_popup_title").to_string()).size(16),
+            column![
+                text(self.t("rescue_region_popup_subtitle").to_string())
+                    .size(12)
+                    .style(muted_style),
+                mk_option(RescueRegion::Prc, "rescue_region_prc_desc"),
+                mk_option(RescueRegion::Row, "rescue_region_row_desc"),
+            ]
+            .spacing(10),
             row![
-                text(self.t("rescue_region_popup_title").to_string()).size(16),
                 Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
+                m3_outlined_button(self.t("btn_cancel").to_string())
                     .on_press(Message::Sys(SysMsg::SysRescueRegionPopupDismiss)),
             ]
             .align_y(iced::Alignment::Center),
-            widget::rule::horizontal(1),
-            text(self.t("rescue_region_popup_subtitle").to_string())
-                .size(12)
-                .style(muted_style),
-            mk_option(RescueRegion::Prc, "rescue_region_prc_desc"),
-            mk_option(RescueRegion::Row, "rescue_region_row_desc"),
-        ]
-        .spacing(10)
-        .padding(20)
-        .width(420)
-        .into();
+            theme::DIALOG_WIDTH_MD,
+            false,
+        );
         m3_dialog(popup_content)
     }
 
@@ -1663,32 +1874,32 @@ impl App {
             .spacing(8)
             .align_y(iced::Alignment::Center),
             widget::rule::horizontal(1),
-            m3_log_text_field(Density::MIN, self.t("dash_log").to_string(), editor.into()),
+            m3_log_text_field(self.t("dash_log").to_string(), editor.into()),
         ]
         .spacing(12)
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill);
         let utility_actions = row![
-            wizard_utility_action(
+            wizard_secondary_action(
                 icon::fab_save_log(),
                 self.t("btn_save_log").to_string(),
                 Some(Message::SaveLog),
             ),
-            wizard_utility_action(
+            wizard_secondary_action(
                 icon::fab_cancel(),
                 self.t("btn_close").to_string(),
                 Some(Message::ToggleLogPopup(false)),
             ),
         ]
-        .spacing(0)
+        .spacing(ACTION_BUTTON_SPACING)
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-        let actions = wizard_utility_toolbar(utility_actions);
+        let actions = utility_actions;
 
         column![
             container(body).width(Length::Fill).height(Length::Fill),
-            wizard_fab_footer(row![].height(Length::Fill), actions),
+            wizard_action_footer(row![].height(Length::Fill), actions),
         ]
         .width(Length::Fill)
         .height(Length::Fill)
@@ -1700,6 +1911,24 @@ impl App {
 // constants, but the buttons take their size from their type role. Pin them
 // together so the guard cannot measure a size the buttons stopped using.
 const _: () = {
-    assert!(DIRECT_UPDATE_DIALOG_ACTION_SIZE.to_bits() == theme::text_size::LABEL_LARGE.to_bits());
-    assert!(REGION_TARGET_POPUP_ACTION_SIZE.to_bits() == theme::text_size::LABEL_LARGE.to_bits());
+    assert!(DIRECT_UPDATE_DIALOG_ACTION_SIZE.to_bits() == theme::text_size::BODY_MEDIUM.to_bits());
+    assert!(REGION_TARGET_POPUP_ACTION_SIZE.to_bits() == theme::text_size::BODY_MEDIUM.to_bits());
 };
+
+#[cfg(test)]
+mod country_popup_tests {
+    use super::*;
+
+    #[test]
+    fn country_search_matches_name_and_code_case_insensitively() {
+        let korea = COUNTRY_CODES
+            .iter()
+            .find(|entry| entry.code == "KR")
+            .expect("KR country entry");
+
+        assert!(country_matches_search(korea, "kr"));
+        assert!(country_matches_search(korea, "KORE"));
+        assert!(country_matches_search(korea, "  korea  "));
+        assert!(!country_matches_search(korea, "japan"));
+    }
+}

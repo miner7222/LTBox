@@ -1,9 +1,34 @@
 //! System-update wizard view + steps + the shared exec-step view. Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
+
+/// Height of the rule separating two metric cells.
+const METRIC_DIVIDER_HEIGHT: f32 = 34.0;
+
+/// Divider between metric cells. A bare `rule::vertical` asks for `Fill`
+/// height, which made the whole metrics strip stretch down the card and
+/// leave its values stranded at the top.
+fn metric_divider() -> Element<'static, Message> {
+    container(iced::widget::rule::vertical(1).style(shell_rule_style))
+        .height(Length::Fixed(METRIC_DIVIDER_HEIGHT))
+        .into()
+}
+
+fn format_exec_duration(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    let hours = seconds / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
 impl App {
     pub(crate) fn view_sysupdate_wizard(&self) -> Element<'_, Message> {
         // Exec-step log popup overlay — without this the "Show log" button
@@ -14,7 +39,12 @@ impl App {
         }
         let steps = self.sysupdate.steps();
         let step_labels: Vec<&str> = steps.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.sysupdate.step);
+        let is_exec = self.sysupdate.is_in_exec();
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.sysupdate.step, self.window_size_class())
+        };
         let is_rescue = self.sysupdate.is_rescue();
         let body = if is_rescue {
             match self.sysupdate.step {
@@ -29,6 +59,12 @@ impl App {
                 1 => self.sysupdate_confirm_step(),
                 _ => self.sysupdate_exec_step(),
             }
+        };
+        let (step_title, app_bar_subtitle) = self.sysupdate_step_copy();
+        let body = if is_exec || self.sysupdate.step == 0 {
+            body
+        } else {
+            wizard_step_body(step_title, body)
         };
         let last_nav_step = steps.len() - 2; // Exec step has no nav row.
         let nav = if self.sysupdate.step <= last_nav_step {
@@ -52,17 +88,19 @@ impl App {
         } else {
             empty_wizard_nav()
         };
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.sysupdate_action_bar() {
-            layout = layout.push(header);
-        }
-        let core: Element<'_, Message> = layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
+        let core: Element<'_, Message> = column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t("nav_sysupdate").to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
         if self.sysupdate.rescue_region_popup_open {
             iced::widget::Stack::with_children(vec![core, self.rescue_region_popup_view()]).into()
         } else {
@@ -70,32 +108,26 @@ impl App {
         }
     }
 
-    fn sysupdate_action_bar(&self) -> Option<Element<'_, Message>> {
+    fn sysupdate_step_copy(&self) -> (String, Option<String>) {
         let rescue = self.sysupdate.is_rescue();
-        let (title, subtitle) = match (rescue, self.sysupdate.step) {
-            (_, 0) => (
-                self.t("sysupdate_action_title").to_string(),
-                self.t("sysupdate_action_subtitle").to_string(),
-            ),
-            (true, 1) => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
-            (true, 2) | (false, 1) => {
-                let desc = self
-                    .sysupdate
-                    .action
-                    .map(|a| self.t(a.desc_key()).to_string())
-                    .unwrap_or_default();
-                (self.t("sysupdate_confirm_title").to_string(), desc)
+        match (rescue, self.sysupdate.step) {
+            (_, 0) => (self.t("sysupdate_action_title").to_string(), None),
+            (true, 1) => (self.t("edl_loader_title").to_string(), None),
+            (true, 2) | (false, 1) => (self.t("sysupdate_confirm_title").to_string(), None),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                (title, self.exec_app_bar_subtitle())
             }
-            _ => return Some(self.exec_action_bar()),
-        };
-        Some(wizard_action_bar(title, Some(subtitle)))
+        }
     }
 
     pub(crate) fn sysupdate_action_step(&self) -> Element<'_, Message> {
-        let d = self.density();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
         let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
         let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let off_icon = lucide_list_primary(icon::tile_update_off(), icon_size);
@@ -130,7 +162,7 @@ impl App {
                 metrics,
             ),
         ]
-        .spacing(d.space(8.0))
+        .spacing(8.0)
         .width(Length::Fill);
         let rescue_sub = if rescue_disabled {
             if self.requires_sahara_manifest() {
@@ -151,12 +183,20 @@ impl App {
             (!rescue_disabled).then_some(Message::Sys(SysMsg::SysAction(SysUpdateAction::Rescue))),
             metrics,
         ));
-        let col = column![cards,]
-            .spacing(d.space(14.0))
-            .padding(d.padding(20.0, WIZARD_STEP_HORIZONTAL_PADDING))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.wizard_list_max_width(WIZARD_LIST_MAX_WIDTH))
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("sysupdate_action_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("sysupdate_action_title").to_string(),
+                vec![
+                    self.t(SysUpdateAction::Disable.desc_key()).to_string(),
+                    self.t(SysUpdateAction::Enable.desc_key()).to_string(),
+                    rescue_sub,
+                ],
+            )),
+        )
     }
 
     pub(crate) fn sysupdate_confirm_step(&self) -> Element<'_, Message> {
@@ -188,7 +228,6 @@ impl App {
     }
 
     pub(crate) fn sysupdate_rescue_folder_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         // Boot Recovery now consumes only the EDL loader file —
         // dump+flash use GPT-by-name on a fixed LUN, no rawprogram*.xml
         // is read. Step layout still matches the flash / root / unroot
@@ -204,19 +243,19 @@ impl App {
             container(
                 column![
                     text(self.t("btn_browse_loader").to_string())
-                        .size(d.text(14.0))
+                        .size(14.0)
                         .center(),
                     text(self.loader_picker_desc())
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(muted_style)
                         .center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
+            .padding([20.0, 24.0])
+            .width(Length::Fixed(280.0))
             .style(move |t: &Theme| sel_card_style(t, selected)),
         )
         .on_press(Message::Sys(SysMsg::SysRescueSelectFolder))
@@ -233,7 +272,7 @@ impl App {
         let col = column![
             btn,
             text(status)
-                .size(d.text(12.0))
+                .size(12.0)
                 .width(Length::Fill)
                 .style(move |t: &Theme| {
                     let p = pal_of(t);
@@ -245,15 +284,15 @@ impl App {
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             chips,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
+        .spacing(14.0)
+        .padding(28.0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 
@@ -280,171 +319,352 @@ impl App {
         }
     }
 
-    pub(crate) fn exec_action_bar(&self) -> Element<'_, Message> {
-        let (title, subtitle) = self.exec_status_copy();
-        wizard_action_bar(title, Some(subtitle))
+    /// The execution app bar retains only the safety guidance from the
+    /// shared status copy. Completion and failure details stay in the body.
+    pub(crate) fn exec_app_bar_subtitle(&self) -> Option<String> {
+        self.operation
+            .is_running()
+            .then(|| self.t("exec_executing_subtitle").to_string())
     }
 
-    /// Reusable exec-step view with collapsible log panel.
+    /// Shared execution view: current activity, operation-phase checklist,
+    /// and a continuously mounted log.
     pub(crate) fn exec_step_view(&self) -> Element<'_, Message> {
-        let d = self.density();
+        self.exec_step_view_layout()
+    }
+
+    /// Kept as the full-flash call-site name; every flow now uses the same
+    /// live-log execution layout.
+    pub(crate) fn exec_step_view_with_inline_log(&self) -> Element<'_, Message> {
+        self.exec_step_view_layout()
+    }
+
+    fn exec_step_view_layout(&self) -> Element<'_, Message> {
         let (_, detail) = self.exec_status_copy();
         let is_error = self.operation_error.is_some();
         let is_busy = self.operation.is_running();
-
-        // Shared progress/result card for wizard exec steps. One scale on
-        // both axes: the badge is a circle.
-        let badge = d.size(80.0);
-        // Shared progress/result card for wizard exec steps.
-        let step_icon: Element<'_, Message> = if is_error {
-            container(lucide_icon(
-                icon::op_failed(),
-                d.image(52.0),
-                |t: &Theme| pal_of(t).error,
-            ))
-            .width(Length::Fixed(badge))
-            .height(Length::Fixed(badge))
-            .center_x(Length::Fixed(badge))
-            .center_y(Length::Fixed(badge))
-            .style(|t: &Theme| {
-                let p = pal_of(t);
-                container::Style {
-                    background: Some(p.error_container.into()),
-                    border: iced::Border {
-                        radius: theme::shape::FULL.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
+        let phase_percent = self
+            .firmware_write_progress_phase_active()
+            .then(|| {
+                self.flash_progress
+                    .as_ref()
+                    .map(|progress| progress.percent)
             })
-            .into()
-        } else if is_busy {
-            container(material_circular_progress(MaterialProgressSize::Hero))
-                .width(Length::Fixed(badge))
-                .height(Length::Fixed(badge))
-                .center_x(Length::Fixed(badge))
-                .center_y(Length::Fixed(badge))
-                .into()
-        } else {
-            container(lucide_icon(icon::op_done(), d.image(52.0), |t: &Theme| {
-                pal_of(t).success
-            }))
-            .width(Length::Fixed(badge))
-            .height(Length::Fixed(badge))
-            .center_x(Length::Fixed(badge))
-            .center_y(Length::Fixed(badge))
-            .style(|t: &Theme| {
-                let p = pal_of(t);
-                container::Style {
-                    background: Some(
-                        theme::mix_color(p.surface_container_high, p.success, 0.12).into(),
-                    ),
-                    border: iced::Border {
-                        radius: theme::shape::FULL.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
-        };
-
-        let (eyebrow_text, label_text) = if self.operation.steps.is_empty() {
-            (String::new(), detail.clone())
-        } else {
-            let idx = self
-                .operation
+            .flatten();
+        let progress = operation_progress_fraction(
+            self.operation.current_step(),
+            self.operation.steps.len(),
+            phase_percent,
+            !is_busy && !is_error,
+        );
+        let progress_pct = (progress * 100.0).round() as u8;
+        let current_step = self.operation.steps.get(
+            self.operation
                 .current_step()
-                .min(self.operation.steps.len() - 1);
-            let total = self.operation.steps.len();
-            let step = &self.operation.steps[idx];
-            let eyebrow_key = if is_error {
-                "exec_step_eyebrow_failed"
-            } else if is_busy {
-                "exec_step_eyebrow_running"
-            } else {
-                "exec_step_eyebrow_done"
-            };
-            let eyebrow = tr_args!(
-                eyebrow_key,
-                n = (idx + 1).to_string(),
-                total = total.to_string()
-            );
-            (eyebrow, step.label.clone())
-        };
+                .min(self.operation.steps.len().saturating_sub(1)),
+        );
+        let phase_label = current_step
+            .map(|step| step.label.clone())
+            .unwrap_or_else(|| detail.clone());
+        let show_partition_progress = self.firmware_flash_progress_label().is_some();
+        let write_progress = self
+            .flash_progress
+            .as_ref()
+            .filter(|snapshot| show_partition_progress && !snapshot.partition.is_empty());
+        let now_label = write_progress
+            .map(|snapshot| snapshot.partition.clone())
+            .unwrap_or(phase_label);
+        let byte_progress = write_progress
+            .filter(|snapshot| snapshot.total_bytes > 0)
+            .map(|snapshot| {
+                format!(
+                    "{} / {}",
+                    format_bytes_auto(snapshot.completed_bytes),
+                    format_bytes_auto(snapshot.total_bytes)
+                )
+            });
+        let transferred = byte_progress.clone().unwrap_or_else(|| "—".to_string());
 
-        let eyebrow_node: Element<'_, Message> = if eyebrow_text.is_empty() {
-            Space::new().height(0).into()
-        } else {
-            text(eyebrow_text)
-                .size(d.text(12.0))
-                .style(move |t: &Theme| {
-                    let p = pal_of(t);
-                    let color = if is_error {
-                        p.error
-                    } else if is_busy {
-                        p.primary
-                    } else {
-                        p.success
-                    };
-                    iced::widget::text::Style { color: Some(color) }
-                })
-                .into()
-        };
-
-        let mut card_body = column![
-            eyebrow_node,
-            text(label_text).size(d.text(18.0)).style(on_surface_style),
+        let mut now_copy = column![
+            text(now_label)
+                .size(theme::text_size::TITLE_MEDIUM)
+                .font(theme::emphasis::medium())
+                .style(on_surface_style)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
         ]
-        .spacing(d.space(6.0))
+        .spacing(3.0)
         .width(Length::Fill);
-        if let Some(progress_label) = self.firmware_flash_progress_label() {
-            card_body = card_body.push(text(progress_label).size(d.text(13.0)).style(muted_style));
+        // Only when the checklist is not on screen. Showing both would state
+        // the same position twice, which is what the step bar used to do.
+        if self.window_size_class() == WindowSizeClass::Compact && !self.operation.steps.is_empty()
+        {
+            now_copy = now_copy.push(
+                text(tr_args!(
+                    "exec_step_position",
+                    n = self.operation.current_step().saturating_add(1),
+                    total = self.operation.steps.len()
+                ))
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+            );
         }
-        if is_error {
-            if let Some(error) = self.operation_error.as_deref() {
-                let summary = concise_error_summary(error, EXEC_ERROR_SUMMARY_MAX_CHARS);
-                if !summary.is_empty() {
-                    card_body =
-                        card_body.push(text(summary).size(d.text(13.0)).style(|t: &Theme| {
-                            iced::widget::text::Style {
-                                color: Some(pal_of(t).error),
-                            }
-                        }));
-                }
-            }
-            card_body = card_body.push(
-                text(self.t("exec_error_log_hint").to_string())
-                    .size(d.text(12.0))
+        if let Some(bytes) = byte_progress {
+            now_copy = now_copy.push(
+                text(bytes)
+                    .size(theme::text_size::BODY_SMALL)
                     .style(muted_style),
             );
         }
-        let card_row = row![step_icon, card_body]
-            .spacing(d.space(24.0))
-            .align_y(iced::Alignment::Center);
-        let step_card = container(card_row)
-            .padding(d.padding(28.0, 32.0))
-            .max_width(600)
-            .width(Length::Fill)
+        if is_error && let Some(error) = self.operation_error.as_deref() {
+            let summary = concise_error_summary(error, EXEC_ERROR_SUMMARY_MAX_CHARS);
+            if !summary.is_empty() {
+                now_copy = now_copy.push(
+                    text(summary)
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(|t: &Theme| iced::widget::text::Style {
+                            color: Some(pal_of(t).error),
+                        })
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                );
+            }
+        }
+
+        let elapsed = self.operation.elapsed();
+        let remaining = if is_busy && progress > 0.0 {
+            let seconds = elapsed.as_secs_f64() * f64::from(1.0 - progress) / f64::from(progress);
+            seconds
+                .is_finite()
+                .then(|| format_exec_duration(std::time::Duration::from_secs_f64(seconds.max(0.0))))
+        } else {
+            None
+        }
+        .unwrap_or_else(|| "—".to_string());
+        let transport = match self.operation.phase_kind() {
+            Some(OperationPhaseKind::SysUpdateDisable | OperationPhaseKind::SysUpdateEnable) => {
+                "ADB"
+            }
+            Some(OperationPhaseKind::DetectArb) => "Fastboot / EDL",
+            Some(
+                OperationPhaseKind::OfflineConvertXml
+                | OperationPhaseKind::RegionConversion
+                | OperationPhaseKind::PatchArb
+                | OperationPhaseKind::RebuildVbmeta,
+            )
+            | None => "—",
+            Some(_) => "EDL · Firehose",
+        };
+        let metric = |label: String, value: String| {
+            container(
+                column![
+                    text(label).size(11.0).style(muted_style),
+                    text(value)
+                        .size(12.0)
+                        .font(theme::emphasis::medium())
+                        .wrapping(iced::widget::text::Wrapping::None),
+                ]
+                .spacing(2.0),
+            )
+            .padding([10.0, 14.0])
+            .width(Length::FillPortion(1))
+        };
+        let metrics = container(
+            row![
+                metric(
+                    self.t("exec_metric_transport").to_string(),
+                    transport.to_string(),
+                ),
+                metric_divider(),
+                metric(self.t("exec_metric_transferred").to_string(), transferred),
+                metric_divider(),
+                metric(
+                    self.t("exec_metric_elapsed").to_string(),
+                    format_exec_duration(elapsed),
+                ),
+                metric_divider(),
+                metric(self.t("exec_metric_remaining").to_string(), remaining),
+            ]
+            .spacing(0)
+            .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .style(|t: &Theme| container::Style {
+            border: iced::Border {
+                color: pal_of(t).outline_variant,
+                width: 1.0,
+                radius: theme::shape::MD.into(),
+            },
+            ..Default::default()
+        });
+        let step_card = container(
+            column![
+                row![
+                    now_copy,
+                    text(format!("{progress_pct}%"))
+                        .size(theme::text_size::TITLE_MEDIUM)
+                        .font(theme::emphasis::medium()),
+                ]
+                .spacing(16.0)
+                .align_y(iced::Alignment::Start),
+                iced::widget::progress_bar(0.0..=1.0, progress)
+                    .girth(6)
+                    .style(|t: &Theme| {
+                        let p = pal_of(t);
+                        iced::widget::progress_bar::Style {
+                            background: p.surface_container_highest.into(),
+                            bar: p.primary.into(),
+                            border: iced::Border {
+                                radius: theme::shape::FULL.into(),
+                                ..Default::default()
+                            },
+                        }
+                    }),
+                metrics,
+            ]
+            .spacing(14.0)
+            .width(Length::Fill),
+        )
+        .padding([16.0, 18.0])
+        .width(Length::Fill)
+        .style(|t: &Theme| {
+            theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::MD)
+        });
+
+        let operation_complete = !is_busy && !is_error;
+        let current_index = self
+            .operation
+            .current_step()
+            .min(self.operation.steps.len().saturating_sub(1));
+        let mut checklist_rows = column![].spacing(0).width(Length::Fill);
+        for (index, step) in self.operation.steps.iter().enumerate() {
+            let state = if operation_complete {
+                WizardStepState::Completed
+            } else {
+                wizard_step_state(index, current_index)
+            };
+            let marker_text = if state == WizardStepState::Completed {
+                "\u{2713}".to_string()
+            } else {
+                (index + 1).to_string()
+            };
+            let marker = container(
+                text(marker_text)
+                    .size(11.0)
+                    .font(theme::emphasis::medium())
+                    .style(move |t: &Theme| {
+                        let p = pal_of(t);
+                        let color = match state {
+                            WizardStepState::Completed => p.on_primary,
+                            WizardStepState::Active if is_error => p.error,
+                            WizardStepState::Active => p.primary,
+                            WizardStepState::Upcoming => p.on_surface_variant,
+                        };
+                        iced::widget::text::Style { color: Some(color) }
+                    }),
+            )
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0))
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
             .style(move |t: &Theme| {
                 let p = pal_of(t);
-                let background = if is_error {
-                    theme::mix_color(p.surface_container, p.error, 0.08)
-                } else if is_busy {
-                    p.surface_container_high
-                } else {
-                    theme::mix_color(p.surface_container, p.success, 0.08)
+                let (background, border_color) = match state {
+                    WizardStepState::Completed => (Some(p.primary.into()), p.primary),
+                    WizardStepState::Active if is_error => (None, p.error),
+                    WizardStepState::Active => (None, p.primary),
+                    WizardStepState::Upcoming => (None, p.outline_variant),
                 };
                 container::Style {
-                    background: Some(background.into()),
+                    background,
                     border: iced::Border {
-                        radius: theme::shape::XL.into(),
-                        ..Default::default()
+                        color: border_color,
+                        width: 1.5,
+                        radius: theme::shape::FULL.into(),
                     },
-                    shadow: theme::elevation(1, theme::is_dark(t)),
                     ..Default::default()
                 }
             });
+            // 12, not 14: these are phase sentences ("펌웨어 입력 파일 검증"),
+            // not the mockup's one-word partition names, and at 14 every row
+            // wrapped to two lines.
+            let mut phase = text(step.label.clone())
+                .size(theme::text_size::BODY_SMALL)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                .style(move |t: &Theme| {
+                    let p = pal_of(t);
+                    let color = match state {
+                        WizardStepState::Completed | WizardStepState::Active => p.on_surface,
+                        WizardStepState::Upcoming => p.on_surface_variant,
+                    };
+                    iced::widget::text::Style { color: Some(color) }
+                });
+            if state == WizardStepState::Active {
+                phase = phase.font(theme::emphasis::medium());
+            }
+            // No trailing status word. The marker already says which state a
+            // row is in — filled check done, ringed number running, flat
+            // number waiting — and repeating it in text was taking the width
+            // the label needs.
+            checklist_rows = checklist_rows.push(
+                row![marker, phase]
+                    .spacing(12)
+                    .height(Length::Fixed(38.0))
+                    .align_y(iced::Alignment::Center),
+            );
+        }
+        // M3's canonical supporting-pane layout fixes the secondary pane at
+        // 360dp with a 24dp gutter on expanded windows. It also says compact
+        // should show one pane rather than split — kept split here by request,
+        // just narrower so the log still has room.
+        let checklist_width = match self.window_size_class() {
+            WindowSizeClass::Expanded => Length::Fixed(340.0),
+            WindowSizeClass::Compact => Length::Fixed(260.0),
+        };
+        let checklist = container(checklist_rows)
+            .padding([8, 16])
+            .width(checklist_width)
+            .height(Length::Fill)
+            .style(|t: &Theme| {
+                theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::MD)
+            });
+
+        let save_action: Element<'_, Message> = button(
+            text(self.t("btn_save").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .font(theme::emphasis::medium()),
+        )
+        .on_press(Message::SaveLog)
+        .padding([6.0, 10.0])
+        .style(md_text_btn_style)
+        .into();
+        let editor = iced::widget::text_editor(&self.log_editor)
+            .on_action(Message::LogEditorAction)
+            .size(11.0)
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 16.0,
+                bottom: 10.0,
+                left: 16.0,
+            })
+            .style(m3_log_text_editor_style);
+        let log_card = m3_log_text_field_with_action(
+            self.t("dash_log").to_string(),
+            Some(save_action),
+            editor.into(),
+        );
+        let details: Element<'_, Message> = match self.window_size_class() {
+            WindowSizeClass::Expanded => row![checklist, log_card]
+                .spacing(24.0)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_y(iced::Alignment::Start)
+                .into(),
+            // M3's supporting-pane layout shows one pane at compact rather
+            // than splitting. Position moves into the card heading below,
+            // which is why that counter is compact-only.
+            WindowSizeClass::Compact => log_card,
+        };
 
         let has_output = !is_busy
             && self.current_view == View::Advanced
@@ -455,65 +675,57 @@ impl App {
                 .map(|action| action.produces_output())
                 .unwrap_or(false);
         let action_layout = exec_action_layout(is_busy, is_error, has_output);
-        let mut utility_actions = row![
-            wizard_utility_action(
-                icon::fab_show_log(),
-                self.t("btn_show_log").to_string(),
-                Some(Message::ToggleLogPopup(true)),
-            ),
-            wizard_utility_action(
-                icon::fab_save_log(),
-                self.t("btn_save_log").to_string(),
-                Some(Message::SaveLog),
-            ),
-        ]
-        .spacing(0)
-        .align_y(iced::Alignment::Center);
-
+        let mut actions = row![]
+            .spacing(ACTION_BUTTON_SPACING)
+            .align_y(iced::Alignment::Center)
+            .height(Length::Fill);
         if action_layout.start_over_utility {
-            utility_actions = utility_actions.push(wizard_utility_action(
+            actions = actions.push(wizard_secondary_action(
                 icon::fab_start_over(),
                 self.t("btn_start_over").to_string(),
                 Some(Message::StartOver),
             ));
         }
-
-        let mut actions = row![wizard_utility_toolbar(utility_actions)]
-            .spacing(WIZARD_FAB_SPACING)
-            .align_y(iced::Alignment::Center)
-            .height(Length::Fill);
         if let Some(primary) = action_layout.primary {
             actions = match primary {
-                ExecPrimaryAction::StartOver => actions.push(wizard_primary_extended_fab(
+                ExecPrimaryAction::StartOver => actions.push(wizard_primary_action(
                     icon::fab_start_over(),
                     self.t("btn_start_over").to_string(),
                     Some(Message::StartOver),
                     None,
+                    false,
                 )),
-                ExecPrimaryAction::OpenFolder => actions.push(wizard_primary_extended_fab(
+                ExecPrimaryAction::OpenFolder => actions.push(wizard_primary_action(
                     icon::fab_open_folder(),
                     self.t("btn_open_folder").to_string(),
                     Some(Message::Adv(AdvMsg::AdvWizOpenOutputFolder)),
                     None,
+                    false,
                 )),
             };
         }
 
-        let col = column![step_card]
-            .spacing(d.space(10.0))
-            .padding(d.space(28.0))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-
-        let body = container(col)
+        let content = column![step_card, details]
+            .spacing(16.0)
+            .padding(16.0)
             .width(Length::Fill)
             .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill);
+            .align_x(iced::Alignment::Start);
+        let body = container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Top);
 
+        // While the operation runs there is nothing to offer — Save moved into
+        // the log card's header — so the footer would render as an empty band
+        // across the bottom of the screen.
+        if !action_layout.has_any() {
+            return body.into();
+        }
         column![
             body,
-            wizard_fab_footer(row![].height(Length::Fill), actions),
+            wizard_action_footer(row![].height(Length::Fill), actions),
         ]
         .width(Length::Fill)
         .height(Length::Fill)

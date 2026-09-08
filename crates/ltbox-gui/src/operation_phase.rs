@@ -16,6 +16,25 @@ pub(crate) fn phase_marker(phase: usize, total: usize, label: impl AsRef<str>) -
     )
 }
 
+/// Overall determinate completion from a zero-based phase and optional
+/// within-phase percentage. A completed operation always fills the track.
+pub(crate) fn operation_progress_fraction(
+    current_step: usize,
+    total_steps: usize,
+    phase_percent: Option<u8>,
+    complete: bool,
+) -> f32 {
+    if complete {
+        return 1.0;
+    }
+    if total_steps == 0 {
+        return 0.0;
+    }
+    let step = current_step.min(total_steps.saturating_sub(1)) as f32;
+    let within_step = f32::from(phase_percent.unwrap_or(0).min(100)) / 100.0;
+    ((step + within_step) / total_steps as f32).clamp(0.0, 1.0)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct OpStep {
     pub(crate) label: String,
@@ -295,5 +314,12 @@ mod tests {
         assert_eq!(konabess_build_phase(KonaBessBuildStage::Inspect), 3);
         assert_eq!(konabess_build_phase(KonaBessBuildStage::PatchVendorBoot), 4);
         assert_eq!(konabess_build_phase(KonaBessBuildStage::RebuildVbmeta), 5);
+    }
+
+    #[test]
+    fn determinate_progress_combines_phase_and_within_phase_progress() {
+        assert_eq!(operation_progress_fraction(0, 9, None, false), 0.0);
+        assert!((operation_progress_fraction(6, 9, Some(50), false) - 6.5 / 9.0).abs() < 0.001);
+        assert_eq!(operation_progress_fraction(8, 9, None, true), 1.0);
     }
 }

@@ -2,7 +2,9 @@
 
 use crate::*;
 use iced::Theme;
-use iced::widget::{button, checkbox, container, pick_list, scrollable, text_editor, text_input};
+use iced::widget::{
+    button, checkbox, container, pick_list, scrollable, text_editor, text_input, toggler,
+};
 use theme::{is_dark, mix_color, with_alpha};
 
 /// `on_surface_variant` — secondary labels / descriptions.
@@ -107,6 +109,18 @@ pub(crate) fn m3_text_input_style(t: &Theme, status: text_input::Status) -> text
     }
 }
 
+/// M3 invalid outlined field: keep the normal input colors and state behavior,
+/// but make the error edge the persistent, two-pixel validation signal.
+pub(crate) fn m3_text_input_error_style(
+    t: &Theme,
+    status: text_input::Status,
+) -> text_input::Style {
+    let mut style = m3_text_input_style(t, status);
+    style.border.color = pal_of(t).error;
+    style.border.width = 2.0;
+    style
+}
+
 pub(crate) fn m3_log_text_editor_style(
     t: &Theme,
     status: text_editor::Status,
@@ -166,8 +180,8 @@ pub(crate) fn m3_pick_list_style(t: &Theme, status: pick_list::Status) -> pick_l
 pub(crate) fn m3_pick_list_menu_style(t: &Theme) -> iced::widget::overlay::menu::Style {
     let p = pal_of(t);
     iced::widget::overlay::menu::Style {
-        // M3 exposed dropdown menus use the menu surface for the popup and a
-        // higher surface tone for the selected / hovered simple item.
+        // M3 exposed dropdown menus use an on-surface state layer for the
+        // selected / hovered simple item instead of swapping surface tones.
         background: p.surface_container.into(),
         border: iced::Border {
             color: iced::Color::TRANSPARENT,
@@ -176,8 +190,75 @@ pub(crate) fn m3_pick_list_menu_style(t: &Theme) -> iced::widget::overlay::menu:
         },
         text_color: p.on_surface,
         selected_text_color: p.on_surface,
-        selected_background: p.surface_container_highest.into(),
+        selected_background: with_alpha(p.on_surface, theme::state::HOVER).into(),
         shadow: theme::elevation(2, is_dark(t)),
+    }
+}
+
+/// One cell inside the Settings segmented controls. The shared outer
+/// container draws the interactive `outline`; cells only paint selection and
+/// state layers so adjacent borders never double up.
+pub(crate) fn m3_segment_button_style(
+    t: &Theme,
+    status: button::Status,
+    selected: bool,
+    radius: iced::border::Radius,
+) -> button::Style {
+    let p = pal_of(t);
+    let foreground = if selected {
+        p.on_surface
+    } else {
+        p.on_surface_variant
+    };
+    let background = if selected {
+        let alpha = theme::state_alpha(status);
+        Some(mix_color(p.secondary_container, foreground, alpha).into())
+    } else {
+        theme::state_layer_bg(status, foreground).map(Into::into)
+    };
+    button::Style {
+        background,
+        text_color: foreground,
+        border: iced::Border {
+            radius,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// M3 switch treatment for the Settings system-font preference.
+pub(crate) fn m3_settings_switch_style(t: &Theme, status: toggler::Status) -> toggler::Style {
+    let p = pal_of(t);
+    let (is_toggled, hovered, disabled) = match status {
+        toggler::Status::Active { is_toggled } => (is_toggled, false, false),
+        toggler::Status::Hovered { is_toggled } => (is_toggled, true, false),
+        toggler::Status::Disabled { is_toggled } => (is_toggled, false, true),
+    };
+    let alpha = if disabled { 0.38 } else { 1.0 };
+    let track = if is_toggled {
+        if hovered {
+            mix_color(p.primary, p.on_primary, theme::state::HOVER)
+        } else {
+            p.primary
+        }
+    } else if hovered {
+        mix_color(p.surface_container_high, p.on_surface, theme::state::HOVER)
+    } else {
+        p.surface_container_high
+    };
+    let outline = if is_toggled { p.primary } else { p.outline };
+    let thumb = if is_toggled { p.on_primary } else { p.outline };
+    toggler::Style {
+        background: with_alpha(track, alpha).into(),
+        background_border_width: 2.0,
+        background_border_color: with_alpha(outline, alpha),
+        foreground: with_alpha(thumb, alpha).into(),
+        foreground_border_width: 0.0,
+        foreground_border_color: iced::Color::TRANSPARENT,
+        text_color: None,
+        border_radius: None,
+        padding_ratio: 0.16,
     }
 }
 
@@ -271,7 +352,7 @@ pub(crate) fn m3_scrollable_style(t: &Theme, status: scrollable::Status) -> scro
         auto_scroll: scrollable::AutoScroll {
             background: p.surface_container_high.into(),
             border: iced::Border {
-                color: p.outline_variant,
+                color: p.outline,
                 width: 1.0,
                 radius: theme::shape::FULL.into(),
             },
@@ -284,17 +365,32 @@ pub(crate) fn m3_scrollable_style(t: &Theme, status: scrollable::Status) -> scro
 /// Transparent button; tinted on hover. Used on dashboard cells.
 pub(crate) fn dash_clickable_btn_style(t: &Theme, status: button::Status) -> button::Style {
     let p = pal_of(t);
-    let hovered = matches!(status, button::Status::Hovered);
     button::Style {
-        background: if hovered {
-            Some(with_alpha(p.primary, theme::state::HOVER).into())
-        } else {
-            None
-        },
+        background: theme::state_layer_bg(status, p.on_surface).map(Into::into),
         text_color: p.on_surface,
         border: iced::Border {
             radius: theme::shape::SM.into(),
             ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Dashboard device-info icon button: outlined at rest, tonal on hover.
+pub(crate) fn dash_icon_btn_style(t: &Theme, status: button::Status) -> button::Style {
+    let p = pal_of(t);
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: active.then_some(p.surface_container_low.into()),
+        text_color: if active {
+            p.primary
+        } else {
+            p.on_surface_variant
+        },
+        border: iced::Border {
+            color: if active { p.primary } else { p.outline },
+            width: 1.0,
+            radius: theme::shape::SM.into(),
         },
         ..Default::default()
     }
@@ -313,7 +409,7 @@ pub(crate) fn md_filled_btn_style(t: &Theme, status: button::Status) -> button::
             background: Some(with_alpha(p.on_surface, 0.12).into()),
             text_color: with_alpha(p.on_surface, 0.38),
             border: iced::Border {
-                radius: theme::shape::FULL.into(),
+                radius: theme::shape::SM.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -324,7 +420,7 @@ pub(crate) fn md_filled_btn_style(t: &Theme, status: button::Status) -> button::
         background: Some(bg.into()),
         text_color: p.on_primary,
         border: iced::Border {
-            radius: theme::shape::FULL.into(),
+            radius: theme::shape::SM.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -343,7 +439,7 @@ pub(crate) fn md_text_btn_style(t: &Theme, status: button::Status) -> button::St
         },
         text_color: p.primary,
         border: iced::Border {
-            radius: theme::shape::FULL.into(),
+            radius: theme::shape::SM.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -352,7 +448,7 @@ pub(crate) fn md_text_btn_style(t: &Theme, status: button::Status) -> button::St
 
 /// Filled button for primary actions inside warning banners. Uses the
 /// warning role pair (`on_warning_container` fill / `warning_container`
-/// label) with M3 state layers and a FULL pill shape so the action
+/// label) with M3 state layers and the standard small control shape so the action
 /// reads as the banner's primary control without borrowing the app-wide
 /// primary fill.
 pub(crate) fn banner_filled_btn_style(t: &Theme, status: button::Status) -> button::Style {
@@ -362,7 +458,7 @@ pub(crate) fn banner_filled_btn_style(t: &Theme, status: button::Status) -> butt
             background: Some(with_alpha(p.on_warning_container, 0.12).into()),
             text_color: with_alpha(p.on_warning_container, 0.38),
             border: iced::Border {
-                radius: theme::shape::FULL.into(),
+                radius: theme::shape::SM.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -379,7 +475,7 @@ pub(crate) fn banner_filled_btn_style(t: &Theme, status: button::Status) -> butt
         background: Some(bg.into()),
         text_color: p.warning_container,
         border: iced::Border {
-            radius: theme::shape::FULL.into(),
+            radius: theme::shape::SM.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -402,7 +498,7 @@ pub(crate) fn banner_text_btn_style(t: &Theme, status: button::Status) -> button
         },
         text_color: on_banner,
         border: iced::Border {
-            radius: theme::shape::FULL.into(),
+            radius: theme::shape::SM.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -456,22 +552,22 @@ pub(crate) fn sel_card_style_for(t: &Theme, selected: bool, destructive: bool) -
     container::Style {
         background: None,
         border: iced::Border {
-            // Destructive options keep a visible accent edge even at
-            // rest; safe ones stay on the neutral divider tone.
+            // Interactive target edges use `outline`; selected and destructive
+            // targets retain their semantic accent.
             color: if selected || destructive {
                 accent
             } else {
-                p.outline_variant
+                p.outline
             },
             width: if selected { 2.0 } else { 1.0 },
-            radius: theme::shape::LG.into(),
+            radius: theme::shape::MD.into(),
         },
         ..Default::default()
     }
 }
 
 /// Outer button style for option / Browse cards. Border carries the same
-/// LG radius as [`sel_card_style`] so the bg fill clips to the rounded
+/// MD radius as [`sel_card_style`] so the bg fill clips to the rounded
 /// shape instead of bleeding out as a square.
 ///
 /// The three states have to be rankable at a glance. They used to be
@@ -499,13 +595,14 @@ pub(crate) fn sel_card_btn_style_for(
     destructive: bool,
 ) -> button::Style {
     let p = pal_of(t);
-    let accent = if destructive { p.error } else { p.primary };
     let base = match (selected, destructive) {
         (true, true) => p.error_container,
         (true, false) => p.secondary_container,
-        (false, _) => p.surface_container,
+        // Unselected rows sit one step below the card tone so the selected
+        // row's container fill is what carries the contrast.
+        (false, _) => p.surface_container_low,
     };
-    let bg = theme::mix_color(base, accent, theme::state_alpha(status));
+    let bg = theme::mix_color(base, p.on_surface, theme::state_alpha(status));
     button::Style {
         background: Some(bg.into()),
         text_color: if selected && destructive {
@@ -514,7 +611,7 @@ pub(crate) fn sel_card_btn_style_for(
             p.on_surface
         },
         border: iced::Border {
-            radius: theme::shape::LG.into(),
+            radius: theme::shape::MD.into(),
             ..Default::default()
         },
         ..Default::default()

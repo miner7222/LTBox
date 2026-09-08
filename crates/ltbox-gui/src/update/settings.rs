@@ -23,6 +23,11 @@ impl App {
                 self.persist_settings();
                 Task::none()
             }
+            SettingsMsg::SetUseSystemFont(use_system_font) => {
+                self.use_system_font = use_system_font;
+                self.persist_settings();
+                Task::none()
+            }
             SettingsMsg::SetQcomDriverMode(mode) => {
                 if self.operation.is_running() {
                     return Task::none();

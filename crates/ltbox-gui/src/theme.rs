@@ -490,21 +490,14 @@ pub fn tooltip_style(t: &iced::Theme, radius: f32) -> iced::widget::container::S
 
 /// M3 shape scale (corner radius in px).
 ///
-/// These are the spec values — extra-large is 28, not the 24 this module
-/// carried before, which quietly flattened every surface built on it.
-///
-/// Expressive asks for shape *contrast* rather than one radius
-/// everywhere, so the app assigns them by role: `SM` for controls that
-/// sit inside a surface (fields, menus, tooltips), `LG` for content
-/// cards and panels, `XL` for dialogs, `FULL` for buttons, FABs and the
-/// nav indicator.
+/// Keep this module as the plain M3 corner scale; components choose the
+/// appropriate rung at their call sites.
 pub mod shape {
     pub const XS: f32 = 4.0;
     pub const SM: f32 = 8.0;
+    pub const MD: f32 = 12.0;
     pub const LG: f32 = 16.0;
     pub const XL: f32 = 28.0;
-    /// `extra-large-increased`.
-    pub const XL_INCREASED: f32 = 32.0;
     pub const FULL: f32 = 9999.0;
 }
 
@@ -516,6 +509,8 @@ const DEFAULT_FONT_FAMILY: &str = "Noto Sans KR";
 
 /// UI font family for this run, bound by [`set_font_family`].
 static FONT_FAMILY: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+/// Whether this run should use iced's OS-default font instead of bundled Noto.
+static USE_SYSTEM_FONT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 /// The active UI font family — always one the app itself registers.
 ///
@@ -541,6 +536,30 @@ pub fn font_family() -> &'static str {
 /// the UI across two faces mid-session.
 pub fn set_font_family(family: &'static str) {
     let _ = FONT_FAMILY.set(family);
+}
+
+/// Bind the font source for this run. Repeated calls are intentionally ignored:
+/// iced fixes its default font at startup, and tests may initialize `App` more
+/// than once in the same process.
+pub fn set_use_system_font(use_system_font: bool) {
+    let _ = USE_SYSTEM_FONT.set(use_system_font);
+}
+
+/// Font used by iced settings and by weighted text variants.
+pub fn default_font() -> iced::Font {
+    if USE_SYSTEM_FONT.get().copied().unwrap_or(false) {
+        iced::Font::DEFAULT
+    } else {
+        iced::Font::with_name(font_family())
+    }
+}
+
+/// Bundled fixed-width face, for content that reads as data rather than prose:
+/// file paths and country codes. Latin only — a CJK monospace would cost
+/// megabytes, and the mockup's JetBrains Mono has no CJK either, so localized
+/// copy must not ask for this.
+pub fn mono_font() -> iced::Font {
+    iced::Font::with_name("Noto Sans Mono")
 }
 
 /// The bundled face that renders `language_code` idiomatically.
@@ -570,7 +589,7 @@ pub mod emphasis {
     fn weighted(weight: Weight) -> Font {
         Font {
             weight,
-            ..Font::with_name(super::font_family())
+            ..super::default_font()
         }
     }
 
@@ -587,18 +606,19 @@ pub mod emphasis {
 
 /// M3 type scale (font size in px).
 pub mod text_size {
-    pub const HEADLINE_MEDIUM: f32 = 28.0;
     pub const TITLE_LARGE: f32 = 22.0;
     pub const TITLE_MEDIUM: f32 = 16.0;
-    pub const TITLE_SMALL: f32 = 14.0;
-    pub const BODY_LARGE: f32 = 16.0;
     pub const BODY_MEDIUM: f32 = 14.0;
     pub const BODY_SMALL: f32 = 12.0;
-    pub const LABEL_LARGE: f32 = 14.0;
     pub const LABEL_SMALL: f32 = 11.0;
-    /// Tighter than HEADLINE_SMALL. Not a formal M3 token.
-    pub const WIZARD_STEP_TITLE: f32 = 20.0;
 }
+
+/// Dialog width scale and shared inset. Defined in `layout_constraints` so the
+/// locale guards measure the same budgets; re-exported here because dialogs
+/// reach for them alongside the rest of the shape and type scales.
+pub(crate) use crate::layout_constraints::{
+    DIALOG_H_PADDING, DIALOG_WIDTH_LG, DIALOG_WIDTH_MD, DIALOG_WIDTH_SM,
+};
 
 /// Which palette surface container the card fills with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,13 +649,12 @@ impl SurfaceLevel {
     }
 }
 
-/// Shared M3 card/panel container style. `radius` + `elevation_level`
-/// are theme-reactive when relevant.
+/// Shared M3 outlined card/panel style at elevation zero.
+/// Floating surfaces use their own styles and shadows.
 pub fn surface_card_style(
     t: &iced::Theme,
     level: SurfaceLevel,
     radius: f32,
-    elevation_level: u8,
 ) -> iced::widget::container::Style {
     use iced::widget::container;
     let dark = is_dark(t);
@@ -647,9 +666,41 @@ pub fn surface_card_style(
             width: 1.0,
             radius: radius.into(),
         },
-        shadow: elevation(elevation_level, dark),
         ..Default::default()
     }
+}
+
+/// Shadow for a full-height drawer that overlaps content sideways.
+///
+/// [`elevation`] models M3's downward key light, which suits a card or a
+/// dialog floating above what is under it. A rail that spans the window
+/// overlaps its neighbour horizontally, so a downward offset casts onto the
+/// status bar it sits against and casts nothing onto the content it actually
+/// covers. This offsets along the leading edge instead, with no vertical
+/// component.
+/// `openness` is how far the drawer is open, 0.0 closed to 1.0 open. The
+/// shadow rides it so it fades out with the width instead of holding full
+/// strength through the collapse and then vanishing in one frame.
+/// Width of the drawer's cast shadow when fully open.
+pub const DRAWER_EDGE_SHADOW_WIDTH: f32 = 14.0;
+
+/// The hover drawer casts along its trailing edge only.
+///
+/// A container `Shadow` cannot do this: its blur spreads in every direction and
+/// only the horizontal offset trims one side, so a full-height panel gets a
+/// halo above and below where there is no offset to cancel it. Those edges meet
+/// the title bar and the status bar, and the halo reads as a smudge on both.
+/// A gradient strip laid beside the panel casts to the right and nowhere else.
+pub fn drawer_edge_gradient(dark_mode: bool, openness: f32) -> iced::Background {
+    use iced::{Color, gradient};
+    let t = openness.clamp(0.0, 1.0);
+    let alpha = if dark_mode { 0.24 } else { 0.15 } * t;
+    // Angle 0 runs bottom-to-top, so a quarter turn casts left-to-right.
+    iced::Background::Gradient(iced::Gradient::Linear(
+        gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+            .add_stop(0.0, Color::from_rgba(0.0, 0.0, 0.0, alpha))
+            .add_stop(1.0, Color::TRANSPARENT),
+    ))
 }
 
 /// M3 elevation → `iced::Shadow`. `0` = none, `5` = modal-dialog.

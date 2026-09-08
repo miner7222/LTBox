@@ -14,18 +14,31 @@ impl App {
             .iter()
             .map(|key| self.t(key))
             .collect::<Vec<_>>();
-        let step_bar = wizard_step_bar(&step_labels, self.konabess.step);
-        let (title_key, subtitle_key) = match self.konabess.step {
-            0 => ("edl_loader_title", "edl_loader_subtitle"),
-            1 => ("konabess_table_title", "konabess_table_subtitle"),
-            2 => ("konabess_confirm_title", "konabess_confirm_subtitle"),
-            _ => ("konabess_apply_title", "konabess_apply_subtitle"),
+        let is_exec = self.konabess.step >= 3;
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.konabess.step, self.window_size_class())
         };
+        let title_key = match self.konabess.step {
+            0 => "edl_loader_title",
+            1 => "konabess_table_title",
+            2 => "konabess_confirm_title",
+            _ => "konabess_apply_title",
+        };
+        let app_bar_subtitle = (self.konabess.step >= 3)
+            .then(|| self.exec_app_bar_subtitle())
+            .flatten();
         let body = match self.konabess.step {
             0 => self.konabess_loader_step(),
             1 => self.konabess_table_step(),
             2 => self.konabess_confirm_step(),
             _ => self.konabess_apply_step(),
+        };
+        let body = if is_exec {
+            body
+        } else {
+            wizard_step_body(self.t(title_key).to_string(), body)
         };
 
         let nav: Element<'_, Message> = if konabess_nav_visible(self.konabess.step) {
@@ -67,8 +80,9 @@ impl App {
 
         column![
             wizard_action_bar(
-                self.t(title_key).to_string(),
-                Some(self.t(subtitle_key).to_string()),
+                self.window_size_class(),
+                self.t("nav_konabess").to_string(),
+                app_bar_subtitle,
             ),
             step_bar,
             body,
@@ -89,7 +103,6 @@ impl App {
     }
 
     fn konabess_table_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let target = self
             .konabess
             .selected_target()
@@ -106,13 +119,13 @@ impl App {
                 revert_button.on_press(Message::KonaBess(KonaBessMsg::KonaBessRevertEdits));
         }
         let mut toolbar = row![target_button, Space::new().width(Length::Fill)]
-            .spacing(d.space(4.0))
+            .spacing(4.0)
             .align_y(iced::Alignment::Center)
             .width(Length::Fill);
         if self.konabess.edited_dirty {
             toolbar = toolbar.push(
                 text(self.t("konabess_table_modified").to_string())
-                    .size(d.text(11.0))
+                    .size(11.0)
                     .style(muted_style),
             );
         }
@@ -121,21 +134,23 @@ impl App {
         let mut content = column![
             toolbar,
             text(self.t("konabess_table_value_note").to_string())
-                .size(d.text(11.0))
+                .size(11.0)
                 .style(muted_style),
         ]
-        .spacing(d.space(8.0))
+        .spacing(8.0)
         .width(Length::Fill);
         if let Some(error) = self.konabess.import_error.as_deref() {
-            content = content.push(text(format!("⚠ {error}")).size(d.text(11.0)).style(
-                |theme: &Theme| iced::widget::text::Style {
-                    color: Some(pal_of(theme).error),
-                },
-            ));
+            content = content.push(
+                text(format!("⚠ {error}"))
+                    .size(11.0)
+                    .style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some(pal_of(theme).error),
+                    }),
+            );
         } else if let Some(path) = self.konabess.import_path.as_deref() {
             content = content.push(
                 text(tr_args!("konabess_import_loaded", path = path))
-                    .size(d.text(11.0))
+                    .size(11.0)
                     .style(muted_style),
             );
         }
@@ -150,7 +165,7 @@ impl App {
         content = content.push(match self.konabess.edited_table.as_ref() {
             Some(table) => gpu_table_view(table, self, &validation),
             None => text(self.t("konabess_target_no_table").to_string())
-                .size(d.text(12.0))
+                .size(12.0)
                 .style(muted_style)
                 .center()
                 .width(Length::Fill)
@@ -158,12 +173,12 @@ impl App {
         });
         content = content.push(
             text(self.t("konabess_attribution").to_string())
-                .size(d.text(10.0))
+                .size(theme::text_size::LABEL_SMALL)
                 .wrapping(iced::widget::text::Wrapping::None)
                 .style(muted_style),
         );
 
-        container(content.padding(d.space(20.0)))
+        container(content.padding(20.0))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -218,9 +233,8 @@ impl App {
     }
 
     pub(crate) fn konabess_target_popup_view(&self) -> Element<'_, Message> {
-        let d = self.density();
         let selected = self.konabess.selected_target_index;
-        let mut candidates = column![].spacing(d.space(4.0)).width(Length::Fill);
+        let mut candidates = column![].spacing(4.0).width(Length::Fill);
         for candidate in &self.konabess.candidates {
             let index = candidate.index;
             let is_selected = selected == Some(index);
@@ -238,27 +252,27 @@ impl App {
             let likely_note = is_likely.then(|| self.t("konabess_target_likely").to_string());
             let details = row![
                 text(format!("#{index} · {model} · {chip}"))
-                    .size(d.text(13.0))
+                    .size(theme::text_size::BODY_MEDIUM)
                     .width(Length::Fill),
             ]
             .align_y(iced::Alignment::Center);
-            let mut candidate_body = column![details].spacing(d.space(3.0));
+            let mut candidate_body = column![details].spacing(3.0);
             if let Some(note) = likely_note {
                 candidate_body = candidate_body.push(
                     text(note)
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(move |theme| target_note_style(theme, is_selected, is_likely)),
                 );
             }
             candidate_body = candidate_body.push(
                 text(shape)
-                    .size(d.text(11.0))
+                    .size(11.0)
                     .style(move |theme| target_shape_style(theme, is_selected, is_likely)),
             );
             if !can_select {
                 candidate_body = candidate_body.push(
                     text(self.t("konabess_target_unknown_chip_unusable").to_string())
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(|theme: &Theme| iced::widget::text::Style {
                             color: Some(pal_of(theme).error),
                         }),
@@ -272,26 +286,33 @@ impl App {
             }
             candidates = candidates.push(
                 candidate_button
-                    .padding(d.padding(9.0, 12.0))
+                    .padding([9.0, 12.0])
                     .width(Length::Fill)
                     .style(move |theme: &Theme, status| {
                         let palette = pal_of(theme);
-                        let hovered = matches!(status, button::Status::Hovered);
-                        button::Style {
-                            background: Some(if is_selected {
-                                palette.primary.into()
-                            } else if is_likely {
+                        let background = if is_selected {
+                            Some(
+                                theme::mix_color(
+                                    palette.primary,
+                                    palette.on_primary,
+                                    theme::state_alpha(status),
+                                )
+                                .into(),
+                            )
+                        } else if is_likely {
+                            Some(
                                 theme::mix_color(
                                     palette.secondary_container,
                                     palette.on_secondary_container,
                                     theme::state_alpha(status),
                                 )
-                                .into()
-                            } else if hovered {
-                                theme::with_alpha(palette.primary, theme::state::HOVER).into()
-                            } else {
-                                iced::Color::TRANSPARENT.into()
-                            }),
+                                .into(),
+                            )
+                        } else {
+                            theme::state_layer_bg(status, palette.on_surface).map(Into::into)
+                        };
+                        button::Style {
+                            background,
                             text_color: if is_selected {
                                 palette.on_primary
                             } else if is_likely {
@@ -305,7 +326,7 @@ impl App {
                                 } else if is_likely {
                                     palette.secondary
                                 } else {
-                                    palette.outline_variant
+                                    palette.outline
                                 },
                                 width: 1.0,
                                 radius: theme::shape::SM.into(),
@@ -318,7 +339,7 @@ impl App {
         if self.konabess.candidates.is_empty() {
             candidates = candidates.push(
                 text(self.t("konabess_target_no_candidates").to_string())
-                    .size(d.text(12.0))
+                    .size(12.0)
                     .style(muted_style)
                     .center()
                     .width(Length::Fill),
@@ -333,29 +354,35 @@ impl App {
         if selected.is_some() {
             confirm = confirm.on_press(Message::KonaBess(KonaBessMsg::KonaBessTargetConfirm));
         }
-        let content: Element<'_, Message> = column![
-            row![
-                text(self.t("konabess_target_title").to_string()).size(d.text(16.0)),
-                Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
-                    .on_press(Message::KonaBess(KonaBessMsg::KonaBessTargetDismiss)),
-            ]
-            .align_y(iced::Alignment::Center),
+        let header: Element<'_, Message> = column![
+            text(self.t("konabess_target_title").to_string()).size(16.0),
             text(self.t("konabess_target_subtitle").to_string())
-                .size(d.text(12.0))
+                .size(12.0)
                 .style(muted_style),
-            text(summary).size(d.text(11.0)).style(muted_style),
-            widget::rule::horizontal(1),
-            scrollable(candidates)
-                .style(m3_scrollable_style)
-                .height(Length::Fixed(d.size(300.0))),
-            row![Space::new().width(Length::Fill), confirm],
+            text(summary).size(11.0).style(muted_style),
         ]
-        .spacing(d.space(10.0))
-        .padding(d.space(20.0))
-        .width(Length::Fixed(d.width(560.0)))
+        .spacing(6)
         .into();
-        m3_dialog(content)
+        let body: Element<'_, Message> = scrollable(candidates)
+            .style(m3_scrollable_style)
+            .height(Length::Fixed(300.0))
+            .into();
+        let footer: Element<'_, Message> = row![
+            Space::new().width(Length::Fill),
+            m3_outlined_button(self.t("btn_cancel").to_string())
+                .on_press(Message::KonaBess(KonaBessMsg::KonaBessTargetDismiss)),
+            confirm,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
+        m3_dialog(dialog_sections(
+            header,
+            body,
+            footer,
+            theme::DIALOG_WIDTH_LG,
+            true,
+        ))
     }
 }
 
@@ -389,8 +416,7 @@ fn gpu_table_view<'a>(
     app: &'a App,
     validation: &ltbox_patch::konabess::GpuTableValidation,
 ) -> Element<'a, Message> {
-    let d = app.density();
-    let mut groups = column![].spacing(d.space(18.0)).width(Length::Shrink);
+    let mut groups = column![].spacing(18.0).width(Length::Shrink);
     let has_hard_errors = validation.has_hard_errors();
     for (group_position, group) in table.groups.iter().enumerate() {
         let has_warning = validation
@@ -407,26 +433,24 @@ fn gpu_table_view<'a>(
         // `groups` must stay intrinsic-width so the two-axis scrollable can
         // expose wide device tables. A Fill row (or Fill spacer) under that
         // Shrink parent creates contradictory horizontal constraints.
-        let mut group_label = row![]
-            .spacing(d.space(5.0))
-            .align_y(iced::Alignment::Center);
+        let mut group_label = row![].spacing(5.0).align_y(iced::Alignment::Center);
         if has_warning {
             group_label = group_label.push(
                 text("⚠")
-                    .size(d.text(13.0))
+                    .size(theme::text_size::BODY_MEDIUM)
                     .style(warning_container_text_style),
             );
         }
         group_label = group_label.push(
             text(format!("Bin {}", group.id))
-                .size(d.text(14.0))
+                .size(14.0)
                 .style(move |theme| group_heading_text_style(theme, has_warning)),
         );
         let group_label = container(group_label)
-            .padding(d.padding(4.0, 8.0))
+            .padding([4.0, 8.0])
             .style(move |theme| group_heading_style(theme, has_warning));
         let group_heading = row![group_label, add_button]
-            .spacing(d.space(8.0))
+            .spacing(8.0)
             .align_y(iced::Alignment::Center)
             .width(Length::Shrink);
 
@@ -434,11 +458,11 @@ fn gpu_table_view<'a>(
         for property in &group.header_properties {
             let property_width = property_cells_width(property.cells.len());
             let mut property_row =
-                row![table_cell(d, property_label(&property.name), true, 250.0,)].spacing(0);
+                row![table_cell(property_label(&property.name), true, 250.0,)].spacing(0);
             let value_cell =
                 match gpu_property_editability(GpuPropertyLocation::GroupHeader, &property.name) {
                     GpuPropertyEditability::ReadOnly => {
-                        read_only_property_cell(d, property, property_width)
+                        read_only_property_cell(property, property_width)
                     }
                     GpuPropertyEditability::Editable => {
                         unreachable!("group header properties are always read-only")
@@ -449,10 +473,9 @@ fn gpu_table_view<'a>(
         }
 
         let mut table_rows = column![].spacing(0).width(Length::Shrink);
-        let mut header = row![table_cell(d, "Level".to_string(), true, 150.0,)].spacing(0);
+        let mut header = row![table_cell("Level".to_string(), true, 150.0,)].spacing(0);
         for name in &property_names {
             header = header.push(table_cell(
-                d,
                 property_label(name),
                 true,
                 property_column_width(group, name),
@@ -467,12 +490,12 @@ fn gpu_table_view<'a>(
                 ));
             }
             let level_control = container(
-                row![text(level.id.to_string()).size(d.text(12.0)), remove_button]
-                    .spacing(d.width(6.0))
+                row![text(level.id.to_string()).size(12.0), remove_button]
+                    .spacing(6.0)
                     .align_y(iced::Alignment::Center),
             )
-            .padding(cell_padding(d, 4.0, 7.0))
-            .width(Length::Fixed(d.width(150.0)))
+            .padding([4.0, 7.0])
+            .width(Length::Fixed(150.0))
             .height(Length::Fixed(58.0))
             .align_y(iced::alignment::Vertical::Center)
             .style(derived_table_cell_style);
@@ -499,13 +522,12 @@ fn gpu_table_view<'a>(
                         app,
                         validation,
                     ),
-                    None => table_cell(d, "—".to_string(), false, width),
+                    None => table_cell("—".to_string(), false, width),
                 });
             }
             table_rows = table_rows.push(cells);
         }
-        groups = groups
-            .push(column![group_heading, header_properties, table_rows,].spacing(d.space(6.0)));
+        groups = groups.push(column![group_heading, header_properties, table_rows,].spacing(6.0));
     }
 
     scrollable(groups)
@@ -519,34 +541,14 @@ fn gpu_table_view<'a>(
         .into()
 }
 
-/// Row heights stay fixed while everything else scales.
-///
-/// This is a data grid: growing the rows with the window would show *fewer*
-/// levels on a bigger screen, which is backwards. The extra width goes into the
-/// columns instead, and the taller text still clears the 58 px row.
-///
-/// The table's horizontal metrics all ride `Density::width`.
-///
-/// Column widths are computed from cell counts — `property_cells_width` is
-/// `n * 110 + 16` — so the padding and gaps inside a cell have to scale on the
-/// same factor as the widths, or that arithmetic drifts apart as the window
-/// grows. Vertical metrics are free to use the spacing factor.
-fn cell_padding(d: Density, vertical: f32, horizontal: f32) -> iced::Padding {
-    iced::Padding::default()
-        .top(d.space(vertical))
-        .bottom(d.space(vertical))
-        .left(d.width(horizontal))
-        .right(d.width(horizontal))
-}
-
-fn table_cell(d: Density, value: String, header: bool, width: f32) -> Element<'static, Message> {
+fn table_cell(value: String, header: bool, width: f32) -> Element<'static, Message> {
     container(
         text(value)
-            .size(d.text(if header { 11.0 } else { 12.0 }))
+            .size(if header { 11.0 } else { 12.0 })
             .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
     )
-    .padding(cell_padding(d, 7.0, 9.0))
-    .width(Length::Fixed(d.width(width)))
+    .padding([7.0, 9.0])
+    .width(Length::Fixed(width))
     .height(Length::Fixed(if header { 52.0 } else { 58.0 }))
     .align_y(iced::alignment::Vertical::Center)
     .style(table_border_style(header))
@@ -575,15 +577,14 @@ fn editable_property_cell<'a>(
     app: &'a App,
     validation: &ltbox_patch::konabess::GpuTableValidation,
 ) -> Element<'a, Message> {
-    let d = app.density();
-    let mut inputs = row![].spacing(d.width(6.0));
+    let mut inputs = row![].spacing(6.0);
     for (cell_position, committed) in property.cells.iter().copied().enumerate() {
         let key = key_for_cell(cell_position);
         let value = app.konabess.cell_text(key, committed, &property.name);
         if gpu_property_editability(GpuPropertyLocation::Level, &property.name)
             == GpuPropertyEditability::ReadOnly
         {
-            inputs = inputs.push(derived_value_cell(d, value));
+            inputs = inputs.push(derived_value_cell(value));
             continue;
         }
         let parser_error = app.konabess.cell_has_input_error(key);
@@ -608,8 +609,8 @@ fn editable_property_cell<'a>(
                     choice.vote.to_string(),
                 ))
             })
-            .text_size(d.text(12.0))
-            .padding(cell_padding(d, 7.0, 8.0))
+            .text_size(12.0)
+            .padding([7.0, 8.0])
             .style(move |theme: &Theme, status| {
                 let mut style = m3_pick_list_style(theme, status);
                 if hard_error {
@@ -622,15 +623,15 @@ fn editable_property_cell<'a>(
                 style
             })
             .menu_style(m3_pick_list_menu_style)
-            .width(Length::Fixed(d.width((width - 16.0).max(104.0))));
+            .width(Length::Fixed((width - 16.0).max(104.0)));
             inputs = inputs.push(picker);
             continue;
         }
         let input = widget::text_input("", &value)
             .on_input(move |text| Message::KonaBess(KonaBessMsg::KonaBessCellChanged(key, text)))
-            .padding(cell_padding(d, 7.0, 8.0))
-            .size(d.text(12.0))
-            .width(Length::Fixed(d.width(104.0)))
+            .padding([7.0, 8.0])
+            .size(12.0)
+            .width(Length::Fixed(104.0))
             .style(move |theme: &Theme, status| {
                 let mut style = m3_text_input_style(theme, status);
                 if hard_error {
@@ -650,8 +651,8 @@ fn editable_property_cell<'a>(
         inputs = inputs.push(input);
     }
     container(inputs)
-        .padding(cell_padding(d, 7.0, 8.0))
-        .width(Length::Fixed(d.width(width)))
+        .padding([7.0, 8.0])
+        .width(Length::Fixed(width))
         .height(Length::Fixed(58.0))
         .align_y(iced::alignment::Vertical::Center)
         .style(table_border_style(false))
@@ -659,32 +660,31 @@ fn editable_property_cell<'a>(
 }
 
 fn read_only_property_cell(
-    d: Density,
     property: &ltbox_patch::konabess::GpuProperty,
     width: f32,
 ) -> Element<'static, Message> {
-    let mut values = row![].spacing(d.width(6.0));
+    let mut values = row![].spacing(6.0);
     for cell in &property.cells {
         values = values.push(
-            container(text(cell.to_string()).size(d.text(12.0)))
-                .padding(cell_padding(d, 7.0, 8.0))
-                .width(Length::Fixed(d.width(104.0)))
+            container(text(cell.to_string()).size(12.0))
+                .padding([7.0, 8.0])
+                .width(Length::Fixed(104.0))
                 .style(derived_value_style),
         );
     }
     container(values)
-        .padding(cell_padding(d, 7.0, 8.0))
-        .width(Length::Fixed(d.width(width)))
+        .padding([7.0, 8.0])
+        .width(Length::Fixed(width))
         .height(Length::Fixed(58.0))
         .align_y(iced::alignment::Vertical::Center)
         .style(table_border_style(false))
         .into()
 }
 
-fn derived_value_cell(d: Density, value: String) -> Element<'static, Message> {
-    container(text(value).size(d.text(12.0)))
-        .padding(cell_padding(d, 7.0, 8.0))
-        .width(Length::Fixed(d.width(104.0)))
+fn derived_value_cell(value: String) -> Element<'static, Message> {
+    container(text(value).size(12.0))
+        .padding([7.0, 8.0])
+        .width(Length::Fixed(104.0))
         .style(derived_value_style)
         .into()
 }
@@ -813,7 +813,6 @@ fn finding_panel(
     warning: bool,
     app: &App,
 ) -> Element<'static, Message> {
-    let d = app.density();
     let count = finding_count(issues);
     let mut content = if warning {
         column![
@@ -821,7 +820,7 @@ fn finding_panel(
                 "konabess_warning_summary",
                 count = count.to_string()
             ))
-            .size(d.text(11.0))
+            .size(11.0)
             .wrapping(iced::widget::text::Wrapping::None)
         ]
     } else {
@@ -830,17 +829,17 @@ fn finding_panel(
                 "konabess_error_summary",
                 count = count.to_string()
             ))
-            .size(d.text(12.0))
+            .size(12.0)
         ]
     }
-    .spacing(d.space(3.0));
+    .spacing(3.0);
     if !warning {
         for issue in issues {
-            content = content.push(text(localized_issue(issue, false, app)).size(d.text(11.0)));
+            content = content.push(text(localized_issue(issue, false, app)).size(11.0));
         }
     }
     container(content)
-        .padding(d.padding(9.0, 12.0))
+        .padding([9.0, 12.0])
         .width(Length::Fill)
         .style(move |theme: &Theme| {
             let palette = pal_of(theme);

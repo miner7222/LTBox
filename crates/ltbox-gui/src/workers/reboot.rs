@@ -12,6 +12,13 @@ pub(crate) fn reboot_worker(
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
     match (conn, target) {
+        (ConnectionStatus::Adb | ConnectionStatus::AdbRecovery, RebootTarget::Edl) => {
+            // Unlike the other one-shot reboot targets, EDL entry is not done
+            // until the 9008 port appears. Reuse the shared transition worker
+            // so the tracked Reboot operation stays live for the wait dialog.
+            ensure_edl(conn, "Reboot", &mut log)
+                .map_err(|()| ltbox_core::i18n::tr("err_edl_transition_failed"))?;
+        }
         (
             ConnectionStatus::Adb | ConnectionStatus::AdbRecovery | ConnectionStatus::AdbSideload,
             t,

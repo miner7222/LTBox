@@ -2,7 +2,7 @@
 //! color blend/easing, device portrait, layout consts). Extracted from main.rs.
 
 use crate::*;
-use iced::widget::{Space, button, canvas, container, row, text};
+use iced::widget::{Space, button, canvas, column, container, row, text};
 use iced::{Element, Length, Point, Radians, Rectangle, Renderer, Theme, mouse, window};
 use ltbox_core::model::TB324ZC_MODEL;
 
@@ -12,7 +12,6 @@ const MATERIAL_PROGRESS_FRAME: std::time::Duration = std::time::Duration::from_m
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MaterialProgressSize {
     Standard,
-    Hero,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,11 +26,6 @@ fn material_progress_metrics(size: MaterialProgressSize) -> MaterialProgressMetr
         MaterialProgressSize::Standard => MaterialProgressMetrics {
             diameter: 40.0,
             stroke_width: 4.0,
-            track_gap: 4.0,
-        },
-        MaterialProgressSize::Hero => MaterialProgressMetrics {
-            diameter: 52.0,
-            stroke_width: 8.0,
             track_gap: 4.0,
         },
     }
@@ -265,6 +259,15 @@ pub(crate) struct ExecActionLayout {
     pub(crate) start_over_utility: bool,
 }
 
+impl ExecActionLayout {
+    /// Whether this layout puts anything in the footer at all. While an
+    /// operation runs it does not, and rendering the bar anyway leaves an
+    /// empty band across the bottom of the execution screen.
+    pub(crate) const fn has_any(self) -> bool {
+        self.primary.is_some() || self.start_over_utility
+    }
+}
+
 pub(crate) const fn exec_action_layout(
     is_busy: bool,
     is_error: bool,
@@ -288,8 +291,8 @@ pub(crate) const fn exec_action_layout(
     }
 }
 
-/// True for the localized "Start" / "Dump" labels. Drives the red Cancel
-/// button in the footer helpers.
+/// True for localized confirmation labels. These enter an operation from a
+/// review screen, so the action bar gives the primary control the error role.
 pub(crate) fn is_start_label(label: &str) -> bool {
     label == ltbox_core::i18n::tr("btn_start").as_str()
         || label == ltbox_core::i18n::tr("btn_dump").as_str()
@@ -297,140 +300,65 @@ pub(crate) fn is_start_label(label: &str) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WizardNavLayout {
-    pub(crate) grouped_leading: bool,
-    pub(crate) extended_primary: bool,
+    pub(crate) destructive_primary: bool,
 }
 
 pub(crate) fn wizard_nav_layout(next_label: &str) -> WizardNavLayout {
-    let confirmation = is_start_label(next_label);
     WizardNavLayout {
-        grouped_leading: confirmation,
-        extended_primary: true,
+        destructive_primary: is_start_label(next_label),
     }
 }
 
-fn fab_icon_content(
-    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
-) -> Element<'static, Message> {
-    container(icon.size(22))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
-}
-
-fn fab_next_icon(next_label: &str) -> iced::widget::Text<'static, Theme, iced::Renderer> {
-    if is_start_label(next_label) {
-        icon::fab_start()
-    } else {
-        icon::fab_next()
-    }
-}
-
-fn fab_elevation_level(status: button::Status) -> u8 {
-    match status {
-        button::Status::Disabled => 0,
-        button::Status::Hovered => 4,
-        _ => 3,
-    }
-}
-
-fn fab_style(t: &Theme, status: button::Status, bg: iced::Color, fg: iced::Color) -> button::Style {
+fn action_outlined_style(t: &Theme, status: button::Status) -> button::Style {
     let p = pal_of(t);
     if matches!(status, button::Status::Disabled) {
         return button::Style {
-            background: Some(with_alpha(p.on_surface, 0.12).into()),
+            background: None,
             text_color: with_alpha(p.on_surface, 0.38),
-            // M3 defines no disabled FAB at all — the token set carries
-            // neither `disabled-*` nor any `outline-*` entry, and Material
-            // Web draws no disabled state. So the container/content pair
-            // borrows M3's generic disabled *button* treatment
-            // (`on_surface @ 12%` / `@ 38%`), and no outline is drawn:
-            // there is no token to justify one. A disabled Next still reads
-            // apart from an enabled *surface* FAB (Back) because elevation
-            // drops to 0 while Back rests at level 3, and the icon sits at
-            // 38% rather than `on_surface_variant`.
             border: iced::Border {
-                radius: theme::shape::FULL.into(),
-                ..Default::default()
+                color: with_alpha(p.on_surface, 0.12),
+                width: 1.0,
+                radius: theme::shape::SM.into(),
             },
-            shadow: theme::elevation(0, theme::is_dark(t)),
             ..Default::default()
         };
     }
 
     button::Style {
-        background: Some(theme::mix_color(bg, fg, theme::state_alpha(status)).into()),
-        text_color: fg,
+        background: theme::state_layer_bg(status, p.on_surface).map(Into::into),
+        text_color: p.on_surface,
         border: iced::Border {
-            radius: theme::shape::FULL.into(),
-            ..Default::default()
+            color: p.outline,
+            width: 1.0,
+            radius: theme::shape::SM.into(),
         },
-        shadow: theme::elevation(fab_elevation_level(status), theme::is_dark(t)),
         ..Default::default()
     }
 }
 
-/// The wizard's single most important control. M3's default FAB color
-/// pair is `primary_container`/`on_primary_container`, which on the
-/// indigo seed is a near-neutral `0xDDE1FF` that reads as pale grey next
-/// to the surface FABs beside it. Expressive asks the one hero action to
-/// take the loudest available role, so this uses the `primary` pair.
-fn fab_primary_style(t: &Theme, status: button::Status) -> button::Style {
+fn action_error_filled_style(t: &Theme, status: button::Status) -> button::Style {
     let p = pal_of(t);
-    fab_style(t, status, p.primary, p.on_primary)
-}
+    if matches!(status, button::Status::Disabled) {
+        return button::Style {
+            background: Some(with_alpha(p.on_surface, 0.12).into()),
+            text_color: with_alpha(p.on_surface, 0.38),
+            border: iced::Border {
+                radius: theme::shape::SM.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    }
 
-fn fab_surface_style(t: &Theme, status: button::Status) -> button::Style {
-    let p = pal_of(t);
-    fab_style(t, status, p.surface_container_high, p.on_surface_variant)
-}
-
-fn utility_action_style(t: &Theme, status: button::Status) -> button::Style {
-    let p = pal_of(t);
     button::Style {
-        background: Some(
-            theme::mix_color(
-                p.surface_container_high,
-                p.on_surface_variant,
-                theme::state_alpha(status),
-            )
-            .into(),
-        ),
-        text_color: p.on_surface_variant,
+        background: Some(theme::mix_color(p.error, p.on_error, theme::state_alpha(status)).into()),
+        text_color: p.on_error,
         border: iced::Border {
-            radius: theme::shape::FULL.into(),
+            radius: theme::shape::SM.into(),
             ..Default::default()
         },
         ..Default::default()
     }
-}
-
-fn utility_error_action_style(t: &Theme, status: button::Status) -> button::Style {
-    let p = pal_of(t);
-    button::Style {
-        background: Some(
-            theme::mix_color(
-                p.surface_container_high,
-                p.error,
-                theme::state_alpha(status),
-            )
-            .into(),
-        ),
-        text_color: p.error,
-        border: iced::Border {
-            radius: theme::shape::FULL.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-fn extended_fab_primary_style(t: &Theme, status: button::Status) -> button::Style {
-    let mut style = fab_primary_style(t, status);
-    style.border.radius = theme::shape::LG.into();
-    style
 }
 
 fn fab_tooltip<'a>(inner: Element<'a, Message>, label: String) -> Element<'a, Message> {
@@ -457,113 +385,45 @@ fn fab_tooltip<'a>(inner: Element<'a, Message>, label: String) -> Element<'a, Me
     .into()
 }
 
-fn wizard_fab<'a>(
-    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
-    label: String,
-    msg: Option<Message>,
-    style: fn(&Theme, button::Status) -> button::Style,
-    disabled_hint: Option<String>,
-) -> Element<'a, Message> {
-    let mut btn = button(fab_icon_content(icon))
-        .width(Length::Fixed(WIZARD_FAB_SIZE))
-        .height(Length::Fixed(WIZARD_FAB_SIZE))
-        .padding(0)
-        .style(style);
-    if let Some(msg) = msg {
-        btn = btn.on_press(msg);
-    }
-
-    let tooltip = disabled_hint.unwrap_or(label);
-    fab_tooltip(btn.into(), tooltip)
+#[derive(Debug, Clone, Copy)]
+enum ActionButtonRole {
+    Outlined,
+    Primary,
+    Error,
 }
 
-pub(crate) fn wizard_surface_fab<'a>(
-    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
-    label: String,
-    msg: Option<Message>,
-) -> Element<'a, Message> {
-    wizard_fab(icon, label, msg, fab_surface_style, None)
-}
-
-pub(crate) fn wizard_utility_action<'a>(
-    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
-    label: String,
-    msg: Option<Message>,
-) -> Element<'a, Message> {
-    let mut action = button(fab_icon_content(icon))
-        .width(Length::Fixed(48.0))
-        .height(Length::Fixed(48.0))
-        .padding(0)
-        .style(utility_action_style);
-    if let Some(msg) = msg {
-        action = action.on_press(msg);
-    }
-    fab_tooltip(action.into(), label)
-}
-
-pub(crate) fn wizard_error_utility_action<'a>(
-    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
-    label: String,
-    msg: Option<Message>,
-) -> Element<'a, Message> {
-    let mut action = button(fab_icon_content(icon))
-        .width(Length::Fixed(48.0))
-        .height(Length::Fixed(48.0))
-        .padding(0)
-        .style(utility_error_action_style);
-    if let Some(msg) = msg {
-        action = action.on_press(msg);
-    }
-    fab_tooltip(action.into(), label)
-}
-
-pub(crate) fn wizard_utility_toolbar<'a>(
-    actions: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    container(actions)
-        .padding(4)
-        .height(Length::Fixed(WIZARD_FAB_SIZE))
-        .style(|t: &Theme| {
-            let p = pal_of(t);
-            container::Style {
-                background: Some(p.surface_container_high.into()),
-                border: iced::Border {
-                    radius: theme::shape::FULL.into(),
-                    ..Default::default()
-                },
-                // This is a low-emphasis utility island, not a FAB. The
-                // labeled and circular FAB shapes both use level 3/4 via
-                // `fab_style`; this toolbar deliberately stays at level 1.
-                shadow: theme::elevation(1, theme::is_dark(t)),
-                ..Default::default()
-            }
-        })
-        .into()
-}
-
-pub(crate) fn wizard_primary_extended_fab<'a>(
-    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
+fn action_button<'a>(
+    icon: Option<iced::widget::Text<'static, Theme, iced::Renderer>>,
     label: String,
     msg: Option<Message>,
     disabled_hint: Option<String>,
+    role: ActionButtonRole,
 ) -> Element<'a, Message> {
-    let mut action = button(
-        container(
-            row![
-                icon.size(20),
-                text(label)
-                    .size(theme::text_size::LABEL_LARGE)
-                    .font(theme::emphasis::bold())
-            ]
+    let style = match role {
+        ActionButtonRole::Outlined => action_outlined_style,
+        ActionButtonRole::Primary => md_filled_btn_style,
+        ActionButtonRole::Error => action_error_filled_style,
+    };
+    let label = text(label)
+        .size(theme::text_size::BODY_MEDIUM)
+        .font(theme::emphasis::medium())
+        .wrapping(iced::widget::text::Wrapping::None);
+    let content: Element<'a, Message> = if let Some(icon) = icon {
+        row![icon.size(18), label]
             .spacing(8)
-            .align_y(iced::Alignment::Center),
-        )
-        .height(Length::Fill)
-        .center_y(Length::Fill),
+            .align_y(iced::Alignment::Center)
+            .into()
+    } else {
+        label.into()
+    };
+    let mut action = button(
+        container(content)
+            .height(Length::Fill)
+            .center_y(Length::Fill),
     )
-    .height(Length::Fixed(WIZARD_FAB_SIZE))
-    .padding([0, 20])
-    .style(extended_fab_primary_style);
+    .height(Length::Fixed(M3_BUTTON_HEIGHT))
+    .padding([0, 16])
+    .style(style);
     let enabled = msg.is_some();
     if let Some(msg) = msg {
         action = action.on_press(msg);
@@ -575,28 +435,55 @@ pub(crate) fn wizard_primary_extended_fab<'a>(
     action
 }
 
-pub(crate) fn wizard_fab_footer<'a>(
+pub(crate) fn wizard_secondary_action<'a>(
+    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
+    label: String,
+    msg: Option<Message>,
+) -> Element<'a, Message> {
+    action_button(Some(icon), label, msg, None, ActionButtonRole::Outlined)
+}
+
+pub(crate) fn wizard_primary_action<'a>(
+    icon: iced::widget::Text<'static, Theme, iced::Renderer>,
+    label: String,
+    msg: Option<Message>,
+    disabled_hint: Option<String>,
+    destructive: bool,
+) -> Element<'a, Message> {
+    let role = if destructive {
+        ActionButtonRole::Error
+    } else {
+        ActionButtonRole::Primary
+    };
+    action_button(Some(icon), label, msg, disabled_hint, role)
+}
+
+pub(crate) fn wizard_action_footer<'a>(
     leading: impl Into<Element<'a, Message>>,
     trailing: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let leading = leading.into();
     let trailing = trailing.into();
 
-    container(
-        row![leading, Space::new().width(Length::Fill), trailing]
-            .spacing(WIZARD_FAB_SPACING)
-            .align_y(iced::Alignment::Center)
-            .height(Length::Fixed(WIZARD_FAB_SIZE))
-            .width(Length::Fill),
-    )
-    .padding(iced::Padding {
-        top: 8.0,
-        right: 24.0,
-        bottom: 24.0,
-        left: 24.0,
-    })
+    column![
+        iced::widget::rule::horizontal(1).style(shell_rule_style),
+        container(
+            row![leading, Space::new().width(Length::Fill), trailing]
+                .spacing(ACTION_BUTTON_SPACING)
+                .align_y(iced::Alignment::Center)
+                .height(Length::Fill)
+                .width(Length::Fill),
+        )
+        .padding([0, 24])
+        .width(Length::Fill)
+        .height(Length::Fixed(WIZARD_ACTION_BAR_HEIGHT - 1.0))
+        .style(|t: &Theme| container::Style {
+            background: Some(pal_of(t).surface_container_low.into()),
+            ..Default::default()
+        }),
+    ]
     .width(Length::Fill)
-    .height(Length::Fixed(WIZARD_FAB_NAV_HEIGHT))
+    .height(Length::Fixed(WIZARD_ACTION_BAR_HEIGHT))
     .into()
 }
 
@@ -623,7 +510,7 @@ fn m3_button<'a>(
     button(
         container(
             text(label)
-                .size(theme::text_size::LABEL_LARGE)
+                .size(theme::text_size::BODY_MEDIUM)
                 // A localized label must never shred into a per-glyph
                 // column when the parent row is tight; let it overflow.
                 .wrapping(iced::widget::text::Wrapping::None),
@@ -648,12 +535,9 @@ fn m3_button<'a>(
 pub(crate) const KPM_COLUMN_WIDTH: f32 = 280.0;
 
 /// Interior padding of the Dashboard's hero device card. Sized against
-/// its `XL_INCREASED` corner via M3's `outer radius - padding = inner
+/// its `LG` corner via M3's `outer radius - padding = inner
 /// radius` rule.
 pub(crate) const DEVICE_CARD_PADDING: f32 = 24.0;
-/// Inner height of the dashboard device card at the minimum window. Pinned so
-/// the empty-state and populated cards are the same size.
-pub(crate) const DEVICE_CARD_HEIGHT: f32 = 160.0;
 
 /// Icon-button size. M3 requires extra-small and small icon buttons to
 /// carry a pointer target of at least 48x48 even when the painted
@@ -692,8 +576,14 @@ pub(crate) fn m3_filled_button<'a>(label: String) -> button::Button<'a, Message>
     m3_button(label, md_filled_btn_style)
 }
 
-/// M3 text button at the common height — the low-emphasis half of a
-/// dialog's action pair.
+/// M3 outlined button at the common height — the dismissive half of a
+/// dialog's outline-dismiss / filled-confirm action pair.
+pub(crate) fn m3_outlined_button<'a>(label: String) -> button::Button<'a, Message> {
+    m3_button(label, action_outlined_style)
+}
+
+/// M3 text button at the common height. Keep this for intentionally low-key
+/// standalone actions; dialog dismiss/confirm pairs use [`m3_outlined_button`].
 pub(crate) fn m3_text_button<'a>(label: String) -> button::Button<'a, Message> {
     m3_button(label, md_text_btn_style)
 }
@@ -705,7 +595,7 @@ pub(crate) enum WizardLeadingAction {
     Cancel,
 }
 
-fn wizard_nav_fabs<'a>(
+fn wizard_nav_actions<'a>(
     leading_action: WizardLeadingAction,
     next_label: &str,
     can_next: bool,
@@ -715,79 +605,55 @@ fn wizard_nav_fabs<'a>(
     next_msg: Message,
 ) -> Element<'a, Message> {
     let layout = wizard_nav_layout(next_label);
-    let mut leading = row![]
-        .spacing(WIZARD_FAB_SPACING)
+    let mut trailing = row![]
+        .spacing(ACTION_BUTTON_SPACING)
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
 
-    if layout.grouped_leading {
-        let mut utility_actions = row![].spacing(0).align_y(iced::Alignment::Center);
-        if leading_action != WizardLeadingAction::None {
-            utility_actions = match leading_action {
-                WizardLeadingAction::None => utility_actions,
-                WizardLeadingAction::Cancel => utility_actions.push(wizard_error_utility_action(
-                    icon::fab_cancel(),
-                    back_label.to_string(),
-                    Some(back_msg),
-                )),
-                WizardLeadingAction::Back => utility_actions.push(wizard_utility_action(
-                    icon::fab_back(),
-                    back_label.to_string(),
-                    Some(back_msg),
-                )),
-            };
-        }
-        if leading_action == WizardLeadingAction::Back {
-            utility_actions = utility_actions.push(wizard_error_utility_action(
-                icon::fab_cancel(),
-                ltbox_core::i18n::tr("btn_cancel").to_string(),
-                Some(Message::StartOver),
-            ));
-        }
-        leading = leading.push(wizard_utility_toolbar(utility_actions));
-    } else if leading_action != WizardLeadingAction::None {
-        leading = match leading_action {
-            WizardLeadingAction::None => leading,
-            WizardLeadingAction::Cancel => {
-                leading.push(wizard_utility_toolbar(wizard_error_utility_action(
-                    icon::fab_cancel(),
-                    back_label.to_string(),
-                    Some(back_msg),
-                )))
-            }
-            WizardLeadingAction::Back => leading.push(wizard_fab(
-                icon::fab_back(),
+    let (cancel_label, cancel_msg) = match leading_action {
+        WizardLeadingAction::None => (
+            ltbox_core::i18n::tr("btn_cancel").to_string(),
+            Message::StartOver,
+        ),
+        WizardLeadingAction::Cancel => (back_label.to_string(), back_msg),
+        WizardLeadingAction::Back => {
+            trailing = trailing.push(action_button(
+                None,
                 back_label.to_string(),
                 Some(back_msg),
-                fab_surface_style,
                 None,
-            )),
-        };
-    }
+                ActionButtonRole::Outlined,
+            ));
+            (
+                ltbox_core::i18n::tr("btn_cancel").to_string(),
+                Message::StartOver,
+            )
+        }
+    };
 
-    let mut trailing = row![]
-        .spacing(WIZARD_FAB_SPACING)
-        .align_y(iced::Alignment::Center)
-        .height(Length::Fill);
+    let leading = row![action_button(
+        None,
+        cancel_label,
+        Some(cancel_msg),
+        None,
+        ActionButtonRole::Outlined,
+    )]
+    .align_y(iced::Alignment::Center)
+    .height(Length::Fill);
 
-    if layout.extended_primary {
-        trailing = trailing.push(wizard_primary_extended_fab(
-            fab_next_icon(next_label),
-            next_label.to_string(),
-            can_next.then_some(next_msg),
-            disabled_next_hint,
-        ));
-    } else {
-        trailing = trailing.push(wizard_fab(
-            fab_next_icon(next_label),
-            next_label.to_string(),
-            can_next.then_some(next_msg),
-            fab_primary_style,
-            disabled_next_hint,
-        ));
-    }
+    trailing = trailing.push(action_button(
+        None,
+        next_label.to_string(),
+        can_next.then_some(next_msg),
+        disabled_next_hint,
+        if layout.destructive_primary {
+            ActionButtonRole::Error
+        } else {
+            ActionButtonRole::Primary
+        },
+    ));
 
-    wizard_fab_footer(leading, trailing)
+    wizard_action_footer(leading, trailing)
 }
 
 pub(crate) fn wizard_nav<'a>(
@@ -796,7 +662,7 @@ pub(crate) fn wizard_nav<'a>(
     can_next: bool,
     back_label: &str,
 ) -> Element<'a, Message> {
-    wizard_nav_fabs(
+    wizard_nav_actions(
         if can_back {
             WizardLeadingAction::Back
         } else {
@@ -815,12 +681,6 @@ pub(crate) fn wizard_nav<'a>(
 // Reusable widgets
 // =========================================================================
 
-/// Section header. Renders the label when `expanded` is `true`,
-/// otherwise an invisible spacer at the same fixed height — keeps
-/// the nav column from re-flowing vertically as the sidebar tween
-/// crosses its midpoint.
-pub(crate) const SEC_HDR_HEIGHT: f32 = 36.0;
-
 /// Cubic ease-out curve `f(t) = 1 - (1 - t)^3`, mapped to `[0, 1]`.
 /// Used by the sidebar tween so labels fade in faster early and
 /// settle smoothly near the spring's resting point.
@@ -829,17 +689,22 @@ pub(crate) fn ease_out_cubic(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
 
-/// Pinned nav button height — matches the expanded label form so
-/// the sidebar tween's mid-frame swap between icon-only and
-/// label content doesn't push every row vertically.
-pub(crate) const NAV_BTN_HEIGHT: f32 = 38.0;
+/// Navigation-drawer item and compact-rail geometry.
+pub(crate) const NAV_BTN_HEIGHT: f32 = 56.0;
+/// Collapsed items keep the expanded height so opening the drawer changes only
+/// its width. M3 publishes no collapsed-rail item height, and its two rail
+/// variants are described as transforming into each other; a height change
+/// there slides every row vertically, which reads as the contents jumping
+/// rather than the panel widening.
+pub(crate) const NAV_BTN_COLLAPSED_HEIGHT: f32 = NAV_BTN_HEIGHT;
+pub(crate) const NAV_BTN_COLLAPSED_WIDTH: f32 = 56.0;
+pub(crate) const NAV_INDICATOR_COLLAPSED_HEIGHT: f32 = 32.0;
 
-/// Collapsed sidebar rail width (icon-only). The main row reserves
-/// exactly this much space so the content area never reflows when the
-/// sidebar tweens — the expanded form floats over content via a
-/// `Stack` overlay.
+/// Collapsed sidebar rail width (icon-only). This is also the fixed baseline
+/// used for window-size classification: using the adaptive rendered width
+/// here would make the class oscillate in the rail-width feedback band.
 pub(crate) const SIDEBAR_RAIL_WIDTH: f32 = 64.0;
-pub(crate) const SIDEBAR_EXPANDED_WIDTH: f32 = 210.0;
+pub(crate) const SIDEBAR_EXPANDED_WIDTH: f32 = 232.0;
 
 pub(crate) fn nav_btn<'a>(
     view: View,
@@ -847,41 +712,38 @@ pub(crate) fn nav_btn<'a>(
     active: bool,
     enabled: bool,
     label_alpha: f32,
+    collapsed: bool,
 ) -> Element<'a, Message> {
-    // M3 active indicator: the whole row becomes a `secondary_container`
-    // pill (see the button style below), so the icon only has to carry
-    // the matching on-color. The previous 32x28 chip wrapped the icon
-    // alone, which left the label outside the indicator in the expanded
-    // form — M3's navigation drawer puts icon *and* label inside one pill.
-    let icon = lucide_icon(view.nav_icon(), 18.0, move |t: &Theme| {
-        let p = pal_of(t);
-        if !enabled {
-            with_alpha(p.on_surface, 0.38)
-        } else if active {
-            p.on_secondary_container
-        } else {
-            p.on_surface_variant
-        }
-    });
-    let icon_pill: Element<'a, Message> = container(icon)
-        .width(Length::Fixed(32.0))
-        .height(Length::Fixed(28.0))
+    // The icon font has a fixed outline, so the selected glyph receives a
+    // one-pixel optical size increase to carry the mockup's heavier stroke.
+    let icon = lucide_icon(
+        view.nav_icon(),
+        if active { 20.0 } else { 19.0 },
+        move |t: &Theme| {
+            let p = pal_of(t);
+            if !enabled {
+                with_alpha(p.on_surface, 0.38)
+            } else if active {
+                p.on_surface
+            } else {
+                p.on_surface_variant
+            }
+        },
+    );
+    let icon_slot: Element<'a, Message> = container(icon)
+        .width(Length::Fixed(20.0))
+        .height(Length::Fixed(20.0))
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
         .into();
 
-    // Single base layout in both modes: icon left-anchored + optional
-    // label. Keeping the icon's horizontal position constant across
-    // modes means it does not jump from "centered in 64 px shell"
-    // to "left-padded next to label" the moment the label mounts.
-    // Outer padding shrinks from 22 → 15 (= 22 - (32-18)/2) so the
-    // pill's geometric center sits at the same x as the bare icon
-    // did before, avoiding a horizontal shift the moment a row
-    // becomes active.
-    let mut inner = iced::widget::row![icon_pill]
-        .spacing(8)
+    // Both forms keep the icon center 32px from the rail's left edge:
+    // compact = 4px list inset + 18px button inset + 10px half-icon;
+    // expanded = 8px list inset + 14px button inset + 10px half-icon.
+    let mut inner = iced::widget::row![icon_slot]
+        .spacing(12)
         .align_y(iced::Alignment::Center);
-    if label_alpha > 0.0 {
+    if !collapsed && label_alpha > 0.0 {
         // Resolve the base text color (hover / disabled apply via the
         // button style below; here we just fade the label in along
         // the spring), then re-apply alpha so the glyph fades in step
@@ -893,14 +755,12 @@ pub(crate) fn nav_btn<'a>(
             let p = pal_of(t);
             if !enabled {
                 with_alpha(p.on_surface, 0.38)
-            } else if active {
-                p.on_secondary_container
             } else {
                 p.on_surface
             }
         };
         let mut label_text = text(label.to_string())
-            .size(theme::text_size::LABEL_LARGE)
+            .size(theme::text_size::BODY_MEDIUM)
             .height(Length::Fill)
             .align_y(iced::alignment::Vertical::Center);
         if active && enabled {
@@ -924,19 +784,59 @@ pub(crate) fn nav_btn<'a>(
     let content: Element<'a, Message> = container(inner)
         .width(Length::Fill)
         .height(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Left)
         .align_y(iced::Alignment::Center)
         .into();
 
-    // The button paints both the active indicator and the state layer, so
-    // it carries a FULL radius: every fill it draws is a pill, never the
-    // edge-to-edge square the flat-background version produced. The
-    // 12 px side inset lives on the wrapper below; the remaining 3 px of
-    // button padding keeps the 32-wide icon slot at the same on-screen x
-    // as before (12 + 3 = the previous 15).
+    let item_width = if collapsed {
+        Length::Fixed(NAV_BTN_COLLAPSED_WIDTH)
+    } else {
+        Length::Fill
+    };
+    let item_height = if collapsed {
+        NAV_BTN_COLLAPSED_HEIGHT
+    } else {
+        NAV_BTN_HEIGHT
+    };
+
+    // Selection is its own layer behind the interactive item. The button
+    // paints only pointer state, so active fill geometry stays independent
+    // from the press target and collapses to the rail's 56x32 indicator.
+    let indicator_height = if collapsed {
+        NAV_INDICATOR_COLLAPSED_HEIGHT
+    } else {
+        NAV_BTN_HEIGHT
+    };
+    let indicator: Element<'a, Message> = if active {
+        container(Space::new().width(Length::Fill).height(Length::Fill))
+            .width(item_width)
+            .height(Length::Fixed(indicator_height))
+            .style(|t: &Theme| container::Style {
+                background: Some(pal_of(t).secondary_container.into()),
+                border: iced::Border {
+                    radius: theme::shape::FULL.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    } else {
+        Space::new()
+            .width(item_width)
+            .height(Length::Fixed(indicator_height))
+            .into()
+    };
+    let indicator_layer: Element<'a, Message> = container(indicator)
+        .width(item_width)
+        .height(Length::Fixed(item_height))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .into();
+
     let btn = button(content)
-        .padding([0, 3])
-        .width(Length::Fill)
-        .height(Length::Fixed(NAV_BTN_HEIGHT))
+        .padding([0, if collapsed { 18 } else { 14 }])
+        .width(item_width)
+        .height(Length::Fixed(item_height))
         .style(move |t: &Theme, status| {
             let p = pal_of(t);
             let pill = iced::Border {
@@ -951,27 +851,10 @@ pub(crate) fn nav_btn<'a>(
                     ..Default::default()
                 };
             }
-            // Active rows carry an opaque `secondary_container` pill;
-            // inactive rows are transparent until a state layer lands on
-            // them (hover 8%, pressed 12%). Stacking the layer on the
-            // active fill keeps an already-selected row responsive to the
-            // pointer instead of looking inert.
-            let background = if active {
-                Some(
-                    theme::mix_color(
-                        p.secondary_container,
-                        p.on_secondary_container,
-                        theme::state_alpha(status),
-                    )
-                    .into(),
-                )
-            } else {
-                theme::state_layer_bg(status, p.on_surface).map(|c| c.into())
-            };
             button::Style {
-                background,
+                background: theme::state_layer_bg(status, p.on_surface).map(Into::into),
                 text_color: if active {
-                    p.on_secondary_container
+                    p.on_surface
                 } else {
                     p.on_surface_variant
                 },
@@ -984,9 +867,10 @@ pub(crate) fn nav_btn<'a>(
     } else {
         btn.into()
     };
-    // M3 insets drawer/rail items from the panel edge so the indicator
-    // reads as a discrete pill rather than a full-bleed band.
-    container(btn).padding([0, 12]).into()
+    iced::widget::Stack::with_children(vec![indicator_layer, btn])
+        .width(item_width)
+        .height(Length::Fixed(item_height))
+        .into()
 }
 
 // Device portrait handles — built once, cloned each render.
@@ -1073,15 +957,8 @@ pub(crate) fn device_portrait(model: &str) -> DevicePortrait {
     }
 }
 
-pub(crate) const WIZARD_CARD_HEIGHT: f32 = 180.0;
-
-/// Side length for the square (1:1) option cards used by one- and two-column
-/// wizard steps.
-/// Content width at which cards are still at their minimum size, and the one
-/// where they reach `WIZARD_CARD_SQUARE_MAX`. 756 is the content area of the
-/// 820 px minimum window.
-pub(crate) const WIZARD_CARD_GROW_FROM_CONTENT: f32 = 756.0;
-pub(crate) const WIZARD_CARD_GROW_TO_CONTENT: f32 = 1600.0;
+/// The sole content-width breakpoint for adaptive layout decisions.
+const EXPANDED_CONTENT_WIDTH: f32 = 1000.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ListRowMetrics {
@@ -1095,42 +972,14 @@ pub(crate) struct ListRowMetrics {
     pub(crate) icon_gap: f32,
 }
 
-/// Row height the single-column lists grow to, keeping the enlarged icon inside
-/// its padding.
-pub(crate) const WIZARD_LIST_CARD_HEIGHT_MAX: f32 = 96.0;
-/// Single-column lists widen by this much across the growth range; icons in
-/// them grow on the same 1.5x curve the square-card icon uses.
-pub(crate) const WIZARD_LIST_GROWTH: f32 = 1.32;
-pub(crate) const WIZARD_ICON_GROWTH: f32 = 1.5;
-/// Growth ratios for [`Density`], one per element class.
-///
-/// They are deliberately unequal. Text carries a reading burden, so scaling it
-/// with the window as hard as an image would just read as a zoomed screenshot;
-/// images and icons carry none, and are what leave a wide window looking empty
-/// when they stay at the size that suited the minimum one.
-pub(crate) const TEXT_GROWTH: f32 = 1.25;
-pub(crate) const IMAGE_GROWTH: f32 = 1.5;
-pub(crate) const SPACE_GROWTH: f32 = 1.4;
-pub(crate) const SIZE_GROWTH: f32 = 1.3;
-pub(crate) const WIDTH_GROWTH: f32 = 1.32;
 pub(crate) const WIZARD_CONFIRM_MAX_WIDTH: f32 = 660.0;
-pub(crate) const WIZARD_TOP_APP_BAR_HEIGHT: f32 = 132.0;
+pub(crate) const WIZARD_TOP_APP_BAR_HEIGHT: f32 = 64.0;
 pub(crate) const WIZARD_TOP_APP_BAR_MAX_WIDTH: f32 = 1040.0;
-pub(crate) const WIZARD_FAB_SIZE: f32 = 56.0;
-pub(crate) const WIZARD_FAB_SPACING: f32 = 12.0;
-pub(crate) const WIZARD_FAB_NAV_HEIGHT: f32 = 88.0;
-pub(crate) const ADVANCED_GRID_MAX_WIDTH: f32 = 860.0;
+pub(crate) const WIZARD_ACTION_BAR_HEIGHT: f32 = 60.0;
+pub(crate) const ACTION_BUTTON_SPACING: f32 = 10.0;
 pub(crate) const SETTINGS_PANEL_MAX_WIDTH: f32 = 620.0;
 
-/// Fixed sub-row height (~2 lines at size 11) so cards line up across
-/// translations.
-pub(crate) const SUB_ROW_HEIGHT: f32 = 32.0;
-
-/// Taller sub-row for the narrower square cards so longer localized
-/// descriptions wrap without clipping. The widest bundled string reaches
-/// three lines at `BODY_SMALL` inside the narrowest card, needing ~49 px.
 pub(crate) const FLASH_PARTS_MARKER_CELL_WIDTH: f32 = 32.0;
-pub(crate) const FLASH_PARTS_MARKER_CELL_HEIGHT: f32 = 20.0;
 pub(crate) const FLASH_PARTS_MARKER_SIZE: f32 = 16.0;
 pub(crate) const FLASH_PARTS_ERASE_DASH_WIDTH: f32 = 9.0;
 pub(crate) const FLASH_PARTS_ERASE_DASH_HEIGHT: f32 = 2.0;
@@ -1149,6 +998,11 @@ pub(crate) fn centered_max_width<'a>(
     .into()
 }
 
+/// Width-capped column centred horizontally and anchored to the top of its
+/// pane. M3 aligns pane content from the top — its ruler set runs Title then
+/// Content, fixing where content *begins* — and reserves vertical centring for
+/// dialogs. Centring here left a short list floating in the middle of the
+/// window with a wide band of dead space above and below it.
 pub(crate) fn centered_step<'a>(
     content: impl Into<Element<'a, Message>>,
     max_width: f32,
@@ -1161,167 +1015,75 @@ pub(crate) fn centered_step<'a>(
     .width(Length::Fill)
     .height(Length::Fill)
     .center_x(Length::Fill)
-    .center_y(Length::Fill)
+    .align_y(iced::Alignment::Start)
     .into()
 }
 
-/// The one adaptive-sizing rule for the whole app.
-///
-/// Every view that wants to answer "how big should this be on a large window"
-/// asks a `Density` instead of inventing its own breakpoint — that drift is
-/// what left the wizard growing while the dashboard, settings and about panels
-/// stayed frozen at their minimum-window sizes.
-///
-/// `t` runs 0.0 at the content width of the 820 px minimum window and reaches
-/// 1.0 at [`WIZARD_CARD_GROW_TO_CONTENT`], past which more window only buys
-/// margin. It keys on width alone: a size that changed when the user dragged
-/// only the height would be far more surprising than one that did not.
-///
-/// Each method applies the growth ratio its element class is allowed, so a
-/// caller picks *what kind of thing* it is sizing rather than a magic number.
-/// Dialogs are the deliberate exception — they are centred and fixed-width, so
-/// they never look emptier on a big window and stay at [`Density::MIN`].
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Density {
-    t: f32,
+/// Shared window class for layout decisions; callers need no width arithmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowSizeClass {
+    Compact,
+    Expanded,
 }
 
-impl Density {
-    /// Minimum-window density. For dialogs and for tests.
-    pub(crate) const MIN: Self = Self { t: 0.0 };
-
-    /// Text sizes.
-    pub(crate) fn text(self, base: f32) -> f32 {
-        self.by(base, TEXT_GROWTH)
-    }
-
-    /// Icons, images and device portraits.
-    pub(crate) fn image(self, base: f32) -> f32 {
-        self.by(base, IMAGE_GROWTH)
-    }
-
-    /// Padding and gaps, so grown content does not crowd a card edge.
-    pub(crate) fn space(self, base: f32) -> f32 {
-        self.by(base, SPACE_GROWTH)
-    }
-
-    /// Fixed card and row heights, and other hit-target boxes.
-    pub(crate) fn size(self, base: f32) -> f32 {
-        self.by(base, SIZE_GROWTH)
-    }
-
-    /// Width cap of a centred panel or list.
-    pub(crate) fn width(self, base: f32) -> f32 {
-        self.by(base, WIDTH_GROWTH)
-    }
-
-    /// Symmetric padding, both axes scaled as spacing.
-    pub(crate) fn padding(self, vertical: f32, horizontal: f32) -> iced::Padding {
-        iced::Padding::default()
-            .top(self.space(vertical))
-            .bottom(self.space(vertical))
-            .left(self.space(horizontal))
-            .right(self.space(horizontal))
-    }
-
-    /// Scale an existing [`iced::Padding`] constant as spacing.
-    pub(crate) fn scale_padding(self, base: iced::Padding) -> iced::Padding {
-        iced::Padding {
-            top: self.space(base.top),
-            right: self.space(base.right),
-            bottom: self.space(base.bottom),
-            left: self.space(base.left),
+impl WindowSizeClass {
+    /// Classify the available content width after the sidebar rail.
+    pub(crate) fn for_content_width(content_width: f32) -> Self {
+        if content_width >= EXPANDED_CONTENT_WIDTH {
+            Self::Expanded
+        } else {
+            Self::Compact
         }
-    }
-
-    /// Interpolate between an explicit pair when a dimension has a chosen
-    /// maximum rather than a ratio.
-    pub(crate) fn between(self, min: f32, max: f32) -> f32 {
-        min + (max - min) * self.t
-    }
-
-    fn by(self, base: f32, growth: f32) -> f32 {
-        self.between(base, base * growth)
-    }
-}
-
-/// [`Density`] for a given content width — the width of the area left of the
-/// sidebar rail.
-pub(crate) fn density_for_content_width(content_width: f32) -> Density {
-    let span = WIZARD_CARD_GROW_TO_CONTENT - WIZARD_CARD_GROW_FROM_CONTENT;
-    Density {
-        t: ((content_width - WIZARD_CARD_GROW_FROM_CONTENT) / span).clamp(0.0, 1.0),
     }
 }
 
 impl App {
-    /// The current [`Density`]. Resolve it once per view and pass it down;
-    /// recomputing it per widget is what lets two halves of one screen
-    /// disagree.
-    pub(crate) fn density(&self) -> Density {
-        density_for_content_width(self.window_size.0 - SIDEBAR_RAIL_WIDTH)
+    /// Shared layout class based on window width minus the compact rail.
+    ///
+    /// Keep this baseline independent of the rendered rail width. Expanded
+    /// layout uses a wider fixed rail, and feeding that width back into this
+    /// decision would oscillate between the two classes.
+    pub(crate) fn window_size_class(&self) -> WindowSizeClass {
+        WindowSizeClass::for_content_width(self.window_size.0 - SIDEBAR_RAIL_WIDTH)
     }
 
-    /// Width cap for the single-column wizard lists (root families, reboot
-    /// targets), on the same curve as the square cards.
+    /// Width cap for a single-column wizard list. Selection rows keep the same
+    /// desktop density in both window classes; only their surrounding layout
+    /// changes between one and two panes.
     pub(crate) fn wizard_list_max_width(&self, base: f32) -> f32 {
-        self.density().by(base, WIZARD_LIST_GROWTH)
+        base
     }
 
     /// The adaptive dimensions of one single-column list row, resolved together
-    /// so a caller cannot mix a scaled height with unscaled text.
+    /// so a caller uses one class for height and text.
     pub(crate) fn wizard_list_metrics(&self, label_base: f32, desc_base: f32) -> ListRowMetrics {
         let (label_size, desc_size) = self.wizard_list_text(label_base, desc_base);
-        let d = self.density();
         ListRowMetrics {
             height: self.wizard_list_row_height(),
             label_size,
             desc_size,
-            padding: d.padding(WIZARD_LIST_VERTICAL_PADDING, WIZARD_LIST_HORIZONTAL_PADDING),
-            text_gap: d.space(WIZARD_LIST_TEXT_GAP),
-            icon_gap: d.space(WIZARD_LIST_ICON_GAP),
+            padding: iced::Padding::from([
+                WIZARD_LIST_VERTICAL_PADDING,
+                WIZARD_LIST_HORIZONTAL_PADDING,
+            ]),
+            text_gap: WIZARD_LIST_TEXT_GAP,
+            icon_gap: WIZARD_LIST_ICON_GAP,
         }
     }
 
     pub(crate) fn wizard_list_row_height(&self) -> f32 {
-        self.density()
-            .between(WIZARD_LIST_CARD_HEIGHT, WIZARD_LIST_CARD_HEIGHT_MAX)
+        WIZARD_LIST_CARD_HEIGHT
     }
 
-    /// Icon size for a single-column list row, scaled from its own base so the
-    /// root list (44) and the reboot list (32) keep their relative weights.
+    /// Brand marks may use 32 px while stroke glyphs use 24 px; neither grows
+    /// with the window.
     pub(crate) fn wizard_list_icon(&self, base: f32) -> f32 {
-        self.density().by(base, WIZARD_ICON_GROWTH)
+        base.min(WIZARD_LIST_ICON_SIZE)
     }
 
     /// Label and description sizes for a list row, from that row's own bases.
     pub(crate) fn wizard_list_text(&self, label_base: f32, desc_base: f32) -> (f32, f32) {
-        let d = self.density();
-        (
-            d.between(label_base, label_base.max(WIZARD_CARD_TITLE_MAX)),
-            d.between(desc_base, desc_base.max(WIZARD_CARD_DESC_MAX)),
-        )
-    }
-
-    pub(crate) fn wizard_square_side(&self) -> f32 {
-        // Grow with the window rather than stepping once and then staying flat.
-        // At the minimum window the cards are already sized to look right, and
-        // past `WIZARD_CARD_GROW_TO_CONTENT` further growth would only pad the
-        // icon and label they contain.
-        self.density()
-            .between(WIZARD_CARD_SQUARE, WIZARD_CARD_SQUARE_MAX)
-    }
-
-    pub(crate) fn wizard_square_icon(&self) -> f32 {
-        self.density()
-            .between(WIZARD_CARD_ICON, WIZARD_CARD_ICON_MAX)
-    }
-
-    pub(crate) fn square_step_max_width(&self, columns: usize) -> f32 {
-        let columns = columns.max(1);
-        let gaps = columns.saturating_sub(1) as f32 * 12.0;
-        // The column that owns card rows uses 28 px horizontal padding.
-        columns as f32 * self.wizard_square_side() + gaps + 56.0
+        (label_base, desc_base)
     }
 }
 
@@ -1346,7 +1108,7 @@ pub(crate) fn wizard_nav_generic_with_leading_action<'a>(
     leading_msg: Message,
     next_msg: Message,
 ) -> Element<'a, Message> {
-    wizard_nav_fabs(
+    wizard_nav_actions(
         leading_action,
         next_label,
         can_next,
@@ -1366,7 +1128,7 @@ pub(crate) fn wizard_nav_generic_with_disabled_next_tooltip<'a>(
     back_msg: Message,
     next_msg: Message,
 ) -> Element<'a, Message> {
-    wizard_nav_fabs(
+    wizard_nav_actions(
         if can_back {
             WizardLeadingAction::Back
         } else {
@@ -1389,7 +1151,7 @@ pub(crate) fn wizard_nav_cancel_generic_with_disabled_next_tooltip<'a>(
     cancel_msg: Message,
     next_msg: Message,
 ) -> Element<'a, Message> {
-    wizard_nav_fabs(
+    wizard_nav_actions(
         WizardLeadingAction::Cancel,
         next_label,
         can_next,
@@ -1403,14 +1165,11 @@ pub(crate) fn wizard_nav_cancel_generic_with_disabled_next_tooltip<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        App, Density, DevicePortrait, IMAGE_GROWTH, MaterialProgressSize,
-        WIZARD_CARD_GROW_FROM_CONTENT, WIZARD_CARD_GROW_TO_CONTENT, WIZARD_CARD_ICON,
-        WIZARD_CARD_ICON_MAX, WIZARD_CARD_SQUARE, WIZARD_CARD_SQUARE_MAX,
-        density_for_content_width, device_portrait, extended_fab_primary_style,
-        fab_elevation_level, fab_primary_style, fab_surface_style, material_progress_arc,
-        material_progress_gap_angle, material_progress_metrics, wizard_nav_layout,
+        App, DevicePortrait, MaterialProgressSize, WIZARD_ACTION_BAR_HEIGHT,
+        WIZARD_LIST_CARD_HEIGHT, WIZARD_LIST_GLYPH_ICON_SIZE, WIZARD_LIST_ICON_SIZE,
+        WindowSizeClass, device_portrait, material_progress_arc, material_progress_gap_angle,
+        material_progress_metrics, wizard_nav_layout,
     };
-    use iced::widget::button;
 
     #[test]
     fn tb324zc_has_its_own_portrait_handle() {
@@ -1429,21 +1188,21 @@ mod tests {
     }
 
     #[test]
-    fn wizard_square_contents_track_card_growth_endpoints() {
-        // Pin both endpoints explicitly. `App::default()` restores the
-        // machine's persisted window size, so reading the minimum off it
-        // passes or fails depending on how the last user left the window.
-        let mut minimum = App::default();
-        minimum.window_size.0 = WIZARD_CARD_GROW_FROM_CONTENT + crate::SIDEBAR_RAIL_WIDTH;
-        assert_eq!(minimum.wizard_square_side(), WIZARD_CARD_SQUARE);
-        assert_eq!(minimum.wizard_square_icon(), WIZARD_CARD_ICON);
-        assert_eq!(minimum.square_step_max_width(1), 296.0);
-        assert_eq!(minimum.square_step_max_width(2), 548.0);
-
-        let mut maximized = App::default();
-        maximized.window_size.0 = WIZARD_CARD_GROW_TO_CONTENT + crate::SIDEBAR_RAIL_WIDTH;
-        assert_eq!(maximized.wizard_square_side(), WIZARD_CARD_SQUARE_MAX);
-        assert_eq!(maximized.wizard_square_icon(), WIZARD_CARD_ICON_MAX);
+    fn wizard_selection_rows_keep_desktop_density_across_window_classes() {
+        // Override persisted dimensions so this coverage is machine-independent.
+        let mut app = App::default();
+        for content_width in [756.0, 999.0, 1000.0, 1256.0, 4000.0] {
+            app.window_size.0 = content_width + crate::SIDEBAR_RAIL_WIDTH;
+            assert_eq!(app.wizard_list_row_height(), WIZARD_LIST_CARD_HEIGHT);
+            assert_eq!(
+                app.wizard_list_icon(WIZARD_LIST_ICON_SIZE),
+                WIZARD_LIST_ICON_SIZE
+            );
+            assert_eq!(
+                app.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE),
+                WIZARD_LIST_GLYPH_ICON_SIZE
+            );
+        }
     }
 
     #[test]
@@ -1452,11 +1211,6 @@ mod tests {
         assert_eq!(standard.diameter, 40.0);
         assert_eq!(standard.stroke_width, 4.0);
         assert_eq!(standard.track_gap, 4.0);
-
-        let hero = material_progress_metrics(MaterialProgressSize::Hero);
-        assert_eq!(hero.diameter, 52.0);
-        assert_eq!(hero.stroke_width, 8.0);
-        assert_eq!(hero.track_gap, 4.0);
     }
 
     #[test]
@@ -1475,7 +1229,7 @@ mod tests {
 
     #[test]
     fn material_progress_gap_accounts_for_round_caps() {
-        for size in [MaterialProgressSize::Standard, MaterialProgressSize::Hero] {
+        for size in [MaterialProgressSize::Standard] {
             let metrics = material_progress_metrics(size);
             let radius = (metrics.diameter - metrics.stroke_width) / 2.0;
             let centerline_gap = material_progress_gap_angle(metrics, radius) * radius;
@@ -1484,103 +1238,60 @@ mod tests {
     }
 
     #[test]
-    fn all_fab_shapes_share_the_same_elevation_policy() {
-        assert_eq!(fab_elevation_level(button::Status::Active), 3);
-        assert_eq!(fab_elevation_level(button::Status::Hovered), 4);
-        assert_eq!(fab_elevation_level(button::Status::Pressed), 3);
-        assert_eq!(fab_elevation_level(button::Status::Disabled), 0);
-
-        let theme = iced::Theme::custom(
-            "test",
-            crate::theme::iced_palette(crate::theme::ThemeSeed::Indigo, false),
-        );
-        for status in [
-            button::Status::Active,
-            button::Status::Hovered,
-            button::Status::Pressed,
-        ] {
-            let circular_shadow = fab_primary_style(&theme, status).shadow;
-            assert_eq!(
-                extended_fab_primary_style(&theme, status).shadow,
-                circular_shadow
-            );
-            assert_eq!(fab_surface_style(&theme, status).shadow, circular_shadow);
-        }
-    }
-
-    #[test]
-    fn no_fab_shape_draws_an_outline_in_any_state() {
-        // M3 gives the FAB no `outline-*` token and no disabled state at
-        // all, so an outline has nothing to derive its width or colour
-        // from. Disabled is separated by elevation 0 and the 38% content
-        // alpha instead.
-        let theme = iced::Theme::custom(
-            "test",
-            crate::theme::iced_palette(crate::theme::ThemeSeed::Indigo, false),
-        );
-        for status in [
-            button::Status::Active,
-            button::Status::Hovered,
-            button::Status::Pressed,
-            button::Status::Disabled,
-        ] {
-            for style in [
-                fab_primary_style(&theme, status),
-                fab_surface_style(&theme, status),
-                extended_fab_primary_style(&theme, status),
-            ] {
-                assert_eq!(style.border.width, 0.0);
-            }
-        }
-    }
-
-    #[test]
-    fn wizard_nav_layout_groups_confirmation_actions() {
+    fn wizard_nav_layout_marks_confirmation_actions_destructive() {
+        assert_eq!(WIZARD_ACTION_BAR_HEIGHT, 60.0);
         for key in ["btn_start", "btn_dump"] {
             let label = ltbox_core::i18n::tr(key);
             let layout = wizard_nav_layout(label.as_str());
-            assert!(layout.grouped_leading);
-            assert!(layout.extended_primary);
+            assert!(layout.destructive_primary);
         }
 
         let next_label = ltbox_core::i18n::tr("btn_next");
         let next = wizard_nav_layout(next_label.as_str());
-        assert!(!next.grouped_leading);
-        assert!(next.extended_primary);
+        assert!(!next.destructive_primary);
     }
 
     #[test]
-    fn density_leaves_the_minimum_window_exactly_as_authored() {
-        // Views declare the sizes that were tuned at the 820 px minimum, so a
-        // minimum-width window must hand every one of them straight back.
-        let min = density_for_content_width(WIZARD_CARD_GROW_FROM_CONTENT);
-        for base in [11.0, 14.0, 40.0, 160.0, 620.0] {
-            assert_eq!(min.text(base), base);
-            assert_eq!(min.image(base), base);
-            assert_eq!(min.space(base), base);
-            assert_eq!(min.size(base), base);
-            assert_eq!(min.width(base), base);
+    fn window_size_class_uses_the_shared_breakpoint() {
+        for (width, class) in [
+            (756.0, WindowSizeClass::Compact),
+            (999.999, WindowSizeClass::Compact),
+            (1000.0, WindowSizeClass::Expanded),
+            (1256.0, WindowSizeClass::Expanded),
+            (4000.0, WindowSizeClass::Expanded),
+        ] {
+            assert_eq!(WindowSizeClass::for_content_width(width), class);
         }
-        assert_eq!(Density::MIN.text(14.0), 14.0);
-        // Narrower than the minimum cannot shrink anything.
-        assert_eq!(density_for_content_width(300.0).text(14.0), 14.0);
     }
 
     #[test]
-    fn density_grows_element_classes_in_their_intended_order() {
-        let full = density_for_content_width(WIZARD_CARD_GROW_TO_CONTENT);
-        let base = 100.0;
-        // Text carries a reading burden, so it grows least; images carry none
-        // and are what leave a wide window looking empty, so they grow most.
-        assert!(full.text(base) < full.size(base));
-        assert!(full.size(base) < full.width(base));
-        assert!(full.width(base) < full.space(base));
-        assert!(full.space(base) < full.image(base));
-        assert_eq!(full.image(base), base * IMAGE_GROWTH);
-        // Past the top of the range growth stops rather than running away.
-        assert_eq!(
-            density_for_content_width(4000.0).image(base),
-            base * IMAGE_GROWTH
-        );
+    fn window_size_class_accounts_for_the_sidebar_rail() {
+        let mut app = App::default();
+        for (window_width, content_width, class) in [
+            (820.0, 756.0, WindowSizeClass::Compact),
+            (1320.0, 1256.0, WindowSizeClass::Expanded),
+        ] {
+            app.window_size.0 = window_width;
+            assert_eq!(window_width - crate::SIDEBAR_RAIL_WIDTH, content_width);
+            assert_eq!(app.window_size_class(), class);
+        }
+    }
+
+    #[test]
+    fn window_size_class_stays_expanded_in_the_rail_width_feedback_band() {
+        let mut app = App::default();
+        for window_width in [1064.0, 1100.0, 1200.0, 1231.0] {
+            app.window_size.0 = window_width;
+
+            assert_eq!(
+                WindowSizeClass::for_content_width(window_width - crate::SIDEBAR_RAIL_WIDTH),
+                WindowSizeClass::Expanded
+            );
+            assert_eq!(
+                WindowSizeClass::for_content_width(window_width - crate::SIDEBAR_EXPANDED_WIDTH),
+                WindowSizeClass::Compact
+            );
+            assert_eq!(app.window_size_class(), WindowSizeClass::Expanded);
+        }
     }
 }

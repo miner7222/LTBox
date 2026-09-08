@@ -11,14 +11,13 @@ const ISSUES_URL: &str = "https://github.com/miner7222/LTBox/issues";
 
 impl App {
     pub(crate) fn view_about(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let app_icon = about_app_icon(d.image(88.0));
-        let title = text("LTBox").size(d.text(26.0));
+        let app_icon = about_app_icon(88.0);
+        let title = text("LTBox").size(theme::text_size::TITLE_LARGE);
         // No width cap: the text sizes to its content so it stays on one line
         // when the content area has room (the column centers it). A fixed
         // max_width forced a needless second line even on a wide window.
         let description = text(self.t("about_description").to_string())
-            .size(d.text(12.0))
+            .size(12.0)
             .style(muted_style)
             .center();
         // Append the build commit (set by build.rs) so bug reports can pin the
@@ -29,29 +28,28 @@ impl App {
             }
             _ => format!("v{}", env!("CARGO_PKG_VERSION")),
         };
-        let version = text(version_label).size(d.text(13.0)).style(muted_style);
+        let version = text(version_label)
+            .size(theme::text_size::BODY_SMALL)
+            .style(muted_style);
 
         let links = row![
             about_link_button(
-                d,
                 icon::about_github(),
                 GITHUB_URL,
                 self.t("about_github").to_string(),
             ),
             about_link_button(
-                d,
                 icon::about_issue(),
                 ISSUES_URL,
                 self.t("about_issue").to_string(),
             ),
             about_link_button(
-                d,
                 icon::about_wiki(),
                 WIKI_URL,
                 self.t("about_wiki").to_string(),
             ),
         ]
-        .spacing(d.space(12.0))
+        .spacing(12.0)
         .align_y(iced::Alignment::Center);
 
         // Fine-print footer. The dialog behind the link opens with LTBox's own
@@ -59,14 +57,14 @@ impl App {
         let licenses_link = iced::widget::rich_text([iced::widget::span(
             self.t("about_licenses_link").to_string(),
         )
-        .size(d.text(12.0))
+        .size(12.0)
         .color(self.pal().primary)
         .underline(true)
         .link(())])
         .on_link_click(|()| Message::AboutLicensesOpen);
 
         let col = column![app_icon, title, description, version, links, licenses_link]
-            .spacing(d.space(14.0))
+            .spacing(14.0)
             .align_x(iced::Alignment::Center);
 
         container(col)
@@ -122,14 +120,13 @@ fn about_app_icon(size: f32) -> Element<'static, Message> {
 /// Styled like the Settings inline icon buttons (tonal `secondary_container`
 /// base + pre-composited M3 state layer).
 fn about_link_button(
-    d: Density,
     glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
     url: &'static str,
     tip: String,
 ) -> Element<'static, Message> {
-    let side = Length::Fixed(d.size(40.0));
+    let side = Length::Fixed(40.0);
     let btn = button(
-        container(lucide_icon(glyph, d.image(20.0), |t: &Theme| {
+        container(lucide_icon(glyph, 20.0, |t: &Theme| {
             pal_of(t).on_secondary_container
         }))
         .width(side)
@@ -154,7 +151,7 @@ fn about_link_button(
         button::Style {
             background: Some(bg.into()),
             border: iced::Border {
-                radius: theme::shape::FULL.into(),
+                radius: theme::shape::SM.into(),
                 ..Default::default()
             },
             ..Default::default()

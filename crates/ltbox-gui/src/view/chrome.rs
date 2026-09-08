@@ -4,6 +4,9 @@ use crate::*;
 use iced::widget::{self, Space, button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 
+/// M3 single-line snackbar height.
+const TOAST_HEIGHT: f32 = 48.0;
+
 impl App {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         self.sync_runtime_theme();
@@ -14,15 +17,25 @@ impl App {
             main = main.push(self.title_bar());
             main = main.push(widget::rule::horizontal(1).style(shell_rule_style));
         }
-        // Sidebar floats in Stack over a fixed rail placeholder so
-        // content never reflows during tween.
-        let rail_placeholder = container(iced::widget::Space::new())
-            .width(Length::Fixed(SIDEBAR_RAIL_WIDTH))
-            .height(Length::Fill);
-        let row_base = row![rail_placeholder, self.content()].height(Length::Fill);
-        let row_area = iced::widget::Stack::with_children(vec![row_base.into(), self.sidebar()])
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let row_area: Element<'_, Message> = match self.window_size_class() {
+            WindowSizeClass::Expanded => row![self.sidebar(), self.content()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            WindowSizeClass::Compact => {
+                // Compact keeps a fixed icon-rail placeholder while the
+                // hovered drawer floats over content, avoiding reflow during
+                // the width spring.
+                let rail_placeholder = container(iced::widget::Space::new())
+                    .width(Length::Fixed(SIDEBAR_RAIL_WIDTH))
+                    .height(Length::Fill);
+                let row_base = row![rail_placeholder, self.content()].height(Length::Fill);
+                iced::widget::Stack::with_children(vec![row_base.into(), self.sidebar()])
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+        };
         main = main.push(row_area);
         main = main.push(self.status_bar());
 
@@ -82,6 +95,13 @@ impl App {
         }
         if let Some(t) = self.reboot_confirm_target {
             layers.push(self.reboot_confirm_popup(t));
+        }
+        if self.reboot_wait_transition
+            && self.reboot_wait_dialog_open
+            && self.operation.is_running()
+            && self.operation.view() == Some(View::Reboot)
+        {
+            layers.push(self.reboot_wait_popup());
         }
         if self.root.run_id_popup_open {
             layers.push(self.root_run_id_popup());
@@ -152,13 +172,12 @@ impl App {
     }
 
     pub(crate) fn startup_disclaimer_dialog(&self) -> Element<'_, Message> {
-        let d = self.density();
         let acknowledgement = widget::checkbox(self.startup_disclaimer_checked)
             .label(self.t("startup_disclaimer_accept").to_string())
             .on_toggle(Message::StartupDisclaimerToggled)
-            .size(d.size(20.0))
-            .spacing(d.space(12.0))
-            .text_size(d.text(theme::text_size::BODY_MEDIUM))
+            .size(20.0)
+            .spacing(12.0)
+            .text_size(theme::text_size::BODY_MEDIUM)
             .style(m3_checkbox_style);
 
         let mut continue_button =
@@ -167,32 +186,38 @@ impl App {
             continue_button = continue_button.on_press(Message::StartupDisclaimerConfirm);
         }
 
-        let content = column![
-            text(self.t("startup_disclaimer_title").to_string())
-                .size(d.text(theme::text_size::TITLE_LARGE))
-                .font(theme::emphasis::bold())
-                .style(on_surface_style),
+        let header: Element<'_, Message> = text(self.t("startup_disclaimer_title").to_string())
+            .size(theme::text_size::TITLE_LARGE)
+            .font(theme::emphasis::bold())
+            .style(on_surface_style)
+            .into();
+        let body: Element<'_, Message> = column![
             text(self.t("startup_disclaimer_body").to_string())
-                .size(d.text(theme::text_size::BODY_MEDIUM))
+                .size(theme::text_size::BODY_MEDIUM)
                 .style(muted_style)
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
                 .width(Length::Fill),
             acknowledgement,
-            widget::rule::horizontal(1),
-            row![
-                Space::new().width(Length::Fill),
-                m3_text_button(self.t("startup_disclaimer_exit").to_string())
-                    .on_press(Message::StartupDisclaimerExit),
-                continue_button,
-            ]
-            .spacing(d.space(10.0))
-            .align_y(iced::Alignment::Center),
         ]
-        .spacing(d.space(16.0))
-        .padding(d.space(24.0))
-        .width(Length::Fixed(d.width(520.0)));
+        .spacing(16)
+        .into();
+        let footer: Element<'_, Message> = row![
+            Space::new().width(Length::Fill),
+            m3_outlined_button(self.t("startup_disclaimer_exit").to_string())
+                .on_press(Message::StartupDisclaimerExit),
+            continue_button,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
 
-        m3_dialog(content.into())
+        m3_dialog(dialog_sections(
+            header,
+            body,
+            footer,
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
     }
 
     pub(crate) fn title_bar(&self) -> Element<'_, Message> {
@@ -441,13 +466,24 @@ impl App {
     }
 
     pub(crate) fn sidebar(&self) -> Element<'_, Message> {
-        // Label opacity tween — mounts at 40% width so there's room
-        // for glyphs to land, fades in via ease-out-cubic to 100% at
-        // the spring's settle point. Width and opacity ride the same
-        // spring so visual coherence holds across the whole animation.
-        let label_t = ((self.sidebar_anim - 0.4) / 0.5).clamp(0.0, 1.0);
+        // Compact label opacity mounts at 40% width so there's room for
+        // glyphs to land, then rides the width spring to its settle point.
+        // Expanded bypasses the tween and keeps labels fully visible.
+        let size_class = self.window_size_class();
+        let visual_progress = self.sidebar_visual_progress();
+        let label_t = ((visual_progress - 0.4) / 0.5).clamp(0.0, 1.0);
         let label_alpha = ease_out_cubic(label_t);
-        let mut col = column![].spacing(1).padding([16, 0]);
+        let collapsed = size_class == WindowSizeClass::Compact && !self.sidebar_expanded;
+        // CSS lets a 56px compact item overflow the nav list's 48px content
+        // box after its 8px side padding. Iced clamps fixed children to that
+        // content box instead, so use the equivalent rendered 4px rail inset
+        // in the collapsed form to preserve the required 56px geometry.
+        let list_padding = if collapsed { [12, 4] } else { [12, 8] };
+        let mut col = column![]
+            .spacing(1)
+            .padding(list_padding)
+            // Keep compact items anchored while the panel shrinks on exit.
+            .align_x(iced::Alignment::Start);
         for &v in NAV_MAIN {
             col = col.push(nav_btn(
                 v,
@@ -455,9 +491,10 @@ impl App {
                 self.current_view == v,
                 self.is_nav_enabled(v),
                 label_alpha,
+                collapsed,
             ));
         }
-        col = col.push(sec_hdr(self.t("nav_section_tools"), label_alpha));
+        col = col.push(sec_hdr(self.t("nav_section_tools"), label_alpha, collapsed));
         for &v in NAV_TOOLS {
             col = col.push(nav_btn(
                 v,
@@ -465,6 +502,7 @@ impl App {
                 self.current_view == v,
                 self.is_nav_enabled(v),
                 label_alpha,
+                collapsed,
             ));
         }
         // About sits at the very bottom of the nav list.
@@ -474,41 +512,64 @@ impl App {
             self.current_view == View::About,
             self.is_nav_enabled(View::About),
             label_alpha,
+            collapsed,
         ));
 
-        // Nav column fills; update pill anchored below.
-        let body: Element<'_, Message> = if let Some(_release) = self.update_available.as_ref() {
-            column![
-                container(col).width(Length::Fill).height(Length::Fill),
-                self.update_available_pill(),
-            ]
+        // M3: when the destination list is longer than the drawer, it scrolls
+        // inside the drawer. Ten items at 56 come to ~633px, which leaves ~20px
+        // of slack in the minimum window — a shorter one, or a locale with
+        // taller rows, would otherwise clip the last destination with nothing
+        // to say so.
+        let body: Element<'_, Message> = widget::scrollable(col)
+            .style(m3_scrollable_style)
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
-        } else {
-            container(col)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        };
+            .into();
 
-        let width =
-            SIDEBAR_RAIL_WIDTH + (SIDEBAR_EXPANDED_WIDTH - SIDEBAR_RAIL_WIDTH) * self.sidebar_anim;
+        let width = match size_class {
+            WindowSizeClass::Compact => {
+                SIDEBAR_RAIL_WIDTH
+                    + (SIDEBAR_EXPANDED_WIDTH - SIDEBAR_RAIL_WIDTH) * self.sidebar_anim
+            }
+            WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+        };
+        let floats_over_content = size_class == WindowSizeClass::Compact && self.sidebar_anim > 0.0;
+        let anim = self.sidebar_anim;
         let panel = container(body)
             .width(width)
             .height(Length::Fill)
             .style(panel_bg);
-        let shell =
+        let mut shell =
             row![panel, widget::rule::vertical(1).style(shell_rule_style)].height(Length::Fill);
-        // Idle interaction prevents click-through to wizard cards
-        // under the Stack (Stack levitates the cursor for lower
-        // layers when top reports a non-None interaction).
-        iced::widget::mouse_area(shell)
-            .on_enter(Message::SidebarHoverEnter)
-            .on_exit(Message::SidebarHoverExit)
-            .on_press(Message::Noop)
-            .interaction(iced::mouse::Interaction::Idle)
-            .into()
+        if floats_over_content {
+            // Cast beside the panel rather than around it — see
+            // `theme::drawer_edge_gradient`.
+            shell = shell.push(
+                container(Space::new())
+                    .width(Length::Fixed(theme::DRAWER_EDGE_SHADOW_WIDTH * anim))
+                    .height(Length::Fill)
+                    .style(move |t: &Theme| container::Style {
+                        background: Some(theme::drawer_edge_gradient(theme::is_dark(t), anim)),
+                        ..Default::default()
+                    }),
+            );
+        }
+        match size_class {
+            WindowSizeClass::Compact => {
+                // Idle interaction prevents click-through to wizard cards
+                // under the Stack (Stack levitates the cursor for lower
+                // layers when top reports a non-None interaction).
+                iced::widget::mouse_area(shell)
+                    .on_enter(Message::SidebarHoverEnter)
+                    .on_exit(Message::SidebarHoverExit)
+                    .on_press(Message::Noop)
+                    .interaction(iced::mouse::Interaction::Idle)
+                    .into()
+            }
+            // Expanded participates in the row layout, so it needs neither
+            // overlay click-through protection nor hover messages.
+            WindowSizeClass::Expanded => shell.into(),
+        }
     }
 
     pub(crate) fn content(&self) -> Element<'_, Message> {
@@ -560,24 +621,8 @@ impl App {
         // Other views (Advanced, Settings, …) keep the scrollable wrapper
         // because their content can legitimately grow past the viewport.
         let body: Element<'_, Message> = if self.current_view == View::Dashboard {
-            let dashboard_body = container(inner)
+            container(inner)
                 .padding(24)
-                .width(Length::Fill)
-                .height(Length::Fill);
-            let dash_save_fab = wizard_surface_fab(
-                icon::fab_save_log(),
-                self.t("btn_save_log").to_string(),
-                Some(Message::SaveLog),
-            );
-            let dash_log_actions = container(wizard_fab_footer(
-                row![].height(Length::Fill),
-                row![dash_save_fab]
-                    .spacing(WIZARD_FAB_SPACING)
-                    .align_y(iced::Alignment::Center)
-                    .height(Length::Fill),
-            ))
-            .width(Length::Fill);
-            column![dashboard_body, dash_log_actions]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -605,29 +650,7 @@ impl App {
         // doesn't shift. Inset card (not an edge-to-edge strip) so the
         // alert reads as a discrete surface above content.
         const INSET: f32 = 12.0;
-        const ICON_SIZE: f32 = 18.0;
-        const ICON_BADGE: f32 = 32.0;
         const DISMISS_TARGET: f32 = 40.0;
-
-        let icon = container(lucide_icon(icon::banner_error(), ICON_SIZE, |t: &Theme| {
-            pal_of(t).on_error_container
-        }))
-        .width(ICON_BADGE)
-        .height(ICON_BADGE)
-        .center_x(ICON_BADGE)
-        .center_y(ICON_BADGE)
-        .style(|t: &Theme| {
-            let p = pal_of(t);
-            container::Style {
-                // Subtle round tonal backing on the error role.
-                background: Some(with_alpha(p.on_error_container, 0.12).into()),
-                border: iced::Border {
-                    radius: theme::shape::FULL.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        });
 
         let dismiss = button(
             container(lucide_icon(icon::win_close(), 16.0, |t: &Theme| {
@@ -651,40 +674,28 @@ impl App {
                 },
                 text_color: p.on_error_container,
                 border: iced::Border {
-                    radius: theme::shape::FULL.into(),
+                    radius: theme::shape::SM.into(),
                     ..Default::default()
                 },
                 ..Default::default()
             }
         });
 
-        let card = container(
-            row![
-                icon,
-                text(msg.to_string())
-                    .size(theme::text_size::BODY_MEDIUM)
-                    .style(error_container_text_style)
-                    .width(Length::Fill),
-                dismiss,
-            ]
-            .spacing(12)
-            .padding([10, 12])
-            .align_y(iced::Alignment::Center),
-        )
-        .width(Length::Fill)
-        .style(move |t: &Theme| {
-            let p = pal_of(t);
-            container::Style {
-                background: Some(p.error_container.into()),
-                border: iced::Border {
-                    color: with_alpha(p.on_error_container, 0.18),
-                    width: 1.0,
-                    radius: theme::shape::LG.into(),
-                },
-                shadow: theme::elevation(2, theme::is_dark(t)),
-                ..Default::default()
-            }
-        });
+        let body = row![
+            text(msg.to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(error_container_text_style)
+                .width(Length::Fill),
+            dismiss,
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Start);
+        let card = self.message_banner(
+            BannerSeverity::Error,
+            icon::banner_error(),
+            self.t("banner_error_title").to_string(),
+            body,
+        );
 
         // Top/side inset + Fill-height spacer below keeps the overlay
         // non-layout-shifting and floating instead of edge-flush.
@@ -721,7 +732,7 @@ impl App {
         .align_y(iced::Alignment::Center);
         if !model_text.is_empty() {
             status_row =
-                status_row.push(text(format!("— {model_text}")).size(12).style(muted_style));
+                status_row.push(text(format!("· {model_text}")).size(12).style(muted_style));
         }
         status_row = status_row.push(Space::new().width(Length::Fill));
         if self.operation.is_running() {
@@ -731,18 +742,27 @@ impl App {
                     .style(accent_style),
             );
         }
-        status_row = status_row.push(
-            // Debug builds show "debug" instead of the version so a dev
-            // build is never mistaken for a released one in screenshots/bug
-            // reports.
-            text(if cfg!(debug_assertions) {
-                "debug"
-            } else {
-                concat!("v", env!("CARGO_PKG_VERSION"))
-            })
-            .size(12)
-            .style(muted_style),
-        );
+        // Debug builds show "debug" instead of the version so a dev build is
+        // never mistaken for a released one in screenshots/bug reports.
+        let version = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            concat!("v", env!("CARGO_PKG_VERSION"))
+        };
+        if self.update_available.is_some() {
+            status_row = status_row.push(
+                row![
+                    text(version).size(12).style(muted_style),
+                    self.status_update_available_button(),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            );
+        } else {
+            // Preserve the original child and metrics byte-for-byte when no
+            // update is available.
+            status_row = status_row.push(text(version).size(12).style(muted_style));
+        }
         // Top divider via an explicit `horizontal_rule` (1 px) so
         // the meeting point with the sidebar's right divider lands
         // as a single line per direction (M3 bottom-app-bar
@@ -756,58 +776,93 @@ impl App {
         .into()
     }
 
-    /// Shared Material 3–inspired warning banner shell. Prepends a
-    /// semantic warning icon on a round tonal badge, then hosts the
-    /// caller-supplied body (text + actions). Used by every dashboard
-    /// warning so ADB / platform / driver / dual-USB prompts share one
-    /// surface language: `warning_container` fill, low-alpha warning
-    /// outline, `shape::LG`, no shadow.
-    pub(crate) fn warning_banner<'a>(
+    /// Shared severity banner. Every warning and error uses this anatomy:
+    /// semantic icon, medium-weight title, compact body, a full-strength
+    /// role outline, and a dedicated 3 px leading accent.
+    pub(crate) fn message_banner<'a>(
         &self,
-        content: impl Into<Element<'a, Message>>,
+        severity: BannerSeverity,
+        icon_glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
+        title: impl Into<String>,
+        body: impl Into<Element<'a, Message>>,
     ) -> Element<'a, Message> {
-        const ICON_SIZE: f32 = 18.0;
-        const ICON_BADGE: f32 = 32.0;
+        const ICON_SIZE: f32 = 20.0;
+        const ACCENT_WIDTH: f32 = 3.0;
+        const BORDER_WIDTH: f32 = 1.0;
 
-        let icon = container(lucide_icon(
-            icon::banner_warning(),
-            ICON_SIZE,
-            |t: &Theme| pal_of(t).on_warning_container,
-        ))
-        .width(ICON_BADGE)
-        .height(ICON_BADGE)
-        .center_x(ICON_BADGE)
-        .center_y(ICON_BADGE)
-        .style(|t: &Theme| {
+        let foreground = move |t: &Theme| {
             let p = pal_of(t);
-            container::Style {
-                background: Some(with_alpha(p.on_warning_container, 0.12).into()),
-                border: iced::Border {
-                    radius: theme::shape::FULL.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
+            match severity {
+                BannerSeverity::Warning => p.on_warning_container,
+                BannerSeverity::Error => p.on_error_container,
             }
-        });
-
-        let body = row![icon, content.into()]
-            .spacing(12)
+        };
+        let icon = container(lucide_icon(icon_glyph, ICON_SIZE, foreground))
+            .width(ICON_SIZE)
+            .height(ICON_SIZE)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center);
+        let title = text(title.into())
+            .size(theme::text_size::BODY_MEDIUM)
+            .font(theme::emphasis::medium())
+            .style(move |t: &Theme| iced::widget::text::Style {
+                color: Some(foreground(t)),
+            });
+        let copy = column![title, body.into()]
+            .spacing(2)
             .width(Length::Fill)
-            .align_y(iced::Alignment::Center);
+            .align_x(iced::Alignment::Start);
+        let content = row![icon, copy]
+            .spacing(13)
+            .padding([13, 16])
+            .width(Length::Fill)
+            .align_y(iced::Alignment::Start);
 
-        container(body)
-            .padding([12, 16])
+        // CSS draws this as one rounded box whose left border is simply
+        // thicker, so the heavy edge follows the corner curve. iced has no
+        // per-side border width, and a 3px strip cannot render a 12px radius —
+        // it came out as a straight bar butted against a rounded box. Nest
+        // instead: an accent-filled outer box, and the container tone inset
+        // over it by the border widths. What shows through IS the border.
+        let inner = container(content)
             .width(Length::Fill)
             .style(move |t: &Theme| {
                 let p = pal_of(t);
+                let background = match severity {
+                    BannerSeverity::Warning => p.warning_container,
+                    BannerSeverity::Error => p.error_container,
+                };
                 container::Style {
-                    background: Some(p.warning_container.into()),
+                    background: Some(background.into()),
+                    text_color: Some(foreground(t)),
                     border: iced::Border {
-                        color: with_alpha(p.on_warning_container, 0.18),
-                        width: 1.0,
-                        radius: theme::shape::LG.into(),
+                        radius: (theme::shape::MD - BORDER_WIDTH).into(),
+                        ..Default::default()
                     },
-                    shadow: theme::elevation(0, theme::is_dark(t)),
+                    ..Default::default()
+                }
+            });
+
+        container(inner)
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                top: BORDER_WIDTH,
+                right: BORDER_WIDTH,
+                bottom: BORDER_WIDTH,
+                left: ACCENT_WIDTH,
+            })
+            .style(move |t: &Theme| {
+                let p = pal_of(t);
+                let accent = match severity {
+                    BannerSeverity::Warning => p.warning,
+                    BannerSeverity::Error => p.error,
+                };
+                container::Style {
+                    background: Some(accent.into()),
+                    border: iced::Border {
+                        radius: theme::shape::MD.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }
             })
@@ -865,7 +920,7 @@ impl App {
     pub(crate) fn driver_restart_recommended_banner(&self) -> Element<'_, Message> {
         let close = button(
             text(self.t("btn_close").to_string())
-                .size(theme::text_size::LABEL_LARGE)
+                .size(theme::text_size::BODY_MEDIUM)
                 .wrapping(iced::widget::text::Wrapping::None),
         )
         .padding([10, 18])
@@ -873,24 +928,23 @@ impl App {
         .style(banner_filled_btn_style)
         .on_press(Message::CloseDriverRestartRecommended);
 
-        let body = column![
-            text(self.t("driver_restart_recommended_title").to_string())
-                .size(theme::text_size::TITLE_MEDIUM)
-                .font(theme::emphasis::medium())
-                .style(warning_container_text_style),
+        let body = row![
             text(self.t("driver_restart_recommended_desc").to_string())
                 .size(theme::text_size::BODY_SMALL)
-                .style(warning_container_text_style),
+                .style(warning_container_text_style)
+                .width(Length::Fill),
+            close,
         ]
-        .spacing(4)
-        .width(Length::Fill);
+        .spacing(8)
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center);
 
-        let content = row![body, close]
-            .spacing(8)
-            .width(Length::Fill)
-            .align_y(iced::Alignment::Center);
-
-        self.warning_banner(content)
+        self.message_banner(
+            BannerSeverity::Warning,
+            icon::banner_warning(),
+            self.t("driver_restart_recommended_title").to_string(),
+            body,
+        )
     }
 
     pub(crate) fn driver_warning_banner(&self) -> Element<'_, Message> {
@@ -957,7 +1011,7 @@ impl App {
         // it has — let the button overflow its slot instead of shredding
         // the label.
         let btn_label_text = text(btn_label)
-            .size(theme::text_size::LABEL_LARGE)
+            .size(theme::text_size::BODY_MEDIUM)
             .wrapping(iced::widget::text::Wrapping::None);
         let action: Element<'_, Message> = if can_install {
             let mut btn = button(btn_label_text)
@@ -984,24 +1038,23 @@ impl App {
         // which under a long desc string overflowed the banner and left
         // the button only a sliver — collapsing its label into a
         // vertical glyph stack.
-        let body = column![
-            text(self.t(title_key).to_string())
-                .size(theme::text_size::TITLE_MEDIUM)
-                .font(theme::emphasis::medium())
-                .style(warning_container_text_style),
+        let body = row![
             text(self.t(desc_key).to_string())
                 .size(theme::text_size::BODY_SMALL)
-                .style(warning_container_text_style),
+                .style(warning_container_text_style)
+                .width(Length::Fill),
+            action,
         ]
-        .spacing(4)
-        .width(Length::Fill);
+        .spacing(12)
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center);
 
-        let content = row![body, action]
-            .spacing(12)
-            .width(Length::Fill)
-            .align_y(iced::Alignment::Center);
-
-        self.warning_banner(content)
+        self.message_banner(
+            BannerSeverity::Warning,
+            icon::banner_warning(),
+            self.t(title_key).to_string(),
+            body,
+        )
     }
 
     /// Optional "driver update available" banner — shown when the installed
@@ -1024,7 +1077,7 @@ impl App {
         };
         let mut update_btn = button(
             text(update_label)
-                .size(theme::text_size::LABEL_LARGE)
+                .size(theme::text_size::BODY_MEDIUM)
                 .wrapping(iced::widget::text::Wrapping::None),
         )
         .padding([10, 18])
@@ -1041,7 +1094,7 @@ impl App {
 
         let mut dismiss_btn = button(
             text(self.t("driver_dont_show_again").to_string())
-                .size(theme::text_size::LABEL_LARGE)
+                .size(theme::text_size::BODY_MEDIUM)
                 .wrapping(iced::widget::text::Wrapping::None),
         )
         .padding([10, 18])
@@ -1052,28 +1105,28 @@ impl App {
             dismiss_btn = dismiss_btn.on_press(Message::DismissDriverUpdate);
         }
 
-        let body = column![
-            text(self.t("driver_update_title").to_string())
-                .size(theme::text_size::TITLE_MEDIUM)
-                .font(theme::emphasis::medium())
-                .style(warning_container_text_style),
+        let body = row![
             text(tr_args!(
                 "driver_update_desc",
                 current = current,
                 latest = latest
             ))
             .size(theme::text_size::BODY_SMALL)
-            .style(warning_container_text_style),
+            .style(warning_container_text_style)
+            .width(Length::Fill),
+            update_action,
+            dismiss_btn,
         ]
-        .spacing(4)
-        .width(Length::Fill);
+        .spacing(8)
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center);
 
-        let content = row![body, update_action, dismiss_btn]
-            .spacing(8)
-            .width(Length::Fill)
-            .align_y(iced::Alignment::Center);
-
-        self.warning_banner(content)
+        self.message_banner(
+            BannerSeverity::Warning,
+            icon::banner_warning(),
+            self.t("driver_update_title").to_string(),
+            body,
+        )
     }
 
     /// Bottom-of-screen transient toast. Renders a low-attention pill
@@ -1093,15 +1146,21 @@ impl App {
                     color: Some(pal_of(t).surface),
                 }),
         )
-        .padding([8, 16])
+        .padding([0, 16])
+        .height(Length::Fixed(TOAST_HEIGHT))
+        .align_y(iced::alignment::Vertical::Center)
         .style(|t: &Theme| -> container::Style {
             let p = pal_of(t);
             container::Style {
                 background: Some(p.on_surface.into()),
                 border: iced::Border {
-                    radius: 18.0.into(),
+                    // M3 snackbars sit at the extra-small step and carry a
+                    // shadow; the pill radius this used to draw belongs to
+                    // chips and the nav indicator.
+                    radius: theme::shape::XS.into(),
                     ..Default::default()
                 },
+                shadow: theme::elevation(3, theme::is_dark(t)),
                 ..Default::default()
             }
         });
@@ -1147,7 +1206,9 @@ impl App {
                 .size(theme::text_size::TITLE_MEDIUM)
                 .font(theme::emphasis::medium())
                 .style(on_surface_style),
-            text(body).size(13).style(muted_style),
+            text(body)
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
         ]
         .spacing(6)
         .width(Length::Fill);
@@ -1158,8 +1219,8 @@ impl App {
                 .align_y(iced::Alignment::Center),
         ]
         .spacing(16)
-        .padding(24)
-        .width(420);
+        .padding([16, 20])
+        .width(Length::Fixed(theme::DIALOG_WIDTH_MD));
 
         // Modeless: a flash can run for minutes, so the busy dialog must NOT
         // trap the user — the sidebar stays clickable to navigate back to the

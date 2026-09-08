@@ -1,7 +1,7 @@
 //! Reusable view components (dialogs, cards, step bar, icon tiles, lucide helpers). Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{self, Space, button, column, container, responsive, row, text};
+use iced::widget::{self, Space, button, column, container, row, text};
 use iced::{Element, Length, Theme};
 use theme::with_alpha;
 
@@ -25,9 +25,80 @@ pub(crate) fn m3_dialog_modeless(inner: Element<'_, Message>) -> Element<'_, Mes
     m3_dialog_layers(inner)
 }
 
+/// Twelve-pixel label placed directly above an outlined dialog input.
+pub(crate) fn dialog_field_label<'a>(label: impl Into<String>) -> Element<'a, Message> {
+    text(label.into())
+        .size(theme::text_size::BODY_SMALL)
+        .style(muted_style)
+        .into()
+}
+
+/// Inline validation feedback paired with an error-outlined field.
+pub(crate) fn dialog_field_error<'a>(message: impl Into<String>) -> Element<'a, Message> {
+    row![
+        lucide_error(icon::field_error(), 14.0),
+        text(message.into())
+            .size(theme::text_size::BODY_SMALL)
+            .style(|t: &Theme| iced::widget::text::Style {
+                color: Some(pal_of(t).error),
+            }),
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
+/// Standard dialog anatomy. Boundary rules are opt-in and belong only to
+/// bodies that actually scroll beneath a fixed header/footer.
+pub(crate) fn dialog_sections<'a>(
+    header: Element<'a, Message>,
+    body: Element<'a, Message>,
+    footer: Element<'a, Message>,
+    width: f32,
+    scrolling: bool,
+) -> Element<'a, Message> {
+    let mut content = column![
+        container(header)
+            .padding(iced::Padding {
+                top: 18.0,
+                right: theme::DIALOG_H_PADDING,
+                bottom: 10.0,
+                left: theme::DIALOG_H_PADDING,
+            })
+            .width(Length::Fill)
+    ];
+    if scrolling {
+        content = content.push(widget::rule::horizontal(1).style(shell_rule_style));
+    }
+    content = content.push(
+        container(body)
+            .padding([16.0, theme::DIALOG_H_PADDING])
+            .width(Length::Fill),
+    );
+    if scrolling {
+        content = content.push(widget::rule::horizontal(1).style(shell_rule_style));
+    }
+    content
+        .push(
+            container(footer)
+                .padding([14.0, theme::DIALOG_H_PADDING])
+                .width(Length::Fill),
+        )
+        .spacing(0)
+        .width(Length::Fixed(width))
+        .into()
+}
+
 pub(crate) fn m3_log_text_field<'a>(
-    d: Density,
     label: impl Into<String>,
+    editor: Element<'a, Message>,
+) -> Element<'a, Message> {
+    m3_log_text_field_with_action(label, None, editor)
+}
+
+pub(crate) fn m3_log_text_field_with_action<'a>(
+    label: impl Into<String>,
+    action: Option<Element<'a, Message>>,
     editor: Element<'a, Message>,
 ) -> Element<'a, Message> {
     // Titled like the other dashboard cards rather than like an M2 filled
@@ -37,20 +108,38 @@ pub(crate) fn m3_log_text_field<'a>(
     // rule hundreds of pixels away from its label, marking "focus" on a
     // surface that is never focused.
     let label = label.into();
-    let label_row = container(
+    let mut label_content = row![
         text(label)
-            .size(d.text(theme::text_size::TITLE_SMALL))
+            .size(theme::text_size::BODY_MEDIUM)
             .font(theme::emphasis::medium())
             .line_height(1.0)
             .style(muted_style),
-    )
-    .padding(iced::Padding {
-        top: d.space(12.0),
-        right: d.space(18.0),
-        bottom: d.space(8.0),
-        left: d.space(18.0),
-    })
-    .width(Length::Fill);
+        Space::new().width(Length::Fill),
+    ]
+    .spacing(8.0)
+    .align_y(iced::Alignment::Center);
+    let has_action = action.is_some();
+    if let Some(action) = action {
+        label_content = label_content.push(action);
+    }
+    let label_padding = if has_action {
+        iced::Padding {
+            top: 8.0,
+            right: 12.0,
+            bottom: 4.0,
+            left: 18.0,
+        }
+    } else {
+        iced::Padding {
+            top: 12.0,
+            right: 18.0,
+            bottom: 8.0,
+            left: 18.0,
+        }
+    };
+    let label_row = container(label_content)
+        .padding(label_padding)
+        .width(Length::Fill);
 
     let field = column![
         label_row,
@@ -64,7 +153,7 @@ pub(crate) fn m3_log_text_field<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|t: &Theme| {
-            theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::LG, 1)
+            theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::MD)
         })
         .into()
 }
@@ -74,15 +163,16 @@ pub(crate) fn m3_log_text_field<'a>(
 /// plain `container` does not capture pointer events); modality is decided by
 /// the caller wrapping this in `opaque` or not.
 fn m3_dialog_layers(inner: Element<'_, Message>) -> Element<'_, Message> {
-    let card = container(inner).style(|t: &Theme| {
+    let card = container(inner).style(move |t: &Theme| {
         let p = pal_of(t);
         container::Style {
             background: Some(p.surface_container.into()),
             border: iced::Border {
                 color: p.outline_variant,
                 width: 1.0,
-                // M3 dialogs sit at the extra-large step — now an actual
-                // token rather than a literal that happened to match it.
+                // M3 puts every dialog at the extra-large step; the mockup
+                // squares its cards down to 12, but dialogs are the one
+                // component the spec keeps round.
                 radius: theme::shape::XL.into(),
             },
             shadow: iced::Shadow {
@@ -116,6 +206,12 @@ pub(crate) enum WizardStepState {
     Upcoming,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BannerSeverity {
+    Warning,
+    Error,
+}
+
 pub(crate) fn wizard_step_state(index: usize, current: usize) -> WizardStepState {
     use WizardStepState::{Active, Completed, Upcoming};
 
@@ -126,20 +222,83 @@ pub(crate) fn wizard_step_state(index: usize, current: usize) -> WizardStepState
     }
 }
 
-/// Step bar row height; the trailing rule adds one more pixel.
-const WIZARD_STEP_BAR_HEIGHT: f32 = 48.0;
+/// Expanded step bar row height; the trailing rule adds one more pixel.
+const WIZARD_STEP_BAR_HEIGHT: f32 = 52.0;
+/// Compact's settled condensed indicator keeps its original footprint.
+const COMPACT_WIZARD_STEP_BAR_HEIGHT: f32 = 48.0;
 
-pub(crate) fn wizard_step_bar(steps: &[&str], current: usize) -> Element<'static, Message> {
+pub(crate) fn wizard_step_bar(
+    steps: &[&str],
+    current: usize,
+    size_class: WindowSizeClass,
+) -> Element<'static, Message> {
     let labels: Vec<String> = steps.iter().map(|label| (*label).to_string()).collect();
     let steps_len = labels.len();
 
-    responsive(move |size| {
-        // Per step: 32 marker + 8 gap + 8 connector + label. The widest bundled
-        // locale (ru) needs 801 px for the 7-step root flow and 651 px for the
-        // 6-step flash flow, so 118 px per step plus the row's 48 px padding and
-        // the active pill's 14 px tail clears every locale with margin. Scaling
-        // by step count matters because flows carry 5, 6 or 7 steps.
-        let wide = size.width >= steps_len as f32 * 118.0 + 80.0;
+    if size_class == WindowSizeClass::Compact {
+        const TRACK_WIDTH: f32 = 110.0;
+        let displayed_step = current.saturating_add(1).min(steps_len.max(1));
+        let progress = if steps_len == 0 {
+            0.0
+        } else {
+            displayed_step as f32 / steps_len as f32
+        };
+        let active_label = labels
+            .get(current)
+            .or_else(|| labels.last())
+            .cloned()
+            .unwrap_or_default();
+        let track = container(
+            container(Space::new())
+                .width(Length::Fixed(TRACK_WIDTH * progress))
+                .height(Length::Fixed(4.0))
+                .style(|t: &Theme| container::Style {
+                    background: Some(pal_of(t).primary.into()),
+                    ..Default::default()
+                }),
+        )
+        .width(Length::Fixed(TRACK_WIDTH))
+        .height(Length::Fixed(4.0))
+        .style(|t: &Theme| container::Style {
+            background: Some(pal_of(t).surface_container_high.into()),
+            border: iced::Border {
+                radius: theme::shape::FULL.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let condensed = row![
+            track,
+            text(format!("{displayed_step} / {steps_len} ·"))
+                .size(12)
+                .font(theme::emphasis::medium())
+                .wrapping(iced::widget::text::Wrapping::None),
+            text(active_label)
+                .size(12)
+                .style(muted_style)
+                .wrapping(iced::widget::text::Wrapping::None),
+        ]
+        .spacing(10)
+        .padding([8, 24])
+        .height(Length::Fixed(COMPACT_WIZARD_STEP_BAR_HEIGHT))
+        .align_y(iced::Alignment::Center);
+        return column![
+            container(condensed)
+                .width(Length::Fill)
+                // The step bar reads as part of the content area, not as
+                // shell chrome, so it takes the body background rather than
+                // the surface the app bar and status bar share.
+                .style(|t: &Theme| container::Style {
+                    background: Some(pal_of(t).background.into()),
+                    ..Default::default()
+                }),
+            widget::rule::horizontal(1).style(shell_rule_style),
+        ]
+        .height(Length::Fixed(COMPACT_WIZARD_STEP_BAR_HEIGHT + 1.0))
+        .into();
+    }
+
+    {
         let mut r = row![]
             .spacing(0)
             .align_y(iced::Alignment::Center)
@@ -149,8 +308,10 @@ pub(crate) fn wizard_step_bar(steps: &[&str], current: usize) -> Element<'static
         for (i, label) in labels.iter().enumerate() {
             if i > 0 {
                 let completed = i <= current;
-                r = r.push(container(text("")).width(Length::Fill).height(2).style(
-                    move |t: &Theme| {
+                let connector = container(Space::new().width(Length::Fixed(12.0)))
+                    .width(Length::Fill)
+                    .height(2)
+                    .style(move |t: &Theme| {
                         let p = pal_of(t);
                         let color = if completed {
                             p.primary
@@ -161,8 +322,8 @@ pub(crate) fn wizard_step_bar(steps: &[&str], current: usize) -> Element<'static
                             background: Some(color.into()),
                             ..Default::default()
                         }
-                    },
-                ));
+                    });
+                r = r.push(container(connector).padding([0, 10]).width(Length::Fill));
             }
 
             let state = wizard_step_state(i, current);
@@ -181,10 +342,10 @@ pub(crate) fn wizard_step_bar(steps: &[&str], current: usize) -> Element<'static
                 };
                 iced::widget::text::Style { color: Some(color) }
             }))
-            .width(32)
-            .height(32)
-            .center_x(32)
-            .center_y(32)
+            .width(26)
+            .height(26)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
             .style(move |t: &Theme| {
                 let p = pal_of(t);
                 let (background, border_color) = match state {
@@ -203,116 +364,87 @@ pub(crate) fn wizard_step_bar(steps: &[&str], current: usize) -> Element<'static
                 }
             });
 
-            let step_node: Element<'static, Message> = if state == WizardStepState::Active {
-                container(
-                    row![
-                        marker,
-                        text(label.clone())
-                            .size(12)
-                            .wrapping(iced::widget::text::Wrapping::None)
-                            .style(move |t: &Theme| iced::widget::text::Style {
-                                color: Some(pal_of(t).on_primary_container),
-                            }),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                )
-                .height(Length::Fixed(40.0))
-                .padding(iced::Padding {
-                    top: 4.0,
-                    right: 14.0,
-                    bottom: 4.0,
-                    left: 4.0,
-                })
-                .style(|t: &Theme| container::Style {
-                    background: Some(pal_of(t).primary_container.into()),
-                    border: iced::Border {
-                        radius: theme::shape::FULL.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .into()
-            } else if wide {
-                row![
-                    marker,
-                    text(label.clone())
-                        .size(12)
-                        .wrapping(iced::widget::text::Wrapping::None)
-                        .style(move |t: &Theme| {
-                            let p = pal_of(t);
-                            let color = match state {
-                                WizardStepState::Completed => p.on_primary_container,
-                                WizardStepState::Upcoming => p.on_surface_variant,
-                                WizardStepState::Active => unreachable!(),
-                            };
-                            iced::widget::text::Style { color: Some(color) }
-                        }),
-                ]
+            let mut label_node = text(label.clone())
+                .size(12)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .style(move |t: &Theme| {
+                    let p = pal_of(t);
+                    let color = match state {
+                        WizardStepState::Completed => p.on_primary_container,
+                        WizardStepState::Active => p.on_surface,
+                        WizardStepState::Upcoming => p.on_surface_variant,
+                    };
+                    iced::widget::text::Style { color: Some(color) }
+                });
+            if state == WizardStepState::Active {
+                label_node = label_node.font(theme::emphasis::medium());
+            }
+            let step_node: Element<'static, Message> = row![marker, label_node]
                 .spacing(8)
                 .align_y(iced::Alignment::Center)
-                .into()
-            } else {
-                widget::tooltip(
-                    marker,
-                    container(text(label.clone()).size(12))
-                        .padding([6, 10])
-                        .style(|t: &Theme| theme::tooltip_style(t, theme::shape::SM)),
-                    widget::tooltip::Position::Bottom,
-                )
-                .into()
-            };
+                .into();
             r = r.push(step_node);
         }
 
         column![
             container(r)
                 .width(Length::Fill)
+                // The step bar reads as part of the content area, not as
+                // shell chrome, so it takes the body background rather than
+                // the surface the app bar and status bar share.
                 .style(|t: &Theme| container::Style {
-                    background: Some(pal_of(t).surface_container_low.into()),
+                    background: Some(pal_of(t).background.into()),
                     ..Default::default()
                 }),
             widget::rule::horizontal(1).style(shell_rule_style),
         ]
+        .height(Length::Fixed(WIZARD_STEP_BAR_HEIGHT + 1.0))
         .into()
-    })
-    // Responsive defaults to Length::Fill on both axes; left unbounded it eats
-    // the wizard body's vertical space and squashes the step content below it.
-    .height(Length::Fixed(WIZARD_STEP_BAR_HEIGHT + 1.0))
-    .into()
+    }
 }
 
-/// Large flexible top app bar for screen or wizard title/description.
+/// Execution screens carry phase position in their checklist, so reserving
+/// the normal setup-step bar would repeat the same hierarchy twice.
+pub(crate) fn empty_wizard_step_bar() -> Element<'static, Message> {
+    Space::new().height(0).into()
+}
+
+/// Compact desktop top app bar for a screen or wizard title/description.
 pub(crate) fn large_top_app_bar<'a>(
     title: String,
     subtitle: Option<String>,
 ) -> Element<'a, Message> {
     let padding = iced::Padding {
-        top: 18.0,
+        top: 5.0,
         right: 24.0,
-        bottom: 22.0,
+        bottom: 5.0,
         left: 24.0,
     };
     let content_min_height = WIZARD_TOP_APP_BAR_HEIGHT - padding.top - padding.bottom;
-    let mut content = column![
+    // Beside the title, not stacked under it. The mockup wraps to a second
+    // line in compact, but that guard was for arbitrary step descriptions —
+    // only two subtitles survive in the whole app and both are short, so
+    // they ride the baseline and ellipsize rather than growing the bar.
+    let mut content = row![
         text(title)
-            .size(theme::text_size::HEADLINE_MEDIUM)
-            .font(theme::emphasis::bold())
+            .size(theme::text_size::TITLE_LARGE)
+            .font(theme::emphasis::medium())
+            .line_height(1.0)
             .style(on_surface_style)
-            .width(Length::Fill)
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .wrapping(iced::widget::text::Wrapping::None)
     ]
-    .spacing(6)
+    .spacing(14)
     .width(Length::Fill)
-    .align_x(iced::Alignment::Start);
+    .align_y(iced::Alignment::Center);
 
     if let Some(subtitle) = subtitle.filter(|s| !s.trim().is_empty()) {
         content = content.push(
             text(subtitle)
-                .size(theme::text_size::BODY_MEDIUM)
+                .size(theme::text_size::BODY_SMALL)
+                .line_height(1.0)
                 .style(muted_style)
                 .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                .wrapping(iced::widget::text::Wrapping::None),
         );
     }
 
@@ -324,9 +456,13 @@ pub(crate) fn large_top_app_bar<'a>(
                     .width(Length::Fill)
                     .max_width(WIZARD_TOP_APP_BAR_MAX_WIDTH),
             ]
-            .align_y(iced::Alignment::End)
+            // The 132px large app bar sat its title on the baseline, M3's
+            // large-top-app-bar behaviour. At 64px this is a small top app
+            // bar, whose title is centred in the bar.
+            .align_y(iced::Alignment::Center)
         )
         .width(Length::Fill)
+        .height(Length::Fixed(WIZARD_TOP_APP_BAR_HEIGHT))
         .padding(padding)
         .align_x(iced::Alignment::Start)
         .style(|t: &Theme| panel_bg(t)),
@@ -335,26 +471,99 @@ pub(crate) fn large_top_app_bar<'a>(
     .into()
 }
 
-/// Large flexible top app bar for wizard step title/description. The
-/// app-bar surface owns the step context, while the body can focus on
-/// the actual controls.
+/// Wizard app bar for the flow title and optional step guidance. Expanded
+/// layouts keep both on one line; Compact retains the stacked 64 px bar.
 pub(crate) fn wizard_action_bar<'a>(
+    size_class: WindowSizeClass,
     title: String,
     subtitle: Option<String>,
 ) -> Element<'a, Message> {
-    large_top_app_bar(title, subtitle)
+    if size_class == WindowSizeClass::Compact {
+        return large_top_app_bar(title, subtitle);
+    }
+
+    let title = text(title)
+        .size(theme::text_size::TITLE_LARGE)
+        .font(theme::emphasis::medium())
+        .line_height(1.0)
+        .style(on_surface_style)
+        .wrapping(iced::widget::text::Wrapping::None);
+    let mut content = row![title]
+        .spacing(14)
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center);
+    if let Some(subtitle) = subtitle.filter(|s| !s.trim().is_empty()) {
+        content = content.push(
+            text(subtitle)
+                .size(theme::text_size::BODY_SMALL)
+                .line_height(1.0)
+                .style(muted_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::None),
+        );
+    }
+
+    column![
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fixed(WIZARD_TOP_APP_BAR_HEIGHT))
+            .padding([0, 24])
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|t: &Theme| panel_bg(t)),
+        widget::rule::horizontal(1).style(shell_rule_style),
+    ]
+    .into()
 }
 
-pub(crate) fn sec_hdr<'a>(label: &str, label_alpha: f32) -> Element<'a, Message> {
-    if label_alpha <= 0.0 {
-        return container(text(""))
-            .height(Length::Fixed(SEC_HDR_HEIGHT))
+/// Put the current step name at the top of the wizard content area. The
+/// app bar names the flow; this heading names the step within that flow.
+pub(crate) fn wizard_step_body<'a>(
+    title: String,
+    body: Element<'a, Message>,
+) -> Element<'a, Message> {
+    column![
+        container(
+            text(title)
+                .size(theme::text_size::TITLE_MEDIUM)
+                .font(theme::emphasis::medium())
+                .style(on_surface_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        )
+        .padding(iced::Padding {
+            top: 18.0,
+            right: 24.0,
+            bottom: 0.0,
+            left: 24.0,
+        })
+        .width(Length::Fill),
+        body,
+    ]
+    .spacing(0)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+pub(crate) fn sec_hdr<'a>(label: &str, label_alpha: f32, collapsed: bool) -> Element<'a, Message> {
+    // Reserve the same vertical slot for the divider and label so the Tools
+    // destinations stay in place throughout the hover transition.
+    const HEADER_HEIGHT: f32 = 40.0;
+    if collapsed {
+        return container(widget::rule::horizontal(1).style(shell_rule_style))
+            .padding([0, 12])
+            .width(Length::Fixed(NAV_BTN_COLLAPSED_WIDTH))
+            .height(Length::Fixed(HEADER_HEIGHT))
+            .align_y(iced::Alignment::Center)
             .into();
     }
     let owned = label.to_string();
     let alpha = label_alpha;
     container(
-        text(owned)
+        // Uppercase and letter-spacing carry "section label" here; the
+        // mockup's mono does not, because it has no CJK and this string is
+        // localized — asking for a Latin-only face would break ko/ja/zh/ru.
+        text(owned.to_uppercase())
             .size(theme::text_size::LABEL_SMALL)
             // Same no-wrap rationale as nav_btn — section header text
             // ("Tools" / "도구") must not flow into two lines mid-tween.
@@ -363,92 +572,26 @@ pub(crate) fn sec_hdr<'a>(label: &str, label_alpha: f32) -> Element<'a, Message>
                 color: Some(with_alpha(pal_of(t).on_surface_variant, alpha)),
             }),
     )
-    .padding([10, 22])
-    .height(Length::Fixed(SEC_HDR_HEIGHT))
+    .padding([0, 20])
+    .height(Length::Fixed(HEADER_HEIGHT))
+    .align_y(iced::Alignment::Center)
     .into()
 }
 
-fn card_content<'a>(
-    d: Density,
-    title: &str,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    column![
-        text(title.to_string())
-            .size(d.text(theme::text_size::TITLE_SMALL))
-            .font(theme::emphasis::medium())
-            .style(muted_style)
-            .line_height(1.0),
-        content.into(),
-    ]
-    .spacing(d.space(6.0))
-    .padding(iced::Padding {
-        top: d.space(10.0),
-        right: d.space(18.0),
-        bottom: d.space(14.0),
-        left: d.space(18.0),
-    })
-    .width(Length::Fill)
-    .into()
-}
-
-pub(crate) fn card<'a>(
-    d: Density,
-    title: &str,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    container(card_content(d, title, content))
-        .width(Length::Fill)
-        .style(|t: &Theme| {
-            theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::LG, 1)
-        })
-        .into()
-}
-
-pub(crate) fn clickable_card<'a>(
-    d: Density,
-    title: &str,
-    content: impl Into<Element<'a, Message>>,
-    message: Message,
-) -> Element<'a, Message> {
-    button(card_content(d, title, content))
-        .on_press(message)
-        .padding(0)
-        .width(Length::Fill)
-        .style(|t: &Theme, status| {
-            let p = pal_of(t);
-            button::Style {
-                background: Some(
-                    theme::mix_color(p.surface_container, p.primary, theme::state_alpha(status))
-                        .into(),
-                ),
-                text_color: p.on_surface,
-                border: iced::Border {
-                    color: p.outline_variant,
-                    width: 1.0,
-                    radius: theme::shape::LG.into(),
-                },
-                shadow: theme::elevation(1, theme::is_dark(t)),
-                ..Default::default()
-            }
-        })
-        .into()
-}
-
-pub(crate) fn info_kv<'a>(d: Density, label: &str, value: &str) -> Element<'a, Message> {
+pub(crate) fn info_kv<'a>(label: &str, value: &str) -> Element<'a, Message> {
     column![
         text(label.to_string())
-            .size(d.text(theme::text_size::LABEL_SMALL))
+            .size(theme::text_size::LABEL_SMALL)
             .style(muted_style),
         // Value outranks its caption on weight and color rather than
-        // size — at `BODY_LARGE` the kv grid competed with the device
+        // size — at 16 px the kv grid competed with the device
         // name above it, which is what pushed that name oversized in the
         // first place.
         text(value.to_string())
-            .size(d.text(theme::text_size::BODY_MEDIUM))
+            .size(theme::text_size::BODY_MEDIUM)
             .font(theme::emphasis::medium()),
     ]
-    .spacing(d.space(3.0))
+    .spacing(3.0)
     .into()
 }
 
@@ -473,229 +616,27 @@ pub(crate) fn info_kv_center<'a>(label: &str, value: &str) -> Element<'a, Messag
     .into()
 }
 
-/// Centered summary row that opens an immediate picker/action. Unlike
-/// `info_kv_center_editable`, this is not an override row, so it only uses the
-/// standard state layer on hover/press and never shows the warning accent.
-pub(crate) fn info_kv_center_action<'a>(
-    label: &str,
-    value: &str,
-    on_press: Message,
-) -> Element<'a, Message> {
-    let inner = column![
-        text(label.to_string())
-            .size(11)
-            .style(muted_style)
-            .width(Length::Fill)
-            .center(),
-        text(value.to_string())
-            .size(14)
-            .width(Length::Fill)
-            .center()
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-    ]
-    .spacing(3)
-    .width(Length::Fill)
-    .align_x(iced::Alignment::Center);
-
-    button(inner)
-        .on_press(on_press)
-        .padding([6, 10])
-        .width(Length::Fill)
-        .style(|t: &Theme, status| {
-            let p = pal_of(t);
-            let alpha = theme::state_alpha(status);
-            button::Style {
-                background: (alpha > 0.0).then(|| with_alpha(p.on_surface, alpha).into()),
-                text_color: p.on_surface,
-                border: iced::Border {
-                    radius: theme::shape::SM.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
-        .into()
-}
-
-/// Like [`info_kv_center`] but the value is a click-to-edit "hidden
-/// dropdown": pixel-identical to the static row until pressed, so casual
-/// users never notice it. When `changed` (the picked option diverges from
-/// the confirm baseline) the row takes an accent background + border and a
-/// hover caution spelling out that this is a power-user override.
-pub(crate) fn info_kv_center_editable<'a>(
-    label: &str,
-    value: &str,
-    changed: bool,
-    caution: &str,
-    on_open: Message,
-) -> Element<'a, Message> {
-    let inner = column![
-        text(label.to_string())
-            .size(11)
-            .style(muted_style)
-            .width(Length::Fill)
-            .center(),
-        text(value.to_string())
-            .size(14)
-            .width(Length::Fill)
-            .center()
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-    ]
-    .spacing(3)
-    .width(Length::Fill)
-    .align_x(iced::Alignment::Center);
-
-    let btn = button(inner)
-        .on_press(on_open)
-        .padding([6, 10])
-        .width(Length::Fill)
-        .style(move |t: &Theme, status| {
-            let p = pal_of(t);
-            // Unchanged: no fill even on hover, so the row reads as plain
-            // text. Changed: accent tint that deepens slightly on hover/press.
-            let bg = if changed {
-                with_alpha(p.primary, 0.16 + theme::state_alpha(status))
-            } else {
-                iced::Color::TRANSPARENT
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: p.on_surface,
-                border: iced::Border {
-                    color: if changed {
-                        p.primary
-                    } else {
-                        iced::Color::TRANSPARENT
-                    },
-                    width: if changed { 1.0 } else { 0.0 },
-                    radius: theme::shape::SM.into(),
-                },
-                ..Default::default()
-            }
-        });
-
-    if !changed {
-        return btn.into();
-    }
-
-    iced::widget::tooltip(
-        btn,
-        container(
-            text(caution.to_string())
-                .size(12)
-                .style(warning_style)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-        )
-        .padding([8, 12])
-        .max_width(280)
-        .style(|t: &Theme| {
-            let p = pal_of(t);
-            container::Style {
-                background: Some(p.surface_container_high.into()),
-                border: iced::Border {
-                    color: p.outline_variant,
-                    width: 1.0,
-                    radius: theme::shape::SM.into(),
-                },
-                ..Default::default()
-            }
-        }),
-        iced::widget::tooltip::Position::Top,
-    )
-    .gap(6)
-    .into()
-}
-
-/// Overlay a small "recommended" star badge on the top-right corner of an
-/// option card. Hovering the badge surfaces `tip`. The badge lives in a
-/// non-interactive overlay layer, so the card underneath stays fully
-/// clickable (same `stack` pattern as the dashboard save-FAB).
-pub(crate) fn recommended_overlay(
-    d: Density,
-    card: Element<'static, Message>,
-    tip: String,
-) -> Element<'static, Message> {
-    // Rides the card it sits on: a badge pinned at its minimum size reads as a
-    // speck once the card has grown.
-    let side = Length::Fixed(d.size(22.0));
-    let badge = container(lucide_icon(
-        icon::rec_badge(),
-        d.image(13.0),
-        |t: &Theme| pal_of(t).on_primary,
-    ))
-    .width(side)
-    .height(side)
-    .center_x(side)
-    .center_y(side)
-    .style(|t: &Theme| {
-        let p = pal_of(t);
-        container::Style {
-            background: Some(p.primary.into()),
-            border: iced::Border {
-                radius: theme::shape::FULL.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    });
-    let badge_tip = iced::widget::tooltip(
-        badge,
-        container(
-            text(tip)
-                .size(12)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-        )
-        .padding([8, 12])
-        .max_width(240)
-        .style(|t: &Theme| {
-            let p = pal_of(t);
-            container::Style {
-                background: Some(p.surface_container_high.into()),
-                border: iced::Border {
-                    color: p.outline_variant,
-                    width: 1.0,
-                    radius: theme::shape::SM.into(),
-                },
-                ..Default::default()
-            }
-        }),
-        iced::widget::tooltip::Position::Top,
-    )
-    .gap(6);
-    // Full-size overlay pins the badge to the top-right; padding insets it
-    // from the card edge. The inset has to clear the card's corner arc —
-    // at 8 px against an `LG` radius the badge sat on the curve and read
-    // as clipped by it.
-    let overlay = container(badge_tip)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(12)
-        .align_x(iced::Alignment::End)
-        .align_y(iced::Alignment::Start);
-    iced::widget::stack![card, overlay].into()
-}
-
-pub(crate) fn adv_grid_btn<'a>(d: Density, item: AdvAction, label: &str) -> Element<'a, Message> {
+pub(crate) fn adv_grid_btn<'a>(item: AdvAction, label: &str) -> Element<'a, Message> {
     // Inner container: border-only via `sel_card_style`. Earlier
     // version used `theme::surface_card_style` which paints an opaque
     // bg — that bg sat on top of the button's hover fill, swallowing
     // the highlight and making the grid feel dead on hover.
     let destructive = item.is_destructive();
+    let foreground = move |t: &Theme| {
+        let p = pal_of(t);
+        iced::widget::text::Style {
+            color: Some(if destructive { p.error } else { p.on_surface }),
+        }
+    };
     let content = container(
         text(label.to_string())
-            .size(d.text(12.0))
-            .center()
+            .size(12.0)
             .width(Length::Fill)
-            .style(move |t: &Theme| {
-                let p = pal_of(t);
-                iced::widget::text::Style {
-                    color: Some(if destructive { p.error } else { p.on_surface }),
-                }
-            }),
+            .style(foreground),
     )
-    .padding(d.padding(18.0, 12.0))
+    .padding([18.0, 14.0])
     .width(Length::Fill)
-    .center_x(Length::Fill)
+    .align_x(iced::alignment::Horizontal::Left)
     .style(move |t: &Theme| sel_card_style_for(t, false, destructive));
 
     button(content)
@@ -759,7 +700,7 @@ pub(crate) fn lucide_list_primary(
 }
 
 /// Error-coloured Lucide icon. Pairs with
-/// [`icon_option_card_sub_square_destructive_sized`] so a data-erasing
+/// [`wizard_list_option_card_destructive`] so a data-erasing
 /// option reads as destructive at the glyph, not just at the border.
 pub(crate) fn lucide_error(
     icon: iced::widget::Text<'static, Theme, iced::Renderer>,
@@ -773,8 +714,8 @@ pub(crate) fn lucide_error(
 }
 
 /// Disabled-state Lucide icon — `on_surface` at 0.38 alpha (M3 disabled
-/// content tone). Pair with [`icon_option_card_sub_disabled`] so the
-/// whole card reads as "not pickable on this device".
+/// content tone). Pass `None` to [`wizard_list_option_card`] so the whole row
+/// reads as "not pickable on this device".
 pub(crate) fn lucide_disabled(
     icon: iced::widget::Text<'static, Theme, iced::Renderer>,
     size: f32,
@@ -808,10 +749,117 @@ pub(crate) fn lucide_icon(
     color: impl Fn(&Theme) -> iced::Color + 'static,
 ) -> Element<'static, Message> {
     icon.size(size)
+        // Without this the glyph carries iced's default 1.3 relative line
+        // height, so a 20px icon is laid out in a 26px box and its ink sits
+        // below the centre of whatever slot it is aligned in. Pinning the line
+        // box to the glyph size makes centring exact.
+        .line_height(iced::widget::text::LineHeight::Absolute(size.into()))
         .style(move |t: &Theme| iced::widget::text::Style {
             color: Some(color(t)),
         })
         .into()
+}
+
+/// Lay out wizard choices as one compact column or as an Expanded two-pane
+/// surface. Help copy is always existing localized copy supplied by the step.
+pub(crate) fn wizard_selection_step(
+    size_class: WindowSizeClass,
+    content_width: f32,
+    step_title: String,
+    options: Element<'static, Message>,
+    help: Option<(String, Vec<String>)>,
+) -> Element<'static, Message> {
+    let heading = text(step_title)
+        .size(theme::text_size::TITLE_MEDIUM)
+        .font(theme::emphasis::medium())
+        .style(on_surface_style)
+        .width(Length::Fill)
+        .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+
+    if size_class == WindowSizeClass::Expanded
+        && let Some((help_title, help_paragraphs)) = help
+    {
+        let mut copy = column![
+            text(help_title)
+                .size(theme::text_size::BODY_MEDIUM)
+                .font(theme::emphasis::medium())
+                .style(on_surface_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(10)
+        .width(Length::Fill);
+        for paragraph in help_paragraphs {
+            if !paragraph.trim().is_empty() {
+                copy = copy.push(
+                    text(paragraph)
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(muted_style)
+                        .width(Length::Fill)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                );
+            }
+        }
+
+        // Fill, not centred-inside-Fill. Centring the 720 column in its own
+        // half left the options stranded mid-pane while the help panel clung
+        // to the far edge; the whole assembly is centred below instead.
+        let main = column![heading, options]
+            .spacing(16)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let help_width =
+            (content_width * 0.25).clamp(WIZARD_HELP_PANEL_MIN_WIDTH, WIZARD_HELP_PANEL_WIDTH);
+        let help_panel = container(copy)
+            .width(Length::Fixed(help_width))
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: 4.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            });
+        // M3 caps content and centres it rather than stretching: past the cap
+        // a wider window buys margin, not layout. Capping the pair together
+        // keeps the help panel next to the options it explains instead of
+        // pinning it to the window edge.
+        let assembly_width = WIZARD_LIST_MAX_WIDTH + WIZARD_HELP_PANEL_GAP + 1.0 + help_width;
+        // Fixed, not `max_width`: the cap did not survive this nesting, and
+        // the block silently stretched to the window. `content_width` is
+        // already known here, so the width is computed rather than negotiated.
+        let available = (content_width - 2.0 * WIZARD_STEP_HORIZONTAL_PADDING).max(1.0);
+        let block_width = assembly_width.min(available);
+        let block = container(
+            row![
+                main,
+                widget::rule::vertical(1).style(shell_rule_style),
+                help_panel,
+            ]
+            .spacing(WIZARD_HELP_PANEL_GAP)
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .width(Length::Fixed(block_width))
+        .height(Length::Fill);
+        return container(block)
+            .padding([20.0, WIZARD_STEP_HORIZONTAL_PADDING])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center)
+            .into();
+    }
+
+    container(
+        container(column![heading, options].spacing(16).width(Length::Fill))
+            .padding([20.0, WIZARD_STEP_HORIZONTAL_PADDING])
+            .width(Length::Fill)
+            .max_width(WIZARD_LIST_MAX_WIDTH),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(iced::alignment::Horizontal::Center)
+    .align_y(iced::alignment::Vertical::Top)
+    .into()
 }
 
 pub(crate) fn wizard_list_option_card(
@@ -822,6 +870,142 @@ pub(crate) fn wizard_list_option_card(
     msg: Option<Message>,
     metrics: ListRowMetrics,
 ) -> Element<'static, Message> {
+    wizard_list_option_card_with_role(
+        icon,
+        label,
+        sub,
+        selected,
+        msg,
+        metrics,
+        WizardListOptionRole::Standard,
+    )
+}
+
+/// Selection-row variant with an inline recommendation pill. The pill stays
+/// inside the row's trailing edge so it participates in layout instead of
+/// covering the label or card border.
+pub(crate) fn wizard_list_option_card_recommended(
+    icon: Element<'static, Message>,
+    label: &str,
+    sub: &str,
+    selected: bool,
+    msg: Option<Message>,
+    metrics: ListRowMetrics,
+    recommendation: (&str, &str),
+) -> Element<'static, Message> {
+    wizard_list_option_card_with_role(
+        icon,
+        label,
+        sub,
+        selected,
+        msg,
+        metrics,
+        WizardListOptionRole::Recommended {
+            label: recommendation.0.to_string(),
+            tip: recommendation.1.to_string(),
+        },
+    )
+}
+
+/// Error-role variant for an irreversible selection such as wiping user data.
+pub(crate) fn wizard_list_option_card_destructive(
+    icon: Element<'static, Message>,
+    label: &str,
+    sub: &str,
+    selected: bool,
+    msg: Option<Message>,
+    metrics: ListRowMetrics,
+) -> Element<'static, Message> {
+    wizard_list_option_card_with_role(
+        icon,
+        label,
+        sub,
+        selected,
+        msg,
+        metrics,
+        WizardListOptionRole::Destructive,
+    )
+}
+
+enum WizardListOptionRole {
+    Standard,
+    Destructive,
+    Recommended { label: String, tip: String },
+}
+
+/// Radio indicator for a selection row — these rows are a single-choice
+/// group, and without it nothing on the row says so before you click one.
+/// The ring takes the interactive `outline` tone at rest and the row's own
+/// accent once chosen, so a destructive choice reads red rather than primary.
+fn selection_radio(selected: bool, enabled: bool, destructive: bool) -> Element<'static, Message> {
+    const RING: f32 = 18.0;
+    const DOT: f32 = 9.0;
+    let dot: Element<'static, Message> = if selected {
+        container(Space::new())
+            .width(Length::Fixed(DOT))
+            .height(Length::Fixed(DOT))
+            .style(move |t: &Theme| {
+                let p = pal_of(t);
+                let accent = if destructive { p.error } else { p.primary };
+                container::Style {
+                    background: Some(
+                        if enabled {
+                            accent
+                        } else {
+                            with_alpha(accent, 0.38)
+                        }
+                        .into(),
+                    ),
+                    border: iced::Border {
+                        radius: theme::shape::FULL.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
+    } else {
+        Space::new().into()
+    };
+    container(dot)
+        .width(Length::Fixed(RING))
+        .height(Length::Fixed(RING))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(move |t: &Theme| {
+            let p = pal_of(t);
+            let accent = if destructive { p.error } else { p.primary };
+            let ring = if selected { accent } else { p.outline };
+            container::Style {
+                border: iced::Border {
+                    color: if enabled {
+                        ring
+                    } else {
+                        with_alpha(ring, 0.38)
+                    },
+                    width: 2.0,
+                    radius: theme::shape::FULL.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+fn wizard_list_option_card_with_role(
+    icon: Element<'static, Message>,
+    label: &str,
+    sub: &str,
+    selected: bool,
+    msg: Option<Message>,
+    metrics: ListRowMetrics,
+    role: WizardListOptionRole,
+) -> Element<'static, Message> {
+    let (destructive, recommendation) = match role {
+        WizardListOptionRole::Standard => (false, None),
+        WizardListOptionRole::Destructive => (true, None),
+        WizardListOptionRole::Recommended { label, tip } => (false, Some((label, tip))),
+    };
     let enabled = msg.is_some();
     let label_style_fn = if enabled {
         on_surface_style
@@ -852,165 +1036,69 @@ pub(crate) fn wizard_list_option_card(
     .width(Length::Fill)
     .height(Length::Fill)
     .center_y(Length::Fill);
-    let body = row![icon_tile(icon), text_block]
-        .spacing(metrics.icon_gap)
-        .align_y(iced::Alignment::Center);
+    let mut body = row![
+        selection_radio(selected && enabled, enabled, destructive && enabled),
+        icon_tile(icon),
+        text_block
+    ]
+    .spacing(metrics.icon_gap)
+    .align_y(iced::Alignment::Center);
+    if let Some((label, tip)) = recommendation {
+        let pill = container(
+            row![
+                lucide_icon(icon::rec_badge(), 11.0, |t: &Theme| pal_of(t)
+                    .on_primary_container),
+                text(label)
+                    .size(11.0)
+                    .font(theme::emphasis::medium())
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .style(|t: &Theme| iced::widget::text::Style {
+                        color: Some(pal_of(t).on_primary_container),
+                    }),
+            ]
+            .spacing(4.0)
+            .align_y(iced::Alignment::Center),
+        )
+        .height(Length::Fixed(20.0))
+        .padding([0, 8])
+        .align_y(iced::alignment::Vertical::Center)
+        .style(|t: &Theme| {
+            let p = pal_of(t);
+            container::Style {
+                background: Some(p.primary_container.into()),
+                border: iced::Border {
+                    radius: theme::shape::FULL.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        });
+        let pill_with_tip = widget::tooltip(
+            pill,
+            container(
+                text(tip)
+                    .size(12.0)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            )
+            .padding([8, 12])
+            .max_width(240.0)
+            .style(|t: &Theme| theme::tooltip_style(t, theme::shape::SM)),
+            widget::tooltip::Position::Top,
+        )
+        .gap(6.0);
+        body = body.push(pill_with_tip);
+    }
 
     let inner = container(body)
         .padding(metrics.padding)
         .width(Length::Fill)
         .height(Length::Fixed(metrics.height))
         .center_y(Length::Fixed(metrics.height))
-        .style(move |t: &Theme| sel_card_style(t, selected && enabled));
+        .style(move |t: &Theme| sel_card_style_for(t, selected && enabled, destructive && enabled));
     let btn = button(inner)
         .padding(0)
         .width(Length::Fill)
         .height(Length::Fixed(metrics.height));
-    match msg {
-        Some(m) => btn
-            .on_press(m)
-            .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected))
-            .into(),
-        None => btn
-            .style(|t: &Theme, _status| {
-                let p = pal_of(t);
-                button::Style {
-                    background: Some(with_alpha(p.surface_container_low, 0.5).into()),
-                    text_color: with_alpha(p.on_surface, 0.38),
-                    border: iced::Border {
-                        color: with_alpha(p.outline_variant, 0.6),
-                        width: 1.0,
-                        radius: theme::shape::LG.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .into(),
-    }
-}
-
-pub(crate) fn icon_option_card_sub_square_sized(
-    icon: Element<'static, Message>,
-    label: &str,
-    sub: &str,
-    selected: bool,
-    msg: Message,
-    side: f32,
-) -> Element<'static, Message> {
-    option_card(icon, label, sub, selected, Some(msg), Some(side), false)
-}
-
-/// Square option card for a choice that destroys data. Renders on the
-/// `error` role instead of `primary` so "wipe" never looks like "keep"
-/// with a different label — pair it with [`lucide_error`].
-pub(crate) fn icon_option_card_sub_square_destructive_sized(
-    icon: Element<'static, Message>,
-    label: &str,
-    sub: &str,
-    selected: bool,
-    msg: Message,
-    side: f32,
-) -> Element<'static, Message> {
-    option_card(icon, label, sub, selected, Some(msg), Some(side), true)
-}
-
-pub(crate) fn icon_option_card_sub_square_disabled_sized(
-    icon: Element<'static, Message>,
-    label: &str,
-    sub: &str,
-    side: f32,
-) -> Element<'static, Message> {
-    option_card(icon, label, sub, false, None, Some(side), false)
-}
-
-/// Shared body for the vertical icon → title → description option card.
-/// `msg = None` renders the disabled affordance; `square_side` swaps the
-/// full-width × fixed-height box for a fixed 1:1 square; `destructive`
-/// swaps the accent role from `primary` to `error`.
-fn option_card(
-    icon: Element<'static, Message>,
-    label: &str,
-    sub: &str,
-    selected: bool,
-    msg: Option<Message>,
-    square_side: Option<f32>,
-    destructive: bool,
-) -> Element<'static, Message> {
-    let enabled = msg.is_some();
-    let square = square_side.is_some();
-    let side = square_side.unwrap_or(WIZARD_CARD_SQUARE);
-    let (title_size, desc_size) = square_card_text_sizes(side);
-    let label_style_fn = if enabled {
-        on_surface_style
-    } else {
-        muted_style
-    };
-    // Sub text centres vertically inside the fixed box — top-aligning
-    // left long gaps between short descs and the label above.
-    let sub_text: Element<'static, Message> = if sub.is_empty() {
-        text(" ")
-            .size(desc_size)
-            .width(Length::Fill)
-            .center()
-            .into()
-    } else {
-        // Supporting copy, so the body role rather than the label role the
-        // hardcoded 11 was borrowing. The widest localized description still
-        // wraps to three lines inside the narrowest card at this size.
-        text(sub.to_string())
-            .size(desc_size)
-            .style(muted_style)
-            .width(Length::Fill)
-            .center()
-            .into()
-    };
-    // Square cards are narrower (fixed side), so longer localized
-    // descriptions wrap to more lines. Give them a taller sub-row to absorb
-    // ~4 lines instead of clipping; the standard card keeps its 2-line row.
-    let sub_h = if square {
-        WIZARD_CARD_SQUARE_SUB_HEIGHT
-    } else {
-        SUB_ROW_HEIGHT
-    };
-    let sub_row = container(sub_text)
-        .width(Length::Fill)
-        .height(Length::Fixed(sub_h))
-        .align_y(iced::alignment::Vertical::Center);
-    // Explicit icon→label vs label→desc gaps — a single `spacing` read
-    // unbalanced because the centred sub-row adds ~9 px padding.
-    let content = column![
-        icon_tile(icon),
-        Space::new().height(WIZARD_CARD_ICON_TITLE_GAP),
-        text(label.to_string())
-            .size(title_size)
-            .font(theme::emphasis::medium())
-            .style(label_style_fn)
-            .width(Length::Fill)
-            .center(),
-        Space::new().height(WIZARD_CARD_TITLE_DESC_GAP),
-        sub_row,
-    ]
-    .spacing(0)
-    .align_x(iced::Alignment::Center);
-
-    // Square → fixed side both ways so the row shrink-wraps and centres;
-    // otherwise full width × the standard card height.
-    let card_w: Length = if square {
-        Length::Fixed(side)
-    } else {
-        Length::Fill
-    };
-    let card_h: f32 = if square { side } else { WIZARD_CARD_HEIGHT };
-
-    let inner = container(content)
-        .padding([WIZARD_CARD_VERTICAL_PADDING, WIZARD_CARD_HORIZONTAL_PADDING])
-        .width(card_w)
-        .height(card_h)
-        .center_x(card_w)
-        .center_y(card_h)
-        .style(move |t: &Theme| sel_card_style_for(t, selected && enabled, destructive && enabled));
-
-    let btn = button(inner).padding(0).width(card_w);
     match msg {
         Some(m) => btn
             .on_press(m)
@@ -1019,35 +1107,21 @@ fn option_card(
             })
             .into(),
         None => btn
-            // No `on_press` — iced reports Status::Disabled. Stronger M3
-            // disabled affordance: dimmer surface + a thin outline_variant
-            // border so the inert card reads distinctly against active ones.
             .style(|t: &Theme, _status| {
                 let p = pal_of(t);
                 button::Style {
                     background: Some(with_alpha(p.surface_container_low, 0.5).into()),
                     text_color: with_alpha(p.on_surface, 0.38),
                     border: iced::Border {
-                        color: with_alpha(p.outline_variant, 0.6),
+                        color: with_alpha(p.outline, 0.6),
                         width: 1.0,
-                        radius: theme::shape::LG.into(),
+                        radius: theme::shape::MD.into(),
                     },
                     ..Default::default()
                 }
             })
             .into(),
     }
-}
-
-/// Title and description sizes for a card of `side`, on the same curve the card
-/// itself grows along.
-fn square_card_text_sizes(side: f32) -> (f32, f32) {
-    let progress = ((side - WIZARD_CARD_SQUARE) / (WIZARD_CARD_SQUARE_MAX - WIZARD_CARD_SQUARE))
-        .clamp(0.0, 1.0);
-    (
-        WIZARD_CARD_TITLE_SIZE + (WIZARD_CARD_TITLE_MAX - WIZARD_CARD_TITLE_SIZE) * progress,
-        WIZARD_CARD_DESC_SIZE + (WIZARD_CARD_DESC_MAX - WIZARD_CARD_DESC_SIZE) * progress,
-    )
 }
 
 /// Wrap a wizard icon. Icons already carry their own rounded-rect bg,
@@ -1084,9 +1158,7 @@ impl Family {
 }
 
 impl Provider {
-    /// Provider brand logo at an explicit size. The 2-provider square cards
-    /// pass a smaller value so the 72px logo doesn't overflow the fixed
-    /// square; the full-width grid cards keep the default 72px.
+    /// Provider brand logo at the explicit size used by a compact list row.
     pub(crate) fn icon_sized(self, size: f32) -> Element<'static, Message> {
         // Provider brand logos — kept as bespoke SVG, not Lucide.
         let bytes: &'static [u8] = match self {
@@ -1135,10 +1207,9 @@ impl NightlySource {
 }
 
 impl App {
-    /// Shared confirm-screen frame when the step title/description already
-    /// live in the wizard action bar. Leading rows are full-width callouts or
-    /// lists, short values form a two-column grid, and trailing rows hold
-    /// full-width paths or supporting details.
+    /// Shared confirm-screen frame below the in-content step heading. Leading
+    /// rows are full-width callouts or lists, short values form a two-column
+    /// grid, and trailing rows hold full-width paths or supporting details.
     pub(crate) fn confirm_step_frame<'a>(
         &self,
         leading: Vec<Element<'a, Message>>,
@@ -1194,10 +1265,10 @@ impl App {
             content = content.push(group);
         }
 
-        // The scroller itself shrinks when content is short, allowing the
-        // outer fill-height container to center it. Its child deliberately
-        // has no fill height: a scrollable measures content with an unbounded
-        // vertical limit, where Fill cannot resolve to the viewport.
+        // The scroller itself shrinks when content is short. Its child
+        // deliberately has no fill height: a scrollable measures content
+        // with an unbounded vertical limit, where Fill cannot resolve to the
+        // viewport.
         let summary = iced::widget::scrollable(content)
             .style(m3_scrollable_style)
             .height(Length::Shrink)
@@ -1211,19 +1282,7 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
-        .center_y(Length::Fill)
+        .align_y(iced::alignment::Vertical::Top)
         .into()
-    }
-}
-
-#[cfg(test)]
-mod typography_tests {
-    use super::{WIZARD_CARD_SQUARE, WIZARD_CARD_SQUARE_MAX, square_card_text_sizes};
-
-    #[test]
-    fn option_card_typography_tracks_square_growth_endpoints() {
-        assert_eq!(square_card_text_sizes(WIZARD_CARD_SQUARE), (16.0, 12.0));
-        assert_eq!(square_card_text_sizes(WIZARD_CARD_SQUARE_MAX), (20.0, 14.0));
-        assert_eq!(square_card_text_sizes(270.0), (18.0, 13.0));
     }
 }

@@ -5,7 +5,8 @@
 //! where `flow` is `same` or `other` and `step` is `region`, `target`, `data`,
 //! `country`, `folder`, `confirm`, or `flash`. It also accepts first-screen view scenes
 //! `view:root`, `view:unroot`, `view:sysupdate`, `view:konabess`,
-//! `view:reboot`, `view:advanced`, `view:settings`, and `view:about`, plus the
+//! `view:reboot`, `view:reboot-wait`, `view:advanced`, `view:settings`, and
+//! `view:about`, plus the
 //! static inspection scenes enumerated in [`VALID_SCENES`], including the
 //! Advanced partition-table scenes `view:flash-parts` and `view:dump-parts`.
 
@@ -42,6 +43,7 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "view:sysupdate",
     "view:konabess",
     "view:reboot",
+    "view:reboot-wait",
     "view:advanced",
     "view:settings",
     "view:about",
@@ -70,6 +72,7 @@ pub(crate) enum Scene {
     DualUsbAdvisory,
     Wizard { flow: Flow, step: WizardStep },
     View(View),
+    RebootWait,
     Root(RootScene),
     AdvancedRegionTarget,
     SysUpdateRescue(SysUpdateRescueScene),
@@ -131,6 +134,7 @@ impl Scene {
             "view:sysupdate" => Some(Self::View(View::SystemUpdate)),
             "view:konabess" => Some(Self::View(View::KonaBess)),
             "view:reboot" => Some(Self::View(View::Reboot)),
+            "view:reboot-wait" => Some(Self::RebootWait),
             "view:advanced" => Some(Self::View(View::Advanced)),
             "view:settings" => Some(Self::View(View::Settings)),
             "view:about" => Some(Self::View(View::About)),
@@ -189,6 +193,7 @@ impl Scene {
                 return DevicePollResult {
                     status: ConnectionStatus::Adb,
                     model: "TB323FU".to_string(),
+                    android_version: "15".to_string(),
                     slot: "_a".to_string(),
                     firmware: "ZUXOS_1.0.0".to_string(),
                     firmware_full: "ZUXOS_1.0.0".to_string(),
@@ -203,6 +208,7 @@ impl Scene {
             Self::Dashboard
             | Self::Wizard { .. }
             | Self::View(_)
+            | Self::RebootWait
             | Self::Root(_)
             | Self::AdvancedRegionTarget
             | Self::SysUpdateRescue(_)
@@ -212,6 +218,7 @@ impl Scene {
         DevicePollResult {
             status: ConnectionStatus::Adb,
             model: "TB520FU".to_string(),
+            android_version: "15".to_string(),
             slot: "_a".to_string(),
             firmware: "ZUXOS_1.5.10.186_ST_260408".to_string(),
             firmware_full: "ZUXOS_1.5.10.186_ST_260408".to_string(),
@@ -259,6 +266,7 @@ pub(crate) fn initialize(app: &mut App) {
     match scene {
         Scene::Wizard { flow, step } => apply_wizard_scene(app, flow, step),
         Scene::View(view) => app.current_view = view,
+        Scene::RebootWait => apply_reboot_wait_scene(app),
         Scene::Root(root_scene) => apply_root_scene(app, root_scene),
         Scene::AdvancedRegionTarget => apply_advanced_region_target_scene(app),
         Scene::SysUpdateRescue(rescue_scene) => apply_sysupdate_rescue_scene(app, rescue_scene),
@@ -269,6 +277,14 @@ pub(crate) fn initialize(app: &mut App) {
         | Scene::DriversMissing
         | Scene::AdbConflict => {}
     }
+}
+
+fn apply_reboot_wait_scene(app: &mut App) {
+    app.current_view = View::Reboot;
+    app.operation
+        .start(Some(View::Reboot), OperationKind::Unphased, None);
+    app.reboot_wait_transition = true;
+    app.reboot_wait_dialog_open = true;
 }
 
 fn apply_dual_usb_advisory_scene(app: &mut App) {
@@ -424,9 +440,9 @@ fn apply_partition_table_scene(app: &mut App, table: PartitionTableScene) {
                             _ => None,
                         },
                         state: match i {
-                            10 | 12 => FlashRowState::Flash,
+                            10 | 12 => FlashRowState::Write,
                             23 => FlashRowState::Erase,
-                            _ => FlashRowState::Unchecked,
+                            _ => FlashRowState::Skip,
                         },
                     })
                     .collect(),
@@ -494,6 +510,7 @@ fn apply_wizard_scene(app: &mut App, flow: Flow, step: WizardStep) {
             WizardStep::Confirm => 4,
             WizardStep::Flash => 5,
         },
+        region_selection: Some(FlashRegionSelection::Manual(DeviceRegion::Prc)),
         device_region: Some(DeviceRegion::Prc),
         target: Some(target),
         data_mode: Some(data_mode),
@@ -523,6 +540,7 @@ pub(crate) fn prepare_flash_region_on_entry(app: &mut App) -> bool {
         return false;
     }
     if app.flash.device_region.is_none() {
+        app.flash.region_selection = Some(FlashRegionSelection::Manual(DeviceRegion::Row));
         app.flash.device_region = Some(DeviceRegion::Row);
         app.flash.step = 1;
     }
@@ -608,17 +626,26 @@ mod tests {
         drop(app.update(Message::DevicePolled(scene.poll_result())));
 
         assert!(app.device.serial.is_empty());
-        drop(app.begin_flash_region_auto());
+        drop(app.prepare_flash_region_on_entry());
 
         assert_eq!(app.flash.device_region, Some(DeviceRegion::Row));
+        assert_eq!(
+            app.flash.region_selection,
+            Some(FlashRegionSelection::Manual(DeviceRegion::Row))
+        );
         assert_eq!(app.flash.step, 1);
         assert!(app.flash_serial_prompt.is_none());
         assert!(app.queries.region_pending.is_none());
 
+        app.flash.region_selection = Some(FlashRegionSelection::Manual(DeviceRegion::Prc));
         app.flash.device_region = Some(DeviceRegion::Prc);
         app.flash.step = 4;
-        drop(app.begin_flash_region_auto());
+        drop(app.prepare_flash_region_on_entry());
         assert_eq!(app.flash.device_region, Some(DeviceRegion::Prc));
+        assert_eq!(
+            app.flash.region_selection,
+            Some(FlashRegionSelection::Manual(DeviceRegion::Prc))
+        );
         assert_eq!(app.flash.step, 4);
     }
 
@@ -648,6 +675,7 @@ mod tests {
             assert_eq!(app.current_view, expected_view);
             assert_eq!(app.device.connection, ConnectionStatus::Adb);
             assert_eq!(app.device.model, "TB520FU");
+            assert_eq!(app.device.android_version, "15");
             assert_eq!(app.device.market_name, "YOGA Pad Pro");
             assert_eq!(app.device.ram, "12 GB");
             assert_eq!(app.device.storage, "256 GB");
@@ -788,11 +816,25 @@ mod tests {
     }
 
     #[test]
+    fn reboot_wait_scene_uses_the_tracked_reboot_operation() {
+        let mut app = App::default();
+        apply_reboot_wait_scene(&mut app);
+
+        assert_eq!(app.current_view, View::Reboot);
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Reboot));
+        assert!(app.reboot_wait_transition);
+        assert!(app.reboot_wait_dialog_open);
+        assert!(!app.should_show_busy_progress_dialog());
+    }
+
+    #[test]
     fn dashboard_identity_is_populated_but_unreadable_scenes_stay_empty() {
         let mut dashboard = App::default();
         drop(dashboard.update(Message::DevicePolled(Scene::Dashboard.poll_result())));
         assert_eq!(dashboard.device.connection, ConnectionStatus::Adb);
         assert_eq!(dashboard.device.model, "TB520FU");
+        assert_eq!(dashboard.device.android_version, "15");
         assert_eq!(dashboard.device.market_name, "YOGA Pad Pro");
         assert_eq!(dashboard.device.ram, "12 GB");
         assert_eq!(dashboard.device.storage, "256 GB");
@@ -810,6 +852,7 @@ mod tests {
                 drop(app.update(Message::DevicePolled(scene.poll_result())));
                 assert_eq!(app.device.connection, status);
                 assert!(app.device.model.is_empty());
+                assert!(app.device.android_version.is_empty());
                 assert!(app.device.market_name.is_empty());
                 assert!(app.device.ram.is_empty());
                 assert!(app.device.storage.is_empty());

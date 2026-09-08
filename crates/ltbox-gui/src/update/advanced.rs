@@ -350,8 +350,14 @@ impl App {
                 Task::none()
             }
             FlashPartsMsg::FlashPartsToggleRow(idx) => {
+                let state = self.flash_parts.rows.get(idx).map(|row| row.state);
+                if state == Some(FlashRowState::Skip) {
+                    return self.update(Message::FlashParts(FlashPartsMsg::FlashPartsPickRowFile(
+                        idx,
+                    )));
+                }
                 if let Some(row) = self.flash_parts.rows.get_mut(idx) {
-                    row.state = row.state.cycle();
+                    row.advance_action();
                 }
                 Task::none()
             }
@@ -368,11 +374,14 @@ impl App {
                 if let Some(p) = path {
                     self.remember_recent(pickers::PickerKind::File, &p);
                     if let Some(row) = self.flash_parts.rows.get_mut(idx) {
-                        row.file_path = Some(p);
-                        // Picking a file implicitly flips the row to Flash
-                        // so the user doesn't have to also cycle the box.
-                        row.state = FlashRowState::Flash;
+                        row.assign_file(p);
                     }
+                }
+                Task::none()
+            }
+            FlashPartsMsg::FlashPartsClearRowFile(idx) => {
+                if let Some(row) = self.flash_parts.rows.get_mut(idx) {
+                    row.clear_file();
                 }
                 Task::none()
             }
@@ -484,7 +493,7 @@ impl App {
                 let rows = self.flash_parts.active_rows();
                 let flash_cnt = rows
                     .iter()
-                    .filter(|r| r.state == FlashRowState::Flash)
+                    .filter(|r| r.state == FlashRowState::Write)
                     .count();
                 let erase_cnt = rows
                     .iter()
@@ -892,7 +901,7 @@ impl App {
             }
             AdvMsg::AdvWizOpenCountry => {
                 self.adv_needs_country = true;
-                self.country_popup_open = true;
+                self.open_country_popup();
                 Task::none()
             }
             AdvMsg::AdvWizOpenRegionTarget => {

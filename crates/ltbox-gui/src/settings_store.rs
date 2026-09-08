@@ -105,6 +105,11 @@ pub struct PersistedSettings {
     /// Material color seed. Defaults to the original indigo palette.
     #[serde(default = "default_theme_seed")]
     pub theme_seed: String,
+    /// Use iced's operating-system default font instead of the bundled Noto
+    /// family. The renderer binds its default font at startup, so changes take
+    /// effect on the next application launch.
+    #[serde(default)]
+    pub use_system_font: bool,
     /// Legacy flag kept for upgrade compatibility. `theme` is the
     /// source of truth for new saves.
     #[serde(default)]
@@ -208,6 +213,7 @@ impl Default for PersistedSettings {
             language: default_language(),
             theme: "system".to_string(),
             theme_seed: default_theme_seed(),
+            use_system_font: false,
             dark_mode: false,
             recent_paths: RecentPaths::default(),
             default_loader_path: None,
@@ -306,6 +312,7 @@ mod tests {
         assert_eq!(s.language, "en");
         assert_eq!(s.theme, "system");
         assert_eq!(s.theme_seed, "indigo");
+        assert!(!s.use_system_font);
         assert!(!s.dark_mode);
     }
 
@@ -348,6 +355,7 @@ mod tests {
         assert_eq!(s.theme, "");
         assert_eq!(s.theme_seed, "indigo");
         assert_eq!(s.qcom_driver_mode, default_qcom_driver_mode());
+        assert!(!s.use_system_font);
         assert!(s.dark_mode);
     }
 
@@ -357,6 +365,15 @@ mod tests {
             serde_json::from_str(r#"{"theme": "dark", "theme_seed": "teal"}"#).unwrap();
         assert_eq!(s.theme, "dark");
         assert_eq!(s.theme_seed, "teal");
+    }
+
+    #[test]
+    fn system_font_field_roundtrips() {
+        let s: PersistedSettings = serde_json::from_str(r#"{"use_system_font": true}"#).unwrap();
+        assert!(s.use_system_font);
+        let json = serde_json::to_string(&s).unwrap();
+        let stored: PersistedSettings = serde_json::from_str(&json).unwrap();
+        assert!(stored.use_system_font);
     }
 
     #[test]

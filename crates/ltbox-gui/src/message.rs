@@ -16,6 +16,8 @@ pub(crate) enum Message {
     OperationEvent(crate::operation_execution::OperationId, Box<Message>),
     /// No-op for click-blocker mouse_area widgets.
     Noop,
+    /// Hide only the modeless EDL wait dialog; the worker keeps running.
+    RebootWaitDismiss,
     StartupDisclaimerToggled(bool),
     StartupDisclaimerConfirm,
     StartupDisclaimerExit,
@@ -31,7 +33,10 @@ pub(crate) enum Message {
     OpenExternalUrl(String),
     SetTheme(ThemeChoice),
     ToggleLogPopup(bool),
+    CountrySearchInput(String),
+    /// Stage a row in the country popup; the footer action commits it.
     SelectCountry(String),
+    CountryPopupConfirm,
     SkipCountryPatch,
     DismissCountryPopup,
     SelectRegionTarget(DeviceRegion),
@@ -70,7 +75,7 @@ pub(crate) enum Message {
     DeviceInfoClose,
     /// Retry fetch for the currently open popup serial.
     DeviceInfoRetry,
-    /// Click on the dashboard firmware version. Opens the OTA popup
+    /// Click on the dashboard OTA lookup action. Opens the OTA popup
     /// and fires the upstream `querynewfirmware` request.
     OtaOpen,
     /// Result of the OTA fetch, keyed by the (serial, firmware-id)
@@ -91,9 +96,7 @@ pub(crate) enum Message {
     /// changelog editor. Edit actions are dropped so the user can
     /// drag-select / Ctrl+C without mutating the changelog buffer.
     OtaChangelogAction(iced::widget::text_editor::Action),
-    /// Open/close the firmware-version dropdown (QFIL Firmware / OTA Package).
-    FirmwareMenu(bool),
-    /// Click the "QFIL Firmware" menu item. Resolves the device MTM, then the
+    /// Click the dashboard firmware lookup action. Resolves the device MTM, then the
     /// official QFIL package (CN-only), and opens the QFIL popup.
     QfilOpen,
     /// Result of the QFIL fetch, keyed by the serial it was started for.
@@ -169,11 +172,10 @@ pub(crate) enum Message {
     /// "Close" on the dual-USB-C port guide for the given model — hide it
     /// for this session only (returns on the next launch).
     CloseDualUsbAdvisory(String),
-    /// 16 ms tick for the cable motion; subscribed only while the guide is open.
-    DualUsbCableAnimTick,
     DrainStdoutTap,
     LogEditorAction(iced::widget::text_editor::Action),
     ImageInfoLogEditorAction(iced::widget::text_editor::Action),
+    ClearLog,
     SaveLog,
     SaveLogPath(Option<std::path::PathBuf>),
     Window(WindowMsg),
@@ -221,7 +223,8 @@ pub(crate) enum WindowMsg {
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum FlashMsg {
     FlashRegion(DeviceRegion),
-    /// Result of the on-entry auto-region PTSTPD fetch: `(probe_id, serial,
+    FlashRegionAuto,
+    /// Result of an on-demand auto-region PTSTPD fetch: `(probe_id, serial,
     /// result)`. The monotonic `probe_id` is the staleness token — only the
     /// currently-pending probe is applied. Preselects PRC/ROW from SaleArea
     /// and advances past the step.
@@ -241,6 +244,7 @@ pub(crate) enum FlashMsg {
     FlashNext,
     FlashBack,
     FlashSelectFolder,
+    FlashClearFolder,
     FlashFirmwareIdentityInspected(String, Result<FirmwareIdentity, String>),
     FlashFirmwareIdentityDialogAction,
     /// Pick a standalone EDL loader when the firmware folder ships none.
@@ -404,6 +408,7 @@ pub(crate) enum FlashPartsMsg {
     FlashPartsToggleRow(usize),
     FlashPartsPickRowFile(usize),
     FlashPartsRowFileChosen(usize, Option<String>),
+    FlashPartsClearRowFile(usize),
     FlashPartsNext,
     FlashPartsBack,
     FlashPartsClose,
@@ -492,6 +497,7 @@ pub(crate) enum RebootMsg {
 pub(crate) enum SettingsMsg {
     SetLanguage(Language),
     SetThemeSeed(ThemeSeed),
+    SetUseSystemFont(bool),
     SetQcomDriverMode(ltbox_device::driver::QcomDriverMode),
     SettingsPickDefaultLoader,
     SettingsDefaultLoaderChosen(Option<String>),

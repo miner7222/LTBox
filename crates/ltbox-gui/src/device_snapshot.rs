@@ -7,6 +7,7 @@ use ltbox_patch::rollback::FastbootRollbackFloors;
 pub(crate) enum SnapshotField {
     Connection,
     Model,
+    AndroidVersion,
     Slot,
     Firmware,
     FirmwareFull,
@@ -24,6 +25,7 @@ pub(crate) enum SnapshotField {
 pub(crate) struct DeviceSnapshot {
     pub(crate) connection: ConnectionStatus,
     pub(crate) model: String,
+    pub(crate) android_version: String,
     pub(crate) slot: String,
     pub(crate) firmware: String,
     pub(crate) firmware_full: String,
@@ -35,7 +37,7 @@ pub(crate) struct DeviceSnapshot {
     pub(crate) fastboot_userspace: bool,
     pub(crate) platform_supported: Option<bool>,
     pub(crate) rollback_floors: Option<FastbootRollbackFloors>,
-    pub(crate) fresh: [bool; 13],
+    pub(crate) fresh: [bool; 14],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +101,15 @@ impl DeviceSnapshot {
                 self.fresh[field as usize] = true;
             }
         }
+        if matches!(
+            self.connection,
+            ConnectionStatus::Adb | ConnectionStatus::AdbRecovery
+        ) {
+            self.android_version = poll.android_version;
+            self.fresh[SnapshotField::AndroidVersion as usize] = true;
+        } else {
+            self.android_version.clear();
+        }
         self.fastboot_userspace = poll.fastboot_userspace;
         self.fresh[SnapshotField::FastbootUserspace as usize] = true;
         self.platform_supported = poll.platform_supported;
@@ -148,6 +159,7 @@ mod tests {
 
     fn assert_details_empty(snapshot: &DeviceSnapshot) {
         assert!(snapshot.model.is_empty());
+        assert!(snapshot.android_version.is_empty());
         assert!(snapshot.slot.is_empty());
         assert!(snapshot.firmware.is_empty());
         assert!(snapshot.firmware_full.is_empty());
@@ -216,6 +228,27 @@ mod tests {
         assert!(snapshot.rollback_floors.is_none());
         assert!(!snapshot.is_fresh(SnapshotField::Serial));
         assert!(!snapshot.is_fresh(SnapshotField::RollbackFloors));
+    }
+
+    #[test]
+    fn android_version_is_adb_only_and_clears_when_transport_changes() {
+        let mut snapshot = DeviceSnapshot::default();
+        snapshot.apply(DevicePollResult {
+            status: ConnectionStatus::Adb,
+            model: "TB520FU".into(),
+            android_version: "15".into(),
+            ..DevicePollResult::default()
+        });
+        assert_eq!(snapshot.android_version, "15");
+        assert!(snapshot.is_fresh(SnapshotField::AndroidVersion));
+
+        snapshot.apply(DevicePollResult {
+            status: ConnectionStatus::Fastboot,
+            model: "TB520FU".into(),
+            ..DevicePollResult::default()
+        });
+        assert!(snapshot.android_version.is_empty());
+        assert!(!snapshot.is_fresh(SnapshotField::AndroidVersion));
     }
 
     #[test]

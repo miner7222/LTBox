@@ -32,7 +32,6 @@ impl App {
         self.device_info_popup = None;
         self.ota_popup = None;
         self.qfil_popup = None;
-        self.firmware_menu_open = false;
         self.queries.invalidate_context();
     }
 
@@ -61,6 +60,18 @@ impl App {
         if let Err(error) = open::that_detached(&release.html_url) {
             tracing::warn!("failed to open update URL: {error}");
         }
+    }
+
+    fn open_country_popup(&mut self) {
+        self.country_popup_search.clear();
+        self.country_popup_draft = if self.adv_needs_country {
+            self.country_popup_selected_code()
+                .map(|code| CountryAction::Set(code.to_string()))
+                .unwrap_or(CountryAction::Unset)
+        } else {
+            self.wf_config.country_action.clone()
+        };
+        self.country_popup_open = true;
     }
 
     pub(crate) fn update(&mut self, msg: Message) -> Task<Message> {
@@ -129,9 +140,9 @@ impl App {
                 if self.startup_disclaimer_checked {
                     self.startup_disclaimer_open = false;
                     if let Some(model) = self.dual_usb_advisory_model().map(str::to_owned) {
+                        self.dual_usb_help_name = self.device.market_name.trim().to_owned();
                         self.dual_usb_help_model = model;
                         self.dual_usb_help_open = true;
-                        self.dual_usb_cable_phase = 0.0;
                     }
                 }
             }
@@ -156,6 +167,9 @@ impl App {
             Message::PersistWindowSize => return self.update_persist_window_size(),
             // Navigation
             Message::Noop => {}
+            Message::RebootWaitDismiss => {
+                self.reboot_wait_dialog_open = false;
+            }
             Message::ResumeBusyOperation => {
                 if let Some(view) =
                     busy_navigation_target(self.operation.is_running(), self.operation.view())
@@ -192,15 +206,12 @@ impl App {
                     && !self.flash.is_on_confirm_step()
                 {
                     self.flash.reset();
-                    // Fresh entry: auto-detect the hardware region (PRC/ROW)
-                    // so the user lands on the target step; falls back to the
-                    // manual region cards on failure. Returns early — the
-                    // remaining view branches are for other views. Clearing the
-                    // pending token invalidates any lookup still in flight from
-                    // a prior entry.
+                    // Fresh entry clears any lookup still in flight from a
+                    // prior visit. Normal models remain on the region choices;
+                    // only the PRC-only SKU and deterministic demo setup skip it.
                     self.queries.region_pending = None;
                     self.flash_serial_prompt = None;
-                    return self.begin_flash_region_auto();
+                    return self.prepare_flash_region_on_entry();
                 }
                 if v == View::SystemUpdate
                     && !busy
@@ -280,6 +291,9 @@ impl App {
             // Flash wizard
             Message::Flash(m) => return self.update_flash(m),
             // Country code popup
+            Message::CountrySearchInput(query) => {
+                self.country_popup_search = query;
+            }
             Message::SelectCountry(code) => {
                 // PRC-only models make the Flash wizard accept only `CN`.
                 // The popup grays out other entries, but a stale dispatch could
@@ -289,33 +303,40 @@ impl App {
                 {
                     return Task::none();
                 }
-                self.country_popup_open = false;
+                self.country_popup_draft = CountryAction::Set(code);
+            }
+            Message::CountryPopupConfirm => {
+                let draft = self.country_popup_draft.clone();
                 if self.adv_needs_country {
-                    // Advanced wizard stores on `adv_wizard.country`.
+                    let CountryAction::Set(code) = draft else {
+                        return Task::none();
+                    };
+                    // Advanced wizard stores on `adv_wizard.country` and
+                    // always requires a concrete target.
                     self.adv_wizard.country = Some(code);
                     self.adv_needs_country = false;
                 } else {
-                    // Flash wizard: `wf_config` is source of truth.
-                    self.wf_config.country_action = CountryAction::Set(code);
+                    // Wipe mode requires an explicit country or Skip choice;
+                    // keep-data may retain its neutral Unset value.
+                    if self.wf_config.wipe && matches!(draft, CountryAction::Unset) {
+                        return Task::none();
+                    }
+                    self.wf_config.country_action = draft;
                 }
+                self.country_popup_open = false;
+                self.country_popup_search.clear();
             }
             Message::SkipCountryPatch => {
-                // Flash wizard only — Advanced PatchDevinfo always needs a
-                // target code, so the popup hides this option there.
-                // Wipe mode records an explicit skip; keep-data mode leaves
-                // the neutral default as Unset so the confirm row is not
-                // highlighted for a no-op choice.
-                self.country_popup_open = false;
+                // Flash wizard only — stage "Do not change" and leave the
+                // popup open until the footer action confirms it.
                 if !self.adv_needs_country {
-                    self.wf_config.country_action = if self.wf_config.wipe {
-                        CountryAction::Skip
-                    } else {
-                        CountryAction::Unset
-                    };
+                    self.country_popup_draft = CountryAction::Skip;
                 }
             }
             Message::DismissCountryPopup => {
                 self.country_popup_open = false;
+                self.country_popup_search.clear();
+                self.country_popup_draft = CountryAction::Unset;
                 if self.adv_needs_country {
                     self.adv_needs_country = false;
                 } else if self.flash.current_step() == FlashStep::Folder
@@ -402,7 +423,12 @@ impl App {
                 // an operation error is surfaced, and the last point where the
                 // running operation is still known — `fail_op` clears it.
                 let e = e.replace("{work}", &self.busy_operation_label());
+                let reboot_wait_failed = self.operation.view() == Some(View::Reboot);
                 self.fail_op();
+                if reboot_wait_failed {
+                    self.reboot_wait_transition = false;
+                    self.reboot_wait_dialog_open = false;
+                }
                 self.operation_error = Some(e.clone());
                 self.error_msg = Some(e.clone());
                 self.log_push(tr_args!("log_operation_error", error = e.to_string()));
@@ -509,6 +535,10 @@ impl App {
                     self.image_info_log_editor.perform(action);
                 }
             }
+            Message::ClearLog => {
+                self.log_lines.clear();
+                self.rebuild_log_editor();
+            }
             Message::SaveLog => {
                 let source = self.active_log_save_source();
                 self.pending_log_save_source = source;
@@ -604,6 +634,11 @@ impl App {
                                         ConnectionStatus::Adb
                                     };
                                     r.model = strip_twrp_prefix(&raw_model);
+                                    r.android_version = adb
+                                        .shell("getprop ro.build.version.release")
+                                        .unwrap_or_default()
+                                        .trim()
+                                        .to_string();
                                     r.slot =
                                         adb.get_slot_suffix().ok().flatten().unwrap_or_default();
                                     let fw_raw = adb
@@ -690,9 +725,9 @@ impl App {
                     && dual_usb_advisory_model != previous_dual_usb_advisory_model
                     && let Some(model) = dual_usb_advisory_model
                 {
+                    self.dual_usb_help_name = self.device.market_name.trim().to_owned();
                     self.dual_usb_help_model = model;
                     self.dual_usb_help_open = true;
-                    self.dual_usb_cable_phase = 0.0;
                 }
             }
             Message::DeviceInfoOpen => {
@@ -771,7 +806,6 @@ impl App {
             }
             Message::OtaOpen => {
                 self.queries.cancel_lookup(LookupKind::Ota);
-                self.firmware_menu_open = false;
                 let serial = self.device.serial.trim().to_string();
                 // Pass the untrimmed firmware id to the OTA endpoint —
                 // Lenovo's `querynewfirmware` keys against the full
@@ -904,12 +938,8 @@ impl App {
                     tracing::warn!("failed to open URL {url}: {e}");
                 }
             }
-            Message::FirmwareMenu(open) => {
-                self.firmware_menu_open = open;
-            }
             Message::QfilOpen => {
                 self.queries.cancel_lookup(LookupKind::Qfil);
-                self.firmware_menu_open = false;
                 let serial = self.device.serial.trim().to_string();
                 if serial.is_empty() {
                     return Task::none();
@@ -979,12 +1009,20 @@ impl App {
                 self.toast_msg = None;
             }
             Message::SidebarHoverEnter => {
-                self.sidebar_expanded = true;
+                if self.window_size_class() == WindowSizeClass::Compact {
+                    self.sidebar_expanded = true;
+                }
             }
             Message::SidebarHoverExit => {
                 self.sidebar_expanded = false;
             }
             Message::SidebarAnimTick => {
+                // Expanded has no hover drawer. Clear compact hover state
+                // inherited across a resize, then let the same spring settle
+                // invisibly to its compact-collapsed resting value.
+                if self.window_size_class() == WindowSizeClass::Expanded {
+                    self.sidebar_expanded = false;
+                }
                 // M3 Expressive Spatial spring: critically damped enough
                 // that navigation doesn't oscillate, with a touch of
                 // overshoot at hover-exit so the rail "snaps" closed.
@@ -1000,7 +1038,14 @@ impl App {
                 let next = self.sidebar_anim + self.sidebar_velocity * DT;
                 // Settle: both displacement AND velocity near zero.
                 // Avoids clipping the tail of the spring response.
-                if displacement.abs() < 0.001 && self.sidebar_velocity.abs() < 0.05 {
+                //
+                // Test the value this tick produces, not the one it started
+                // from. `subscription` stops ticking on exactly this condition
+                // evaluated against the new value, so judging it against the
+                // old one meant the tick that first satisfied it never got to
+                // snap — the rail rested a hair off zero, which left the
+                // overlay's drawer shadow drawn after the pointer had left.
+                if (target - next).abs() < 0.001 && self.sidebar_velocity.abs() < 0.05 {
                     self.sidebar_anim = target;
                     self.sidebar_velocity = 0.0;
                 } else {
@@ -1061,7 +1106,6 @@ impl App {
                     self.persist_settings();
                 }
                 self.dual_usb_help_open = false;
-                self.dual_usb_cable_phase = 0.0;
             }
             Message::CloseDualUsbAdvisory(model) => {
                 if !self
@@ -1072,15 +1116,6 @@ impl App {
                     self.dual_usb_advisory_closed.push(model);
                 }
                 self.dual_usb_help_open = false;
-                self.dual_usb_cable_phase = 0.0;
-            }
-            Message::DualUsbCableAnimTick => {
-                if self.dual_usb_help_open {
-                    const FRAME_SECONDS: f32 = 0.016;
-                    const CYCLE_SECONDS: f32 = 1.8;
-                    self.dual_usb_cable_phase =
-                        (self.dual_usb_cable_phase + FRAME_SECONDS / CYCLE_SECONDS) % 1.0;
-                }
             }
             Message::UpdateCheckDone(result) => {
                 // `None` means "no banner" — either we're already on the
@@ -1221,7 +1256,30 @@ impl App {
             Message::FlashPhys(m) => return self.update_flash_phys(m),
             // -- Simple Firmware Flash (stock-equivalent, no checks) ----------
             Message::SimpleFlash(m) => return self.update_simple_flash(m),
-            Message::Reboot(m) => return self.update_reboot(m),
+            Message::Reboot(m) => {
+                match &m {
+                    RebootMsg::RebootTo(target) => {
+                        let conn = self.device.connection;
+                        let wait_for_edl = *target == RebootTarget::Edl
+                            && matches!(
+                                conn,
+                                ConnectionStatus::Adb
+                                    | ConnectionStatus::AdbRecovery
+                                    | ConnectionStatus::Fastboot
+                            )
+                            && target.available_from(conn)
+                            && !target.is_current_from(conn, self.device.fastboot_userspace);
+                        self.reboot_wait_transition = wait_for_edl;
+                        self.reboot_wait_dialog_open = wait_for_edl;
+                    }
+                    RebootMsg::RebootEdlWithLoader(..) | RebootMsg::RebootDone(_) => {
+                        self.reboot_wait_transition = false;
+                        self.reboot_wait_dialog_open = false;
+                    }
+                    _ => {}
+                }
+                return self.update_reboot(m);
+            }
             Message::InstallDriversDone(result) => {
                 self.installing_drivers = false;
                 // Drain any lines still pending in the sink/tap so the

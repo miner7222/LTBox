@@ -1,7 +1,7 @@
 //! Unroot wizard view + steps. Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 
@@ -11,13 +11,24 @@ impl App {
             return self.log_popup_view();
         }
         let step_labels: Vec<&str> = UNROOT_STEPS.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.unroot.step);
+        let is_exec = self.unroot.is_in_exec();
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.unroot.step, self.window_size_class())
+        };
         let body = match self.unroot.step {
             0 => self.unroot_type_step(),
             1 => self.unroot_loader_step(),
             2 => self.unroot_folder_step(),
             3 => self.unroot_confirm_step(),
             _ => self.unroot_exec_step(),
+        };
+        let (step_title, app_bar_subtitle) = self.unroot_step_copy();
+        let body = if is_exec || self.unroot.step == 0 {
+            body
+        } else {
+            wizard_step_body(step_title, body)
         };
         let nav = if self.unroot.step < 4 {
             let is_start = self.unroot.step == 3;
@@ -41,97 +52,104 @@ impl App {
         } else {
             empty_wizard_nav()
         };
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.unroot_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t("nav_unroot").to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn unroot_action_bar(&self) -> Option<Element<'_, Message>> {
-        let (title, subtitle) = match self.unroot.step {
-            0 => (
-                self.t("unroot_method_title").to_string(),
-                self.t("unroot_method_subtitle").to_string(),
-            ),
-            1 => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
-            2 => {
-                let desc = self
-                    .unroot
-                    .unroot_type
-                    .map(|t| self.unroot_folder_desc(t).to_string())
-                    .unwrap_or_else(|| self.t("unroot_folder_placeholder").to_string());
-                (self.t("unroot_folder_title").to_string(), desc)
+    fn unroot_step_copy(&self) -> (String, Option<String>) {
+        let title = match self.unroot.step {
+            0 => self.t("unroot_method_title").to_string(),
+            1 => self.t("edl_loader_title").to_string(),
+            2 => self.t("unroot_folder_title").to_string(),
+            3 => self.t("unroot_confirm_title").to_string(),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                return (title, self.exec_app_bar_subtitle());
             }
-            3 => (
-                self.t("unroot_confirm_title").to_string(),
-                self.t("unroot_confirm_subtitle").to_string(),
-            ),
-            _ => return Some(self.exec_action_bar()),
         };
-        Some(wizard_action_bar(title, Some(subtitle)))
+        (title, None)
     }
 
     pub(crate) fn unroot_type_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let xiaoxin_pro13 = !ltbox_core::model::capabilities(&self.device.model).unroot;
         let unsupported = tr_args!("model_unsupported", model = "TB376FC / TB390FU");
         // Unroot reuses the Lucide puzzle/layers glyphs that the root
         // wizard uses for the LKM/GKI pick — context (title + label)
         // disambiguates.
-        let lkm_icon = lucide_primary(icon::root_lkm(), self.wizard_square_icon());
-        let gki_icon = lucide_primary(icon::root_gki(), self.wizard_square_icon());
+        let lkm_icon = lucide_list_primary(icon::root_lkm(), icon_size);
+        let gki_icon = lucide_list_primary(icon::root_gki(), icon_size);
         let lkm_card = if xiaoxin_pro13 {
-            icon_option_card_sub_square_disabled_sized(
-                lucide_disabled(icon::root_lkm(), self.wizard_square_icon()),
+            wizard_list_option_card(
+                lucide_list_disabled(icon::root_lkm(), icon_size),
                 self.t(UnrootType::MagiskLkm.label_key()),
                 &unsupported,
-                side,
+                false,
+                None,
+                metrics,
             )
         } else {
-            icon_option_card_sub_square_sized(
+            wizard_list_option_card(
                 lkm_icon,
                 self.t(UnrootType::MagiskLkm.label_key()),
                 self.t(UnrootType::MagiskLkm.desc_key()),
                 self.unroot.unroot_type == Some(UnrootType::MagiskLkm),
-                Message::Unroot(UnrootMsg::SetUnrootType(UnrootType::MagiskLkm)),
-                side,
+                Some(Message::Unroot(UnrootMsg::SetUnrootType(
+                    UnrootType::MagiskLkm,
+                ))),
+                metrics,
             )
         };
         let gki_card = if xiaoxin_pro13 {
-            icon_option_card_sub_square_disabled_sized(
-                lucide_disabled(icon::root_gki(), self.wizard_square_icon()),
+            wizard_list_option_card(
+                lucide_list_disabled(icon::root_gki(), icon_size),
                 self.t(UnrootType::APatchGki.label_key()),
                 &unsupported,
-                side,
+                false,
+                None,
+                metrics,
             )
         } else {
-            icon_option_card_sub_square_sized(
+            wizard_list_option_card(
                 gki_icon,
                 self.t(UnrootType::APatchGki.label_key()),
                 self.t(UnrootType::APatchGki.desc_key()),
                 self.unroot.unroot_type == Some(UnrootType::APatchGki),
-                Message::Unroot(UnrootMsg::SetUnrootType(UnrootType::APatchGki)),
-                side,
+                Some(Message::Unroot(UnrootMsg::SetUnrootType(
+                    UnrootType::APatchGki,
+                ))),
+                metrics,
             )
         };
-        let col = column![row![lkm_card, gki_card].spacing(d.space(12.0)),]
-            .spacing(d.space(14.0))
-            .padding(d.space(28.0))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        let cards = column![lkm_card, gki_card].spacing(8.0).width(Length::Fill);
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("unroot_method_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("unroot_method_title").to_string(),
+                vec![self.t("unroot_method_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn unroot_loader_step(&self) -> Element<'_, Message> {
@@ -144,7 +162,6 @@ impl App {
     }
 
     pub(crate) fn unroot_folder_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let selected = self.unroot.folder_path.is_some();
         let desc_owned = self
             .unroot
@@ -160,19 +177,16 @@ impl App {
             container(
                 column![
                     text(self.t("btn_browse_folder").to_string())
-                        .size(d.text(14.0))
+                        .size(14.0)
                         .center(),
-                    text(desc_owned)
-                        .size(d.text(11.0))
-                        .style(muted_style)
-                        .center(),
+                    text(desc_owned).size(11.0).style(muted_style).center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
+            .padding([20.0, 24.0])
+            .width(Length::Fixed(280.0))
             .style(move |t: &Theme| sel_card_style(t, selected)),
         )
         .on_press(Message::Unroot(UnrootMsg::UnrootSelectFolder))
@@ -188,7 +202,7 @@ impl App {
         let col = column![
             btn,
             text(status)
-                .size(d.text(12.0))
+                .size(12.0)
                 .width(Length::Fill)
                 .style(move |t: &Theme| {
                     let p = pal_of(t);
@@ -200,15 +214,15 @@ impl App {
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             chips,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
+        .spacing(14.0)
+        .padding(28.0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 

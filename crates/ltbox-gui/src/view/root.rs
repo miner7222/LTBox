@@ -18,7 +18,16 @@ impl App {
         }
         let steps = self.root.active_steps();
         let step_labels: Vec<&str> = steps.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.root.display_step());
+        let is_exec = self.root.step == 7;
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(
+                &step_labels,
+                self.root.display_step(),
+                self.window_size_class(),
+            )
+        };
         let body = match self.root.step {
             0 => self.root_family_step(),
             1 => {
@@ -48,6 +57,18 @@ impl App {
             8 => self.root_kpm_step(),
             _ => self.root_flash_step(),
         };
+        let (step_title, app_bar_subtitle) = self.root_step_copy();
+        let is_selection_step = match self.root.step {
+            0 | 1 | 4 => true,
+            2 => !self.root.is_gki(),
+            3 => !self.root.is_forks(),
+            _ => false,
+        };
+        let body = if is_exec || is_selection_step {
+            body
+        } else {
+            wizard_step_body(step_title, body)
+        };
         // Step 7 is in-progress — no nav. Step 8 (APatch KPM) needs
         // the normal Back/Next bar, so exclude only 7 explicitly.
         let nav = if self.root.step != 7 {
@@ -65,44 +86,34 @@ impl App {
         } else {
             empty_wizard_nav()
         };
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.root_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t("nav_root").to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn root_action_bar(&self) -> Option<Element<'_, Message>> {
-        let header = match self.root.step {
-            0 => (
-                self.t("root_type_title").to_string(),
-                self.t("root_type_subtitle").to_string(),
-            ),
-            1 if self.root.is_skroot() => (
-                self.t("root_skroot_flavor_title").to_string(),
-                self.t("root_skroot_flavor_subtitle").to_string(),
-            ),
+    fn root_step_copy(&self) -> (String, Option<String>) {
+        match self.root.step {
+            0 => (self.t("root_type_title").to_string(), None),
+            1 if self.root.is_skroot() => (self.t("root_skroot_flavor_title").to_string(), None),
             1 => {
                 let family = self
                     .root
                     .family
                     .map(|f| self.t(f.label_key()))
                     .unwrap_or("?");
-                (
-                    tr_args!("root_mode_title_tmpl", family = family),
-                    self.t("root_mode_subtitle").to_string(),
-                )
+                (tr_args!("root_mode_title_tmpl", family = family), None)
             }
-            2 if self.root.is_gki() => (
-                self.t("root_kernel_title").to_string(),
-                self.t("root_kernel_subtitle").to_string(),
-            ),
+            2 if self.root.is_gki() => (self.t("root_kernel_title").to_string(), None),
             2 => {
                 let family = self.root.family.unwrap_or(Family::KernelSU);
                 (
@@ -110,59 +121,45 @@ impl App {
                         "root_provider_title_tmpl",
                         family = self.t(family.label_key())
                     ),
-                    self.t("root_provider_subtitle").to_string(),
+                    None,
                 )
             }
-            3 if self.root.is_forks() => (
-                self.t("root_apk_title").to_string(),
-                self.t("root_apk_subtitle").to_string(),
-            ),
-            3 => (
-                self.t("root_version_title").to_string(),
-                self.t("root_version_subtitle").to_string(),
-            ),
-            4 => (
-                self.t("root_source_title").to_string(),
-                self.t("root_source_subtitle").to_string(),
-            ),
-            5 => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
-            6 => (
-                self.t("root_confirm_title").to_string(),
-                self.t("root_confirm_subtitle").to_string(),
-            ),
-            7 => return Some(self.exec_action_bar()),
-            8 => (
-                self.t("root_kpm_title").to_string(),
-                self.t("root_kpm_subtitle").to_string(),
-            ),
-            _ => return None,
-        };
-        Some(wizard_action_bar(header.0, Some(header.1)))
+            3 if self.root.is_forks() => (self.t("root_apk_title").to_string(), None),
+            3 => (self.t("root_version_title").to_string(), None),
+            4 => (self.t("root_source_title").to_string(), None),
+            5 => (self.t("edl_loader_title").to_string(), None),
+            6 => (self.t("root_confirm_title").to_string(), None),
+            7 => {
+                let (title, _) = self.exec_status_copy();
+                (title, self.exec_app_bar_subtitle())
+            }
+            8 => (self.t("root_kpm_title").to_string(), None),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                (title, self.exec_app_bar_subtitle())
+            }
+        }
     }
 
     pub(crate) fn root_kpm_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         // No recents here — the KPM list already competes for vertical space.
         let kpm_selected = !self.root.kpm_paths.is_empty();
         let pick_btn = button(
             container(
                 column![
                     text(self.t("btn_browse_kpm").to_string())
-                        .size(d.text(14.0))
+                        .size(14.0)
                         .center(),
                     text(self.t("root_kpm_desc").to_string())
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(muted_style)
                         .center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
+            .padding([20.0, 24.0])
             .width(KPM_COLUMN_WIDTH)
             .style(move |t: &Theme| sel_card_style(t, kpm_selected)),
         )
@@ -175,7 +172,7 @@ impl App {
         // content area, which packed every row against the far left edge
         // while the card it belongs to sat centred — the two read as
         // unrelated. Matching widths makes them one column.
-        let mut list = column![].spacing(d.space(4.0)).width(KPM_COLUMN_WIDTH);
+        let mut list = column![].spacing(4.0).width(KPM_COLUMN_WIDTH);
         for path in &self.root.kpm_paths {
             let name = std::path::Path::new(path)
                 .file_name()
@@ -190,7 +187,7 @@ impl App {
                     ),
                     text_color: p.on_surface,
                     border: iced::Border {
-                        radius: theme::shape::FULL.into(),
+                        radius: theme::shape::SM.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -204,63 +201,33 @@ impl App {
                     // break at glyph boundaries rather than overflowing
                     // the column the list now shares with the card.
                     text(name)
-                        .size(d.text(12.0))
+                        .size(12.0)
                         .style(on_surface_style)
                         .width(Length::Fill)
                         .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
                 ]
-                .spacing(d.space(10.0))
+                .spacing(10.0)
                 .align_y(iced::Alignment::Center),
             );
         }
 
         let col = column![pick_btn, list,]
-            .spacing(d.space(14.0))
-            .padding(d.space(28.0))
+            .spacing(14.0)
+            .padding(28.0)
             .width(Length::Fill)
             .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 
     pub(crate) fn root_superkey_popup(&self) -> Element<'_, Message> {
-        let d = self.density();
-        // M3 text-input dialog — same shape as root_run_id_popup /
-        // root_kernel_version_popup so the three APatch-flow popups
-        // feel consistent (380 wide, outlined Cancel + filled OK,
-        // shared `m3_dialog` scrim + 28-radius card).
-        let input = iced::widget::text_input(
-            self.t("apatch_superkey_placeholder"),
-            &self.root.superkey_buffer,
-        )
-        .on_input(|__v| Message::Root(RootMsg::RootSuperkeyInput(__v)))
-        .on_submit(Message::Root(RootMsg::RootSuperkeyConfirm))
-        .secure(true)
-        .padding(d.padding(10.0, 12.0))
-        .width(Length::Fill)
-        .style(m3_text_input_style);
-
-        let err: Element<'_, Message> = match &self.error_msg {
-            Some(e) => text(e.clone())
-                .size(d.text(12.0))
-                .style(|t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(p.error),
-                    }
-                })
-                .into(),
-            None => Space::new().height(0).into(),
-        };
-
-        // Two-stage flow: first-entry vs verification re-entry. The
-        // title + subtitle swap so the user knows the first Confirm
-        // didn't commit the key yet, plus the password-manager / form
-        // autofill heuristics in the OS see "different" prompts.
+        // Two-stage flow: first-entry vs verification re-entry. The title and
+        // subtitle swap so the user knows the first confirmation did not yet
+        // commit the key.
         let on_verify_stage = self.root.superkey_first_entry.is_some();
         let title_key = if on_verify_stage {
             "apatch_superkey_verify_title"
@@ -272,132 +239,195 @@ impl App {
         } else {
             "apatch_superkey_subtitle"
         };
-
-        let content = column![
-            text(self.t(title_key).to_string()).size(d.text(20.0)),
+        let superkey = self.root.superkey_buffer.trim();
+        let input_valid = (8..=63).contains(&superkey.len())
+            && superkey.chars().all(|c| c.is_ascii_alphanumeric());
+        let visible_error = self.error_msg.clone().filter(|_| !input_valid).or_else(|| {
+            (!superkey.is_empty() && !input_valid)
+                .then(|| self.t("apatch_superkey_invalid").to_string())
+        });
+        let input_style = if visible_error.is_some() {
+            m3_text_input_error_style
+        } else {
+            m3_text_input_style
+        };
+        let mut input = iced::widget::text_input(
+            self.t("apatch_superkey_placeholder"),
+            &self.root.superkey_buffer,
+        )
+        .on_input(|__v| Message::Root(RootMsg::RootSuperkeyInput(__v)))
+        .secure(true)
+        .padding([8, 12])
+        .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
+        .width(Length::Fill)
+        .style(input_style);
+        if input_valid {
+            input = input.on_submit(Message::Root(RootMsg::RootSuperkeyConfirm));
+        }
+        // No field label: this dialog has one input and the headline already
+        // names it, so a label would restate the title verbatim.
+        let mut field = column![input].spacing(6);
+        if let Some(error) = visible_error {
+            field = field.push(dialog_field_error(error));
+        }
+        let header: Element<'_, Message> = column![
+            text(self.t(title_key).to_string()).size(theme::text_size::TITLE_LARGE),
             text(self.t(subtitle_key).to_string())
-                .size(d.text(13.0))
+                .size(theme::text_size::BODY_SMALL)
                 .style(muted_style),
-            input,
-            err,
-            row![
-                Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
-                    .on_press(Message::Root(RootMsg::RootSuperkeyCancel)),
-                m3_filled_button(self.t("btn_ok").to_string())
-                    .on_press(Message::Root(RootMsg::RootSuperkeyConfirm)),
-            ]
-            .spacing(d.space(8.0))
-            .align_y(iced::Alignment::Center),
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(24.0))
-        .width(Length::Fixed(d.width(380.0)));
-
-        m3_dialog(content.into())
+        .spacing(3)
+        .into();
+        let mut confirm = m3_filled_button(self.t("btn_ok").to_string());
+        if input_valid {
+            confirm = confirm.on_press(Message::Root(RootMsg::RootSuperkeyConfirm));
+        }
+        let footer: Element<'_, Message> = row![
+            Space::new().width(Length::Fill),
+            m3_outlined_button(self.t("btn_cancel").to_string())
+                .on_press(Message::Root(RootMsg::RootSuperkeyCancel)),
+            confirm,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
+        m3_dialog(dialog_sections(
+            header,
+            field.into(),
+            footer,
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
     }
 
     pub(crate) fn root_run_id_popup(&self) -> Element<'_, Message> {
-        let d = self.density();
-        // M3 text-input dialog — 380 wide, outlined Cancel + filled OK.
-        let input = iced::widget::text_input(
+        let run_id = self.root.run_id_buffer.trim();
+        let input_valid =
+            !run_id.is_empty() && run_id.len() <= 12 && run_id.chars().all(|c| c.is_ascii_digit());
+        let visible_error = self.error_msg.clone().filter(|_| !input_valid);
+        let input_style = if visible_error.is_some() {
+            m3_text_input_error_style
+        } else {
+            m3_text_input_style
+        };
+        let mut input = iced::widget::text_input(
             self.t("nightly_manual_placeholder"),
             &self.root.run_id_buffer,
         )
         .on_input(|__v| Message::Root(RootMsg::RootRunIdInput(__v)))
-        .on_submit(Message::Root(RootMsg::RootRunIdConfirm))
-        .padding(d.padding(10.0, 12.0))
+        .padding([8, 12])
+        .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
         .width(Length::Fill)
-        .style(m3_text_input_style);
-
-        let err: Element<'_, Message> = match &self.error_msg {
-            Some(e) => text(e.clone())
-                .size(d.text(12.0))
-                .style(|t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(p.error),
-                    }
-                })
-                .into(),
-            None => Space::new().height(0).into(),
-        };
-
-        let content = column![
-            text(self.t("nightly_manual_title").to_string()).size(d.text(20.0)),
-            text(self.t("nightly_manual_subtitle").to_string())
-                .size(d.text(13.0))
-                .style(muted_style),
-            input,
-            err,
-            row![
-                Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
-                    .on_press(Message::Root(RootMsg::RootRunIdCancel)),
-                m3_filled_button(self.t("btn_ok").to_string())
-                    .on_press(Message::Root(RootMsg::RootRunIdConfirm)),
-            ]
-            .spacing(d.space(8.0))
-            .align_y(iced::Alignment::Center),
+        .style(input_style);
+        if input_valid {
+            input = input.on_submit(Message::Root(RootMsg::RootRunIdConfirm));
+        }
+        let mut field = column![
+            dialog_field_label(self.t("nightly_run_id_label").to_string()),
+            input
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(24.0))
-        .width(Length::Fixed(d.width(380.0)));
-
-        m3_dialog(content.into())
+        .spacing(6);
+        if let Some(error) = visible_error {
+            field = field.push(dialog_field_error(error));
+        }
+        let header: Element<'_, Message> = column![
+            text(self.t("nightly_manual_title").to_string()).size(theme::text_size::TITLE_LARGE),
+            text(self.t("nightly_manual_subtitle").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+        ]
+        .spacing(3)
+        .into();
+        let mut confirm = m3_filled_button(self.t("btn_ok").to_string());
+        if input_valid {
+            confirm = confirm.on_press(Message::Root(RootMsg::RootRunIdConfirm));
+        }
+        let footer: Element<'_, Message> = row![
+            Space::new().width(Length::Fill),
+            m3_outlined_button(self.t("btn_cancel").to_string())
+                .on_press(Message::Root(RootMsg::RootRunIdCancel)),
+            confirm,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
+        m3_dialog(dialog_sections(
+            header,
+            field.into(),
+            footer,
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
     }
 
     pub(crate) fn root_kernel_version_popup(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let input = iced::widget::text_input(
+        let kernel_version = self.root.kernel_version_buffer.trim();
+        let input_valid =
+            ltbox_patch::root_pipeline::normalize_ksu_kernel_version(kernel_version).is_some();
+        let visible_error = self.error_msg.clone().filter(|_| !input_valid).or_else(|| {
+            (!kernel_version.is_empty() && !input_valid)
+                .then(|| self.t("root_kernel_version_invalid").to_string())
+        });
+        let input_style = if visible_error.is_some() {
+            m3_text_input_error_style
+        } else {
+            m3_text_input_style
+        };
+        let mut input = iced::widget::text_input(
             self.t("root_kernel_version_placeholder"),
             &self.root.kernel_version_buffer,
         )
         .on_input(|__v| Message::Root(RootMsg::RootKernelVersionInput(__v)))
-        .on_submit(Message::Root(RootMsg::RootKernelVersionConfirm))
-        .padding(d.padding(10.0, 12.0))
+        .padding([8, 12])
+        .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
         .width(Length::Fill)
-        .style(m3_text_input_style);
-
-        let err: Element<'_, Message> = match &self.error_msg {
-            Some(e) => text(e.clone())
-                .size(d.text(12.0))
-                .style(|t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(p.error),
-                    }
-                })
-                .into(),
-            None => Space::new().height(0).into(),
-        };
-
-        let content = column![
-            text(self.t("root_kernel_version_manual_title").to_string()).size(d.text(20.0)),
+        .style(input_style);
+        if input_valid {
+            input = input.on_submit(Message::Root(RootMsg::RootKernelVersionConfirm));
+        }
+        // Single input under a headline that already names it.
+        let mut field = column![input].spacing(6);
+        if let Some(error) = visible_error {
+            field = field.push(dialog_field_error(error));
+        }
+        let header: Element<'_, Message> = column![
+            text(self.t("root_kernel_version_manual_title").to_string())
+                .size(theme::text_size::TITLE_LARGE),
             text(self.t("root_kernel_version_manual_subtitle").to_string())
-                .size(d.text(13.0))
+                .size(theme::text_size::BODY_SMALL)
                 .style(muted_style),
-            input,
-            err,
-            row![
-                Space::new().width(Length::Fill),
-                m3_text_button(self.t("btn_cancel").to_string())
-                    .on_press(Message::Root(RootMsg::RootKernelVersionCancel)),
-                m3_filled_button(self.t("btn_ok").to_string())
-                    .on_press(Message::Root(RootMsg::RootKernelVersionConfirm)),
-            ]
-            .spacing(d.space(8.0))
-            .align_y(iced::Alignment::Center),
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(24.0))
-        .width(Length::Fixed(d.width(380.0)));
-
-        m3_dialog(content.into())
+        .spacing(3)
+        .into();
+        let mut confirm = m3_filled_button(self.t("btn_ok").to_string());
+        if input_valid {
+            confirm = confirm.on_press(Message::Root(RootMsg::RootKernelVersionConfirm));
+        }
+        let footer: Element<'_, Message> = row![
+            Space::new().width(Length::Fill),
+            m3_outlined_button(self.t("btn_cancel").to_string())
+                .on_press(Message::Root(RootMsg::RootKernelVersionCancel)),
+            confirm,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
+        m3_dialog(dialog_sections(
+            header,
+            field.into(),
+            footer,
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
     }
 
     pub(crate) fn root_family_step(&self) -> Element<'_, Message> {
-        let d = self.density();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
         let xiaoxin_pro13 = !ltbox_core::model::capabilities(&self.device.model).root;
         let unsupported = tr_args!("model_unsupported", model = "TB376FC / TB390FU");
         let families = [
@@ -409,107 +439,117 @@ impl App {
         let icon_size = self.wizard_list_icon(WIZARD_LIST_ICON_SIZE);
         let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let mk = |f: Family| -> Element<'_, Message> {
-            let card = wizard_list_option_card(
-                f.icon_sized(icon_size),
-                self.t(f.label_key()),
-                if xiaoxin_pro13 {
-                    &unsupported
-                } else {
-                    self.t(f.desc_key())
-                },
-                self.root.family == Some(f),
-                (!xiaoxin_pro13).then_some(Message::Root(RootMsg::RootFamily(f))),
-                metrics,
-            );
             if f == Family::KernelSU {
-                recommended_overlay(d, card, self.t("root_recommended_tip").to_string())
+                wizard_list_option_card_recommended(
+                    f.icon_sized(icon_size),
+                    self.t(f.label_key()),
+                    if xiaoxin_pro13 {
+                        &unsupported
+                    } else {
+                        self.t(f.desc_key())
+                    },
+                    self.root.family == Some(f),
+                    (!xiaoxin_pro13).then_some(Message::Root(RootMsg::RootFamily(f))),
+                    metrics,
+                    (
+                        self.t("root_recommended_label"),
+                        self.t("root_recommended_tip"),
+                    ),
+                )
             } else {
-                card
+                wizard_list_option_card(
+                    f.icon_sized(icon_size),
+                    self.t(f.label_key()),
+                    if xiaoxin_pro13 {
+                        &unsupported
+                    } else {
+                        self.t(f.desc_key())
+                    },
+                    self.root.family == Some(f),
+                    (!xiaoxin_pro13).then_some(Message::Root(RootMsg::RootFamily(f))),
+                    metrics,
+                )
             }
         };
 
-        let mut cards = column![].spacing(d.space(8.0)).width(Length::Fill);
+        let mut cards = column![].spacing(8.0).width(Length::Fill);
         for f in families {
             cards = cards.push(mk(f));
         }
 
-        let col = column![cards,]
-            .spacing(d.space(14.0))
-            .padding(d.padding(20.0, WIZARD_STEP_HORIZONTAL_PADDING))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.wizard_list_max_width(WIZARD_LIST_MAX_WIDTH))
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("root_type_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("root_type_title").to_string(),
+                vec![self.t("root_type_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn root_provider_step(&self) -> Element<'_, Message> {
-        let d = self.density();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
         let family = self.root.family.unwrap_or(Family::KernelSU);
         let providers = family.providers();
-
-        if providers.len() > 2 {
-            let icon_size = self.wizard_list_icon(WIZARD_LIST_ICON_SIZE);
-            let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
-            let mut cards = column![].spacing(d.space(8.0)).width(Length::Fill);
-            for &p in providers {
-                let sub = p.desc_key().map(|k| self.t(k)).unwrap_or("");
-                let card = wizard_list_option_card(
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
+        let card = |p: Provider, selected: bool| -> Element<'static, Message> {
+            let sub = p.desc_key().map(|k| self.t(k)).unwrap_or("");
+            if p == Provider::KernelSU {
+                wizard_list_option_card_recommended(
                     p.icon_sized(icon_size),
                     self.t(p.label_key()),
                     sub,
-                    self.root.provider == Some(p),
+                    selected,
                     Some(Message::Root(RootMsg::RootProvider(p))),
                     metrics,
-                );
-                let card = if p == Provider::KernelSU {
-                    recommended_overlay(d, card, self.t("root_recommended_tip").to_string())
-                } else {
-                    card
-                };
-                cards = cards.push(card);
+                    (
+                        self.t("root_recommended_label"),
+                        self.t("root_recommended_tip"),
+                    ),
+                )
+            } else {
+                wizard_list_option_card(
+                    p.icon_sized(icon_size),
+                    self.t(p.label_key()),
+                    sub,
+                    selected,
+                    Some(Message::Root(RootMsg::RootProvider(p))),
+                    metrics,
+                )
             }
-
-            let col = column![cards,]
-                .spacing(d.space(14.0))
-                .padding(d.padding(20.0, WIZARD_STEP_HORIZONTAL_PADDING))
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center);
-            return centered_step(col, self.wizard_list_max_width(WIZARD_LIST_MAX_WIDTH));
-        }
-
-        let columns = providers.len();
-        let side = self.wizard_square_side();
-        let card = |p: Provider, selected: bool| -> Element<'_, Message> {
-            let sub = p.desc_key().map(|k| self.t(k)).unwrap_or("");
-            // Smaller brand logo (52 vs 72) so the 72px SVG doesn't
-            // overflow the square once the label/desc wraps. Scaled from that
-            // base so it keeps its proportion as the card grows.
-            icon_option_card_sub_square_sized(
-                p.icon_sized(self.density().image(52.0)),
-                self.t(p.label_key()),
-                sub,
-                selected,
-                Message::Root(RootMsg::RootProvider(p)),
-                side,
-            )
         };
 
-        let mut cards = row![]
-            .spacing(d.space(12.0))
-            .align_y(iced::Alignment::Center);
+        let mut cards = column![].spacing(8.0).width(Length::Fill);
         for &p in providers {
             cards = cards.push(card(p, self.root.provider == Some(p)));
         }
-
-        let col = column![cards,]
-            .spacing(d.space(14.0))
-            .padding(d.space(28.0))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        wizard_selection_step(
+            size_class,
+            content_width,
+            tr_args!(
+                "root_provider_title_tmpl",
+                family = self.t(family.label_key())
+            ),
+            cards.into(),
+            Some((
+                tr_args!(
+                    "root_provider_title_tmpl",
+                    family = self.t(family.label_key())
+                ),
+                vec![self.t("root_provider_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn root_file_step(&self, subtitle: &str) -> Element<'_, Message> {
-        let d = self.density();
         let selected = self.root.file_path.is_some();
         let status_text = if let Some(p) = &self.root.file_path {
             p.clone()
@@ -526,18 +566,18 @@ impl App {
         let btn = button(
             container(
                 column![
-                    text(btn_label.to_string()).size(d.text(14.0)).center(),
+                    text(btn_label.to_string()).size(14.0).center(),
                     text(subtitle.to_string())
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(muted_style)
                         .center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
+            .padding([20.0, 24.0])
+            .width(Length::Fixed(280.0))
             .style(move |t: &Theme| sel_card_style(t, selected)),
         )
         .on_press(Message::Root(RootMsg::RootSelectFile))
@@ -561,7 +601,7 @@ impl App {
         let col = column![
             btn,
             text(status_text)
-                .size(d.text(12.0))
+                .size(12.0)
                 .width(Length::Fill)
                 .style(move |t: &Theme| {
                     let p = pal_of(t);
@@ -573,20 +613,19 @@ impl App {
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             chips,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
+        .spacing(14.0)
+        .padding(28.0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 
     pub(crate) fn root_folder_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         // Root pipeline now needs only the EDL loader (`.melf`) — the
         // full firmware folder was dropped when dump/flash stopped
         // depending on `rawprogram*.xml` and started resolving partition
@@ -601,19 +640,19 @@ impl App {
             container(
                 column![
                     text(self.t("btn_browse_loader").to_string())
-                        .size(d.text(14.0))
+                        .size(14.0)
                         .center(),
                     text(self.loader_picker_desc())
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(muted_style)
                         .center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
+            .padding([20.0, 24.0])
+            .width(Length::Fixed(280.0))
             .style(move |t: &Theme| sel_card_style(t, selected)),
         )
         .on_press(Message::Root(RootMsg::RootSelectFolder))
@@ -627,7 +666,7 @@ impl App {
         let col = column![
             btn,
             text(status)
-                .size(d.text(12.0))
+                .size(12.0)
                 .width(Length::Fill)
                 .style(move |t: &Theme| {
                     let p = pal_of(t);
@@ -639,141 +678,202 @@ impl App {
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             chips,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
+        .spacing(14.0)
+        .padding(28.0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 
     pub(crate) fn root_mode_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let tb323fu = !ltbox_core::model::capabilities(&self.device.model).gki_root;
         let unsupported_canoe = tr_args!("model_unsupported", model = self.device.model.as_str());
-        let lkm_card = icon_option_card_sub_square_sized(
-            RootMode::Lkm.icon(self.wizard_square_icon()),
+        let lkm_card = wizard_list_option_card_recommended(
+            RootMode::Lkm.icon(icon_size),
             self.t(RootMode::Lkm.label_key()),
             self.t(RootMode::Lkm.desc_key()),
             self.root.mode == Some(RootMode::Lkm),
-            Message::Root(RootMsg::RootMode(RootMode::Lkm)),
-            side,
+            Some(Message::Root(RootMsg::RootMode(RootMode::Lkm))),
+            metrics,
+            (
+                self.t("root_recommended_label"),
+                self.t("root_recommended_tip"),
+            ),
         );
-        let lkm_card = recommended_overlay(d, lkm_card, self.t("root_recommended_tip").to_string());
         // TODO(root): LTBox currently only swaps the boot.img Image for
         // GKI, which corrupts boot on TB323FU. Keep GKI disabled until
         // vbmeta handling is added.
         let gki_card: Element<'_, Message> = if tb323fu {
-            icon_option_card_sub_square_disabled_sized(
-                RootMode::Gki.icon_disabled(self.wizard_square_icon()),
+            wizard_list_option_card(
+                RootMode::Gki.icon_disabled(icon_size),
                 self.t(RootMode::Gki.label_key()),
                 &unsupported_canoe,
-                side,
+                false,
+                None,
+                metrics,
             )
         } else {
-            icon_option_card_sub_square_sized(
-                RootMode::Gki.icon(self.wizard_square_icon()),
+            wizard_list_option_card(
+                RootMode::Gki.icon(icon_size),
                 self.t(RootMode::Gki.label_key()),
                 self.t(RootMode::Gki.desc_key()),
                 self.root.mode == Some(RootMode::Gki),
-                Message::Root(RootMsg::RootMode(RootMode::Gki)),
-                side,
+                Some(Message::Root(RootMsg::RootMode(RootMode::Gki))),
+                metrics,
             )
         };
-        let col = column![row![lkm_card, gki_card,].spacing(d.space(12.0)),]
-            .spacing(d.space(14.0))
-            .padding(d.space(28.0))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        let cards = column![lkm_card, gki_card].spacing(8.0).width(Length::Fill);
+        wizard_selection_step(
+            size_class,
+            content_width,
+            tr_args!(
+                "root_mode_title_tmpl",
+                family = self
+                    .root
+                    .family
+                    .map(|family| self.t(family.label_key()))
+                    .unwrap_or("?")
+            ),
+            cards.into(),
+            Some((
+                tr_args!(
+                    "root_mode_title_tmpl",
+                    family = self
+                        .root
+                        .family
+                        .map(|family| self.t(family.label_key()))
+                        .unwrap_or("?")
+                ),
+                vec![self.t("root_mode_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn root_skroot_flavor_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
-        let lite = icon_option_card_sub_square_sized(
-            SkrootFlavor::Lite.icon(self.wizard_square_icon()),
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
+        let lite = wizard_list_option_card(
+            SkrootFlavor::Lite.icon(icon_size),
             self.t(SkrootFlavor::Lite.label_key()),
             self.t(SkrootFlavor::Lite.desc_key()),
             self.root.skroot_flavor == Some(SkrootFlavor::Lite),
-            Message::Root(RootMsg::RootSkrootFlavor(SkrootFlavor::Lite)),
-            side,
+            Some(Message::Root(RootMsg::RootSkrootFlavor(SkrootFlavor::Lite))),
+            metrics,
         );
-        let pro = icon_option_card_sub_square_disabled_sized(
-            SkrootFlavor::Pro.icon_disabled(self.wizard_square_icon()),
+        let pro = wizard_list_option_card(
+            SkrootFlavor::Pro.icon_disabled(icon_size),
             self.t(SkrootFlavor::Pro.label_key()),
             self.t(SkrootFlavor::Pro.desc_key()),
-            side,
+            false,
+            None,
+            metrics,
         );
 
-        let col = column![row![lite, pro].spacing(d.space(12.0)),]
-            .spacing(d.space(14.0))
-            .padding(d.space(28.0))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        let cards = column![lite, pro].spacing(8.0).width(Length::Fill);
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("root_skroot_flavor_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("root_skroot_flavor_title").to_string(),
+                vec![self.t("root_skroot_flavor_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn root_version_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = if self.root.provider == Some(Provider::ReSukiSU) {
-            1
-        } else {
-            2
-        };
-        let side = self.wizard_square_side();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let mk = |choice: VerChoice| -> Element<'_, Message> {
-            let card = icon_option_card_sub_square_sized(
-                choice.icon(self.wizard_square_icon()),
-                self.t(choice.label_key()),
-                self.t(choice.desc_key()),
-                self.root.version == Some(choice),
-                Message::Root(RootMsg::RootVersion(choice)),
-                side,
-            );
             if choice == VerChoice::Stable {
-                recommended_overlay(d, card, self.t("root_recommended_tip").to_string())
+                wizard_list_option_card_recommended(
+                    choice.icon(icon_size),
+                    self.t(choice.label_key()),
+                    self.t(choice.desc_key()),
+                    self.root.version == Some(choice),
+                    Some(Message::Root(RootMsg::RootVersion(choice))),
+                    metrics,
+                    (
+                        self.t("root_recommended_label"),
+                        self.t("root_recommended_tip"),
+                    ),
+                )
             } else {
-                card
+                wizard_list_option_card(
+                    choice.icon(icon_size),
+                    self.t(choice.label_key()),
+                    self.t(choice.desc_key()),
+                    self.root.version == Some(choice),
+                    Some(Message::Root(RootMsg::RootVersion(choice))),
+                    metrics,
+                )
             }
         };
 
         // ReSukiSU ships nightlies only — hide the Stable card so users
         // can't pick a channel that has no release assets. Other providers
         // keep both.
-        let version_row = if self.root.provider == Some(Provider::ReSukiSU) {
-            row![mk(VerChoice::Nightly)].spacing(d.space(12.0))
+        let cards = if self.root.provider == Some(Provider::ReSukiSU) {
+            column![mk(VerChoice::Nightly)].spacing(8.0)
         } else {
-            row![mk(VerChoice::Stable), mk(VerChoice::Nightly)].spacing(d.space(12.0))
+            column![mk(VerChoice::Stable), mk(VerChoice::Nightly)].spacing(8.0)
         };
 
-        let col = column![version_row,]
-            .spacing(d.space(14.0))
-            .padding(d.space(28.0))
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("root_version_title").to_string(),
+            cards.width(Length::Fill).into(),
+            Some((
+                self.t("root_version_title").to_string(),
+                vec![self.t("root_version_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn root_nightly_source_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let mk = |src: NightlySource| -> Element<'_, Message> {
-            icon_option_card_sub_square_sized(
-                src.icon(self.wizard_square_icon()),
+            wizard_list_option_card(
+                src.icon(icon_size),
                 self.t(src.label_key()),
                 self.t(src.desc_key()),
                 self.root.nightly_source == Some(src),
-                Message::Root(RootMsg::RootNightlySource(src)),
-                side,
+                Some(Message::Root(RootMsg::RootNightlySource(src))),
+                metrics,
             )
         };
 
@@ -782,45 +882,51 @@ impl App {
             match (self.root.nightly_source, self.root.run_id.as_deref()) {
                 (Some(NightlySource::ManualInput), Some(id)) if !id.is_empty() => {
                     let label = tr_args!("nightly_manual_committed", id = id);
-                    button(text(label).size(d.text(13.0)).style(on_surface_style))
-                        .padding(d.padding(8.0, 14.0))
-                        .on_press(Message::Root(RootMsg::RootNightlySource(
-                            NightlySource::ManualInput,
-                        )))
-                        .style(|t: &Theme, status| {
-                            let p = pal_of(t);
-                            let bg_a = match status {
-                                button::Status::Hovered => 0.18,
-                                _ => 0.10,
-                            };
-                            button::Style {
-                                background: Some(with_alpha(p.on_surface, bg_a).into()),
-                                text_color: p.on_surface,
-                                border: iced::Border {
-                                    radius: 6.0.into(),
-                                    ..Default::default()
-                                },
+                    button(
+                        text(label)
+                            .size(theme::text_size::BODY_MEDIUM)
+                            .style(on_surface_style),
+                    )
+                    .padding([8.0, 14.0])
+                    .on_press(Message::Root(RootMsg::RootNightlySource(
+                        NightlySource::ManualInput,
+                    )))
+                    .style(|t: &Theme, status| {
+                        let p = pal_of(t);
+                        let bg_a = 0.10 + theme::state_alpha(status);
+                        button::Style {
+                            background: Some(with_alpha(p.on_surface, bg_a).into()),
+                            text_color: p.on_surface,
+                            border: iced::Border {
+                                radius: 6.0.into(),
                                 ..Default::default()
-                            }
-                        })
-                        .into()
+                            },
+                            ..Default::default()
+                        }
+                    })
+                    .into()
                 }
                 _ => Space::new().height(0).into(),
             };
 
-        let col = column![
-            row![
-                mk(NightlySource::AutoDetect),
-                mk(NightlySource::ManualInput)
-            ]
-            .spacing(d.space(12.0)),
+        let cards = column![
+            mk(NightlySource::AutoDetect),
+            mk(NightlySource::ManualInput),
             chip,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
+        .spacing(14.0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("root_source_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("root_source_title").to_string(),
+                vec![self.t("root_source_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn root_confirm_step(&self) -> Element<'_, Message> {

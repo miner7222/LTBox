@@ -45,8 +45,15 @@ op_done           = "circle-check-big"
 op_failed         = "circle-x"
 
 # Alert banners (18 px)
+# Block-level banners carry the triangle in both tones: colour already
+# separates warning from error, and a circle next to red reads as "info".
 banner_warning    = "triangle-alert"
-banner_error      = "circle-alert"
+banner_error      = "triangle-alert"
+# Inline field validation keeps the circle, as the mockup does — it sits
+# beside one input, not across the width of a screen.
+field_error       = "circle-alert"
+# Bare checkmark for markers that supply their own filled container.
+mark_check        = "check"
 
 # Window chrome (10 px)
 win_minimize      = "minus"

@@ -14,7 +14,18 @@ impl App {
                 if self.model_capabilities().prc_only && r == DeviceRegion::Row {
                     return Task::none();
                 }
+                self.queries.region_pending = None;
+                self.flash_serial_prompt = None;
+                self.flash.region_selection = Some(FlashRegionSelection::Manual(r));
                 self.flash.device_region = Some(r);
+                Task::none()
+            }
+            FlashMsg::FlashRegionAuto => {
+                self.queries.region_pending = None;
+                self.flash_serial_prompt = None;
+                self.flash.region_selection = Some(FlashRegionSelection::Auto);
+                self.flash.device_region = None;
+                self.flash.region_auto_unknown = false;
                 Task::none()
             }
             FlashMsg::FlashSerialPromptInput(s) => {
@@ -24,9 +35,10 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashSerialPromptSkip => {
-                // Dismiss → the region step shows the manual PRC/ROW cards
-                // (not probing, no prompt).
+                // Dismiss → keep the selected detection method and explain
+                // why the user now needs one of the manual PRC/ROW choices.
                 self.flash_serial_prompt = None;
+                self.flash.region_auto_unknown = true;
                 Task::none()
             }
             FlashMsg::FlashSerialPromptSubmit => {
@@ -39,6 +51,7 @@ impl App {
                     self.flash_serial_prompt = Some(buf);
                     return Task::none();
                 }
+                self.flash.region_auto_unknown = false;
                 self.start_region_probe(serial)
             }
             FlashMsg::FlashAutoRegionFetched(id, serial, result) => {
@@ -55,24 +68,22 @@ impl App {
                         if !serial.is_empty() {
                             self.queries.info_cache.insert(serial, info);
                         }
-                        // Only touch the selection while still on the region
-                        // step — never retroactively change a region the user
-                        // has already advanced past.
-                        if self.flash.step != 0 {
+                        // Only apply while the automatic method is still
+                        // selected on the region step — never overwrite a
+                        // manual choice or retroactively change a later step.
+                        if self.flash.step != 0
+                            || self.flash.region_selection != Some(FlashRegionSelection::Auto)
+                        {
                             return Task::none();
                         }
-                        match region {
-                            // Resolved → preselect and advance to the target step.
-                            Some(r) => {
-                                self.flash.device_region = Some(r);
-                                self.flash.step = 1;
-                            }
-                            // SaleArea neither CN nor null → can't decide;
-                            // stay on the manual region cards + note it.
-                            None => {
-                                let msg = self.t("flash_region_auto_unknown").to_string();
-                                return Task::done(Message::ToastShow(msg));
-                            }
+                        // Resolved → preselect and advance to the target step.
+                        // SaleArea neither CN nor null stays on the manual cards;
+                        // the step keeps the explanation visible until selection.
+                        if let Some(r) = region {
+                            self.flash.device_region = Some(r);
+                            self.flash.step = 1;
+                        } else {
+                            self.flash.region_auto_unknown = true;
                         }
                     }
                     // Network/upstream failure → manual region cards + toast.
@@ -80,6 +91,7 @@ impl App {
                         if self.flash.step != 0 {
                             return Task::none();
                         }
+                        self.flash.region_auto_unknown = true;
                         return Task::done(Message::ToastShow(e));
                     }
                 }
@@ -100,6 +112,22 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashNext => {
+                if self.flash.current_step() == FlashStep::Region {
+                    match self.flash.region_selection {
+                        Some(FlashRegionSelection::Auto) => {
+                            if self.queries.region_pending.is_some()
+                                || self.flash_serial_prompt.is_some()
+                            {
+                                return Task::none();
+                            }
+                            self.flash.region_auto_unknown = false;
+                            return self.begin_flash_region_auto();
+                        }
+                        Some(FlashRegionSelection::Manual(region))
+                            if self.flash.device_region == Some(region) => {}
+                        _ => return Task::none(),
+                    }
+                }
                 if self.flash.current_step() == FlashStep::Bootloader {
                     if !self.flash.bootloader_can_next() {
                         return Task::none();
@@ -130,7 +158,7 @@ impl App {
                     self.confirm_baseline = None;
                     if self.wf_config.wipe {
                         self.flash.next();
-                        self.country_popup_open = true;
+                        self.open_country_popup();
                         return Task::none();
                     }
                 }
@@ -208,6 +236,15 @@ impl App {
                     &self.recent_paths,
                     Message::FolderSelected,
                 )
+            }
+            FlashMsg::FlashClearFolder => {
+                self.flash.firmware_folder = None;
+                self.flash.firmware_rollback_indices = None;
+                self.flash.loader_required = false;
+                self.flash.loader_override = None;
+                self.flash.loader_error = None;
+                self.flash.reset_firmware_identity();
+                Task::none()
             }
             FlashMsg::FlashSelectLoader => {
                 // Always open the picker (don't auto-reuse the Settings default
@@ -435,7 +472,7 @@ impl App {
             // override, surfaced by the accent highlight against the baseline.
             FlashMsg::FlashConfirmOpen(field) => {
                 match field {
-                    ConfirmField::Country => self.country_popup_open = true,
+                    ConfirmField::Country => self.open_country_popup(),
                     other => self.confirm_edit_field = Some(other),
                 }
                 Task::none()
@@ -741,6 +778,24 @@ mod tests {
         app.wf_config.modify_rollback = RollbackSetting::Off;
         let _task = app.update_flash(FlashMsg::FlashExecStart);
         assert_eq!(app.wf_config.modify_rollback, RollbackSetting::Auto);
+    }
+
+    #[test]
+    fn clearing_the_flash_folder_clears_dependent_loader_state() {
+        let mut app = App::default();
+        app.flash.firmware_folder = Some("firmware".to_string());
+        app.flash.firmware_rollback_indices = Some((Ok(1), Ok(2)));
+        app.flash.loader_required = true;
+        app.flash.loader_override = Some("loader.melf".to_string());
+        app.flash.loader_error = Some("invalid loader".to_string());
+
+        let _task = app.update_flash(FlashMsg::FlashClearFolder);
+
+        assert!(app.flash.firmware_folder.is_none());
+        assert!(app.flash.firmware_rollback_indices.is_none());
+        assert!(!app.flash.loader_required);
+        assert!(app.flash.loader_override.is_none());
+        assert!(app.flash.loader_error.is_none());
     }
 
     fn started_lines(setting: RollbackSetting) -> Vec<String> {

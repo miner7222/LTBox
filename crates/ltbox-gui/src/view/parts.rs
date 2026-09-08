@@ -3,22 +3,52 @@
 use crate::*;
 use iced::widget::{self, Space, button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
+use ltbox_core::tr_args;
 
-/// Side of the tri-state marker, shared by the checkbox and the erase badge.
-///
-/// One source so the two states cannot drift to different sizes, and it stays
-/// under [`FLASH_PARTS_MARKER_CELL_HEIGHT`] at every window size — a marker
-/// taller than its cell is squeezed flat rather than clipped, which reads as a
-/// rendering fault rather than a layout one.
-fn marker_side(d: Density) -> f32 {
-    d.size(FLASH_PARTS_MARKER_SIZE)
+const FLASH_PARTS_LUN_COLUMN_WIDTH: f32 = 44.0;
+const FLASH_PARTS_LABEL_COLUMN_WIDTH: f32 = 104.0;
+const FLASH_PARTS_START_COLUMN_WIDTH: f32 = 116.0;
+const FLASH_PARTS_SIZE_COLUMN_WIDTH: f32 = 96.0;
+const FLASH_PARTS_STATE_COLUMN_WIDTH: f32 = 72.0;
+const FLASH_PARTS_FILE_ACTION_SIZE: f32 = 28.0;
+const FLASH_PARTS_ROW_HEIGHT: f32 = 40.0;
+
+/// Numeric partition header with the same sort affordance as
+/// `parts_sort_header`, but aligned to the trailing edge of its cell.
+fn parts_numeric_sort_header(
+    label: String,
+    is_active: bool,
+    desc: bool,
+    width: Length,
+    msg: Message,
+) -> Element<'static, Message> {
+    button(
+        container(
+            row![
+                text(label).size(11).style(muted_style),
+                parts_sort_marker(is_active, desc),
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Right),
+    )
+    .padding(0)
+    .width(width)
+    .style(|_t: &Theme, _s| button::Style {
+        background: None,
+        ..Default::default()
+    })
+    .on_press(msg)
+    .into()
 }
 
-fn m3_erase_marker(d: Density) -> Element<'static, Message> {
+fn m3_erase_marker() -> Element<'static, Message> {
     // Square badge, so both axes ride the one factor its side does.
     let dash = container(Space::new())
-        .width(Length::Fixed(d.size(FLASH_PARTS_ERASE_DASH_WIDTH)))
-        .height(Length::Fixed(d.size(FLASH_PARTS_ERASE_DASH_HEIGHT)))
+        .width(Length::Fixed(FLASH_PARTS_ERASE_DASH_WIDTH))
+        .height(Length::Fixed(FLASH_PARTS_ERASE_DASH_HEIGHT))
         .style(|t: &Theme| {
             let p = pal_of(t);
             container::Style {
@@ -32,8 +62,8 @@ fn m3_erase_marker(d: Density) -> Element<'static, Message> {
         });
 
     container(dash)
-        .width(Length::Fixed(marker_side(d)))
-        .height(Length::Fixed(marker_side(d)))
+        .width(Length::Fixed(FLASH_PARTS_MARKER_SIZE))
+        .height(Length::Fixed(FLASH_PARTS_MARKER_SIZE))
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
         .style(|t: &Theme| {
@@ -51,6 +81,61 @@ fn m3_erase_marker(d: Density) -> Element<'static, Message> {
         .into()
 }
 
+fn partition_file_button(
+    glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
+    on_press: Option<Message>,
+    clear: bool,
+) -> iced::widget::Button<'static, Message> {
+    let enabled = on_press.is_some();
+    let mut action = button(
+        container(glyph.size(15))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .padding(0)
+    .width(Length::Fixed(FLASH_PARTS_FILE_ACTION_SIZE))
+    .height(Length::Fixed(FLASH_PARTS_FILE_ACTION_SIZE))
+    .style(move |t: &Theme, status| {
+        let p = pal_of(t);
+        let destructive_hover =
+            clear && matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let foreground = if !enabled {
+            with_alpha(p.on_surface, 0.34)
+        } else if destructive_hover {
+            p.error
+        } else {
+            p.on_surface_variant
+        };
+        let background = if !enabled {
+            None
+        } else if destructive_hover {
+            Some(with_alpha(p.error, 0.10).into())
+        } else {
+            theme::state_layer_bg(status, p.on_surface).map(Into::into)
+        };
+        button::Style {
+            background,
+            text_color: foreground,
+            border: iced::Border {
+                color: if enabled {
+                    p.outline
+                } else {
+                    with_alpha(p.outline, 0.34)
+                },
+                width: 1.0,
+                radius: theme::shape::SM.into(),
+            },
+            ..Default::default()
+        }
+    });
+    if let Some(message) = on_press {
+        action = action.on_press(message);
+    }
+    action
+}
+
 impl App {
     pub(crate) fn view_flash_parts_wizard(&self) -> Element<'_, Message> {
         if self.log_popup_open && self.flash_parts.step >= 3 {
@@ -58,13 +143,28 @@ impl App {
         }
 
         let step_labels: Vec<&str> = FLASH_PARTS_STEPS.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.flash_parts.step);
+        let is_exec = self.flash_parts.step >= 3;
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(
+                &step_labels,
+                self.flash_parts.step,
+                self.window_size_class(),
+            )
+        };
 
         let body: Element<'_, Message> = match self.flash_parts.step {
             0 => self.flash_parts_loader_step(),
             1 => self.flash_parts_select_step(),
             2 => self.flash_parts_confirm_step(),
             _ => self.exec_step_view(),
+        };
+        let (step_title, app_bar_subtitle) = self.flash_parts_step_copy();
+        let body = if is_exec {
+            body
+        } else {
+            wizard_step_body(step_title, body)
         };
 
         let nav = if self.flash_parts.step < 3 {
@@ -107,36 +207,35 @@ impl App {
             empty_wizard_nav()
         };
 
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.flash_parts_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t(AdvAction::FlashPartitions.label_key()).to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn flash_parts_action_bar(&self) -> Option<Element<'_, Message>> {
-        let (title, subtitle) = match self.flash_parts.step {
-            0 => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
+    fn flash_parts_step_copy(&self) -> (String, Option<String>) {
+        let (title, app_bar_subtitle) = match self.flash_parts.step {
+            0 => (self.t("edl_loader_title").to_string(), None),
             1 => (
                 self.t("flash_parts_select_title").to_string(),
-                self.t("flash_parts_select_subtitle").to_string(),
+                Some(self.t("flash_parts_select_subtitle").to_string()),
             ),
-            2 => (
-                self.t("flash_parts_confirm_title").to_string(),
-                self.t("flash_parts_confirm_subtitle").to_string(),
-            ),
-            _ => return Some(self.exec_action_bar()),
+            2 => (self.t("flash_parts_confirm_title").to_string(), None),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                return (title, self.exec_app_bar_subtitle());
+            }
         };
-        Some(wizard_action_bar(title, Some(subtitle)))
+        (title, app_bar_subtitle)
     }
 
     /// Shared loader-picker card for the EDL parts / physical-storage
@@ -156,7 +255,6 @@ impl App {
         on_select: Message,
         on_chosen: impl Fn(String) -> Message,
     ) -> Element<'a, Message> {
-        let d = self.density();
         let selected = loader_path.is_some();
         let loader_error = error;
         let status = match (loader_path, loader_error) {
@@ -168,19 +266,19 @@ impl App {
             container(
                 column![
                     text(self.t("btn_browse_loader").to_string())
-                        .size(d.text(14.0))
+                        .size(14.0)
                         .center(),
                     text(self.loader_picker_desc())
-                        .size(d.text(11.0))
+                        .size(11.0)
                         .style(muted_style)
                         .center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
+            .padding([20.0, 24.0])
+            .width(Length::Fixed(280.0))
             .style(move |t: &Theme| sel_card_style(t, selected)),
         )
         .on_press(on_select)
@@ -203,22 +301,22 @@ impl App {
         let col = column![
             btn,
             text(status)
-                .size(d.text(12.0))
+                .size(12.0)
                 .width(Length::Fill)
                 .style(status_style)
                 .center()
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             chips,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
+        .spacing(14.0)
+        .padding(28.0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 
@@ -239,14 +337,13 @@ impl App {
         &'a self,
         list: iced::widget::Column<'a, Message>,
     ) -> Element<'a, Message> {
-        let d = self.density();
         let scrolled = scrollable(list)
             .style(m3_scrollable_style)
             .height(Length::Fill)
             .width(Length::Fill);
         let col = column![scrolled,]
-            .spacing(d.space(10.0))
-            .padding(d.space(20.0))
+            .spacing(10.0)
+            .padding(20.0)
             .width(Length::Fill)
             .align_x(iced::Alignment::Center);
         container(col)
@@ -255,121 +352,196 @@ impl App {
             .into()
     }
 
+    fn flash_parts_select_frame<'a>(
+        &'a self,
+        list: iced::widget::Column<'a, Message>,
+        footer: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let scrolled = scrollable(list)
+            .style(m3_scrollable_style)
+            .height(Length::Fill)
+            .width(Length::Fill);
+        container(
+            column![scrolled, widget::rule::horizontal(1), footer]
+                .spacing(0)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .padding(20.0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
     pub(crate) fn flash_parts_select_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let active = self.flash_parts.sort_col;
         let desc = self.flash_parts.sort_desc;
         let mk_msg = |c: PartsSortColumn| Message::FlashParts(FlashPartsMsg::FlashPartsSortBy(c));
         let header = row![
-            text(" ")
-                .size(d.text(11.0))
-                .width(Length::Fixed(d.width(FLASH_PARTS_MARKER_CELL_WIDTH))), // checkbox col
+            Space::new().width(Length::Fixed(FLASH_PARTS_MARKER_CELL_WIDTH)), // checkbox col
             parts_sort_header(
                 self.t("flash_parts_col_lun").to_string(),
                 active == PartsSortColumn::Lun,
                 desc,
-                Length::Fixed(d.width(50.0)),
+                Length::Fixed(FLASH_PARTS_LUN_COLUMN_WIDTH),
                 mk_msg(PartsSortColumn::Lun),
             ),
             parts_sort_header(
                 self.t("flash_parts_col_label").to_string(),
                 active == PartsSortColumn::Label,
                 desc,
-                Length::FillPortion(3),
+                Length::Fixed(FLASH_PARTS_LABEL_COLUMN_WIDTH),
                 mk_msg(PartsSortColumn::Label),
             ),
-            parts_sort_header(
+            parts_numeric_sort_header(
                 self.t("flash_parts_col_start").to_string(),
                 active == PartsSortColumn::Start,
                 desc,
-                Length::FillPortion(2),
+                Length::Fixed(FLASH_PARTS_START_COLUMN_WIDTH),
                 mk_msg(PartsSortColumn::Start),
             ),
-            parts_sort_header(
+            parts_numeric_sort_header(
                 self.t("dump_parts_col_size").to_string(),
                 active == PartsSortColumn::Size,
                 desc,
-                Length::FillPortion(2),
+                Length::Fixed(FLASH_PARTS_SIZE_COLUMN_WIDTH),
                 mk_msg(PartsSortColumn::Size),
             ),
             parts_sort_header(
                 self.t("flash_parts_col_file").to_string(),
                 active == PartsSortColumn::File,
                 desc,
-                Length::FillPortion(3),
+                Length::Fill,
                 mk_msg(PartsSortColumn::File),
             ),
+            text(self.t("flash_parts_col_state").to_string())
+                .size(11.0)
+                .width(Length::Fixed(FLASH_PARTS_STATE_COLUMN_WIDTH))
+                .style(muted_style),
         ]
-        .spacing(d.space(8.0))
-        .padding(d.padding(6.0, 10.0))
+        .spacing(8.0)
+        .padding([6.0, 10.0])
+        .width(Length::Fill)
         .align_y(iced::Alignment::Center);
 
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
         for (idx, r) in self.flash_parts.rows.iter().enumerate() {
-            // Fixed-width tri-state marker: skip, flash, or erase.
-            let marker: Element<'_, Message> = match r.state {
-                FlashRowState::Unchecked => iced::widget::checkbox(false)
-                    .size(marker_side(d))
-                    .on_toggle(move |_| {
-                        Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx))
-                    })
-                    .style(m3_checkbox_style)
-                    .into(),
-                FlashRowState::Flash => iced::widget::checkbox(true)
-                    .size(marker_side(d))
-                    .on_toggle(move |_| {
-                        Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx))
-                    })
-                    .style(m3_checkbox_style)
-                    .into(),
-                FlashRowState::Erase => m3_erase_marker(d),
-            };
-            let marker_btn = button(
-                container(marker)
-                    .width(Length::Fixed(d.width(FLASH_PARTS_MARKER_CELL_WIDTH)))
-                    .height(Length::Fixed(d.size(FLASH_PARTS_MARKER_CELL_HEIGHT)))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
-            )
-            .padding(0)
-            .on_press(Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx)))
-            .style(|_t: &Theme, _s| button::Style {
-                background: None,
-                ..Default::default()
-            });
-
-            // Filename column: short display only.
-            let file_disp = r
-                .file_path
-                .as_ref()
-                .map(|p| {
-                    std::path::Path::new(p)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| p.clone())
+            let marker_cell: Element<'_, Message> = match r.state {
+                FlashRowState::Skip | FlashRowState::Write => container(
+                    iced::widget::checkbox(r.state == FlashRowState::Write)
+                        .size(FLASH_PARTS_MARKER_SIZE)
+                        .on_toggle(move |_| {
+                            Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx))
+                        })
+                        .style(m3_checkbox_style),
+                )
+                // `center_x(Fill)` would overwrite the fixed width set above
+                // and let this cell take slack, pushing every data column out
+                // of line with its header. Align inside the width instead.
+                .width(Length::Fixed(FLASH_PARTS_MARKER_CELL_WIDTH))
+                .height(Length::Fixed(FLASH_PARTS_ROW_HEIGHT))
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .into(),
+                FlashRowState::Erase => button(
+                    container(m3_erase_marker())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .padding(0)
+                .width(Length::Fixed(FLASH_PARTS_MARKER_CELL_WIDTH))
+                .height(Length::Fixed(FLASH_PARTS_ROW_HEIGHT))
+                .on_press(Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx)))
+                .style(|_t: &Theme, _s| button::Style {
+                    background: None,
+                    ..Default::default()
                 })
-                .unwrap_or_default();
+                .into(),
+            };
+
+            let file_cell: Element<'_, Message> = match r.state {
+                FlashRowState::Skip => row![
+                    partition_file_button(
+                        icon::fab_open_folder(),
+                        Some(Message::FlashParts(FlashPartsMsg::FlashPartsPickRowFile(
+                            idx
+                        ))),
+                        false,
+                    ),
+                    text("—").size(12.0).style(muted_style),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into(),
+                FlashRowState::Write => {
+                    let file_disp = r
+                        .file_path
+                        .as_ref()
+                        .map(|p| {
+                            std::path::Path::new(p)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| p.clone())
+                        })
+                        .unwrap_or_default();
+                    row![
+                        partition_file_button(
+                            icon::fab_cancel(),
+                            Some(Message::FlashParts(FlashPartsMsg::FlashPartsClearRowFile(
+                                idx
+                            ),)),
+                            true,
+                        ),
+                        text(file_disp)
+                            .size(12.0)
+                            .width(Length::Fill)
+                            .wrapping(iced::widget::text::Wrapping::None),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center)
+                    .into()
+                }
+                FlashRowState::Erase => row![
+                    partition_file_button(icon::fab_open_folder(), None, false),
+                    text("—").size(12.0),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into(),
+            };
 
             let data_row = iced::widget::row![
-                container(marker_btn).width(Length::Fixed(d.width(FLASH_PARTS_MARKER_CELL_WIDTH))),
+                marker_cell,
                 text(r.lun.to_string())
-                    .size(d.text(12.0))
-                    .width(Length::Fixed(d.width(50.0))),
+                    .size(12.0)
+                    .width(Length::Fixed(FLASH_PARTS_LUN_COLUMN_WIDTH)),
                 text(r.label.clone())
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(3)),
+                    .size(12.0)
+                    .width(Length::Fixed(FLASH_PARTS_LABEL_COLUMN_WIDTH))
+                    .wrapping(iced::widget::text::Wrapping::None),
                 text(r.start_sector.to_string())
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(2)),
+                    .size(12.0)
+                    .width(Length::Fixed(FLASH_PARTS_START_COLUMN_WIDTH))
+                    .align_x(iced::alignment::Horizontal::Right),
                 text(format_bytes_auto(r.size_bytes))
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(2)),
-                text(file_disp)
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(3)),
+                    .size(12.0)
+                    .width(Length::Fixed(FLASH_PARTS_SIZE_COLUMN_WIDTH))
+                    .align_x(iced::alignment::Horizontal::Right),
+                container(file_cell).width(Length::Fill),
+                text(match r.state {
+                    FlashRowState::Skip => "—",
+                    FlashRowState::Write => self.t("flash_parts_state_write"),
+                    FlashRowState::Erase => self.t("flash_parts_state_erase"),
+                })
+                .size(12.0)
+                .width(Length::Fixed(FLASH_PARTS_STATE_COLUMN_WIDTH)),
             ]
-            .spacing(d.space(8.0))
-            .padding(d.padding(4.0, 10.0))
+            .spacing(8.0)
+            .padding([0.0, 10.0])
+            .width(Length::Fill)
+            .height(Length::Fixed(FLASH_PARTS_ROW_HEIGHT))
             .align_y(iced::Alignment::Center);
 
             // Tint the whole row by its tri-state so flash/erase pop
@@ -378,30 +550,68 @@ impl App {
             let tinted = container(data_row).width(Length::Fill).style(
                 move |t: &Theme| -> container::Style {
                     let p = pal_of(t);
-                    let bg = match row_state {
-                        FlashRowState::Flash => Some(p.primary_container),
-                        FlashRowState::Erase => Some(p.error_container),
-                        FlashRowState::Unchecked => None,
+                    let (bg, text_color) = match row_state {
+                        FlashRowState::Write => {
+                            (Some(p.secondary_container), Some(p.on_secondary_container))
+                        }
+                        FlashRowState::Erase => {
+                            (Some(p.error_container), Some(p.on_error_container))
+                        }
+                        FlashRowState::Skip => (None, None),
                     };
                     container::Style {
                         background: bg.map(iced::Background::Color),
+                        text_color,
                         ..Default::default()
                     }
                 },
             );
 
-            // Whole row is a double-click target for the file picker.
-            let clickable = iced::widget::mouse_area(tinted).on_double_click(Message::FlashParts(
-                FlashPartsMsg::FlashPartsPickRowFile(idx),
-            ));
-            list = list.push(clickable);
+            list = list.push(tinted);
         }
 
-        self.select_step_frame(list)
+        let write_count = self
+            .flash_parts
+            .rows
+            .iter()
+            .filter(|row| row.state == FlashRowState::Write)
+            .count();
+        let erase_count = self
+            .flash_parts
+            .rows
+            .iter()
+            .filter(|row| row.state == FlashRowState::Erase)
+            .count();
+        let touched_size = self
+            .flash_parts
+            .rows
+            .iter()
+            .filter(|row| matches!(row.state, FlashRowState::Write | FlashRowState::Erase))
+            .fold(0_u64, |total, row| total.saturating_add(row.size_bytes));
+        let footer = row![
+            text(tr_args!(
+                "flash_parts_footer_counts",
+                total = self.flash_parts.rows.len().to_string(),
+                write = write_count.to_string(),
+                erase = erase_count.to_string(),
+            ))
+            .size(12.0),
+            Space::new().width(Length::Fill),
+            text(tr_args!(
+                "flash_parts_footer_size",
+                size = format_bytes_auto(touched_size),
+            ))
+            .size(12.0),
+        ]
+        .spacing(12)
+        .padding([12.0, 4.0])
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center);
+
+        self.flash_parts_select_frame(list, footer.into())
     }
 
     pub(crate) fn flash_parts_confirm_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let rows = self.flash_parts.active_rows();
         let erase_rows: Vec<&FlashPartRow> = rows
             .iter()
@@ -409,7 +619,7 @@ impl App {
             .collect();
         let flash_rows: Vec<&FlashPartRow> = rows
             .iter()
-            .filter(|r| r.state == FlashRowState::Flash)
+            .filter(|r| r.state == FlashRowState::Write)
             .collect();
 
         let mut leading: Vec<Element<'_, Message>> = Vec::new();
@@ -418,12 +628,12 @@ impl App {
         if !erase_rows.is_empty() {
             let mut erase_col = column![
                 text(self.t("flash_parts_confirm_erase_warn").to_string())
-                    .size(d.text(14.0))
+                    .size(14.0)
                     .style(|t: &Theme| iced::widget::text::Style {
                         color: Some(pal_of(t).error),
                     })
             ]
-            .spacing(d.space(4.0));
+            .spacing(4.0);
             for r in &erase_rows {
                 erase_col = erase_col.push(
                     text(format!(
@@ -432,7 +642,7 @@ impl App {
                         r.lun,
                         format_bytes_auto(r.size_bytes)
                     ))
-                    .size(d.text(13.0))
+                    .size(theme::text_size::BODY_MEDIUM)
                     .style(|t: &Theme| iced::widget::text::Style {
                         color: Some(pal_of(t).error),
                     }),
@@ -440,7 +650,7 @@ impl App {
             }
             leading.push(
                 container(erase_col)
-                    .padding(d.space(14.0))
+                    .padding(14.0)
                     .width(Length::Fill)
                     .style(move |t: &Theme| container::Style {
                         background: Some(iced::Background::Color(pal_of(t).error_container)),
@@ -460,10 +670,10 @@ impl App {
         if !flash_rows.is_empty() {
             let mut flash_col = column![
                 text(self.t("flash_parts_confirm_flash_hdr").to_string())
-                    .size(d.text(14.0))
+                    .size(14.0)
                     .style(on_surface_style)
             ]
-            .spacing(d.space(4.0));
+            .spacing(4.0);
             for r in &flash_rows {
                 let fname = r
                     .file_path
@@ -477,13 +687,13 @@ impl App {
                     .unwrap_or_default();
                 flash_col = flash_col.push(
                     text(format!("• {} (LUN {}) ← {}", r.label, r.lun, fname))
-                        .size(d.text(12.0))
+                        .size(12.0)
                         .style(muted_style),
                 );
             }
             leading.push(
                 container(flash_col)
-                    .padding(d.space(14.0))
+                    .padding(14.0)
                     .width(Length::Fill)
                     .into(),
             );
@@ -498,12 +708,23 @@ impl App {
         }
 
         let step_labels: Vec<&str> = DUMP_PARTS_STEPS.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.dump_parts.step);
+        let is_exec = self.dump_parts.step >= 2;
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.dump_parts.step, self.window_size_class())
+        };
 
         let body: Element<'_, Message> = match self.dump_parts.step {
             0 => self.dump_parts_loader_step(),
             1 => self.dump_parts_select_step(),
             _ => self.exec_step_view(),
+        };
+        let (step_title, app_bar_subtitle) = self.dump_parts_step_copy();
+        let body = if is_exec {
+            body
+        } else {
+            wizard_step_body(step_title, body)
         };
 
         let nav = if self.dump_parts.step < 2 {
@@ -545,32 +766,31 @@ impl App {
             empty_wizard_nav()
         };
 
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.dump_parts_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t(AdvAction::DumpPartitions.label_key()).to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn dump_parts_action_bar(&self) -> Option<Element<'_, Message>> {
-        let (title, subtitle) = match self.dump_parts.step {
-            0 => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
-            1 => (
-                self.t("dump_parts_select_title").to_string(),
-                self.t("dump_parts_select_subtitle").to_string(),
-            ),
-            _ => return Some(self.exec_action_bar()),
+    fn dump_parts_step_copy(&self) -> (String, Option<String>) {
+        let title = match self.dump_parts.step {
+            0 => self.t("edl_loader_title").to_string(),
+            1 => self.t("dump_parts_select_title").to_string(),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                return (title, self.exec_app_bar_subtitle());
+            }
         };
-        Some(wizard_action_bar(title, Some(subtitle)))
+        (title, None)
     }
 
     pub(crate) fn dump_parts_loader_step(&self) -> Element<'_, Message> {
@@ -586,7 +806,6 @@ impl App {
     }
 
     pub(crate) fn dump_parts_select_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let active = self.dump_parts.sort_col;
         let desc = self.dump_parts.sort_desc;
         let mk_msg = |c: PartsSortColumn| Message::DumpParts(DumpPartsMsg::DumpPartsSortBy(c));
@@ -600,12 +819,12 @@ impl App {
             .style(m3_checkbox_style)
             .on_toggle(|_| Message::DumpParts(DumpPartsMsg::DumpPartsToggleAll));
         let header = row![
-            container(header_cb).width(Length::Fixed(d.width(32.0))),
+            container(header_cb).width(Length::Fixed(32.0)),
             parts_sort_header(
                 self.t("flash_parts_col_lun").to_string(),
                 active == PartsSortColumn::Lun,
                 desc,
-                Length::Fixed(d.width(50.0)),
+                Length::Fixed(50.0),
                 mk_msg(PartsSortColumn::Lun),
             ),
             parts_sort_header(
@@ -615,14 +834,14 @@ impl App {
                 Length::FillPortion(3),
                 mk_msg(PartsSortColumn::Label),
             ),
-            parts_sort_header(
+            parts_numeric_sort_header(
                 self.t("flash_parts_col_start").to_string(),
                 active == PartsSortColumn::Start,
                 desc,
                 Length::FillPortion(2),
                 mk_msg(PartsSortColumn::Start),
             ),
-            parts_sort_header(
+            parts_numeric_sort_header(
                 self.t("dump_parts_col_size").to_string(),
                 active == PartsSortColumn::Size,
                 desc,
@@ -630,8 +849,8 @@ impl App {
                 mk_msg(PartsSortColumn::Size),
             ),
         ]
-        .spacing(d.space(8.0))
-        .padding(d.padding(6.0, 10.0))
+        .spacing(8.0)
+        .padding([6.0, 10.0])
         .align_y(iced::Alignment::Center);
 
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
@@ -640,22 +859,24 @@ impl App {
                 .style(m3_checkbox_style)
                 .on_toggle(move |_| Message::DumpParts(DumpPartsMsg::DumpPartsToggleRow(idx)));
             let data_row = iced::widget::row![
-                container(cb).width(Length::Fixed(d.width(32.0))),
+                container(cb).width(Length::Fixed(32.0)),
                 text(row.lun.to_string())
-                    .size(d.text(12.0))
-                    .width(Length::Fixed(d.width(50.0))),
+                    .size(12.0)
+                    .width(Length::Fixed(50.0)),
                 text(row.label.clone())
-                    .size(d.text(12.0))
+                    .size(12.0)
                     .width(Length::FillPortion(3)),
                 text(row.start_sector.to_string())
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(2)),
+                    .size(12.0)
+                    .width(Length::FillPortion(2))
+                    .align_x(iced::alignment::Horizontal::Right),
                 text(format_bytes_auto(row.size_bytes))
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(2)),
+                    .size(12.0)
+                    .width(Length::FillPortion(2))
+                    .align_x(iced::alignment::Horizontal::Right),
             ]
-            .spacing(d.space(8.0))
-            .padding(d.padding(4.0, 10.0))
+            .spacing(8.0)
+            .padding([4.0, 10.0])
             .align_y(iced::Alignment::Center);
             // Tint selected rows so the dump set is visible at a glance.
             let selected = row.selected;
@@ -664,10 +885,11 @@ impl App {
                     let p = pal_of(t);
                     container::Style {
                         background: if selected {
-                            Some(iced::Background::Color(p.primary_container))
+                            Some(iced::Background::Color(p.secondary_container))
                         } else {
                             None
                         },
+                        text_color: selected.then_some(p.on_secondary_container),
                         ..Default::default()
                     }
                 },
@@ -684,12 +906,23 @@ impl App {
         }
 
         let step_labels: Vec<&str> = DUMP_PHYS_STEPS.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.dump_phys.step);
+        let is_exec = self.dump_phys.step >= 2;
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.dump_phys.step, self.window_size_class())
+        };
 
         let body: Element<'_, Message> = match self.dump_phys.step {
             0 => self.dump_phys_loader_step(),
             1 => self.dump_phys_select_step(),
             _ => self.exec_step_view(),
+        };
+        let (step_title, app_bar_subtitle) = self.dump_phys_step_copy();
+        let body = if is_exec {
+            body
+        } else {
+            wizard_step_body(step_title, body)
         };
 
         let nav = if self.dump_phys.step < 2 {
@@ -720,32 +953,31 @@ impl App {
             empty_wizard_nav()
         };
 
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.dump_phys_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t(AdvAction::DumpPhysical.label_key()).to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn dump_phys_action_bar(&self) -> Option<Element<'_, Message>> {
-        let (title, subtitle) = match self.dump_phys.step {
-            0 => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
-            1 => (
-                self.t("phys_select_title").to_string(),
-                self.t("phys_select_subtitle").to_string(),
-            ),
-            _ => return Some(self.exec_action_bar()),
+    fn dump_phys_step_copy(&self) -> (String, Option<String>) {
+        let title = match self.dump_phys.step {
+            0 => self.t("edl_loader_title").to_string(),
+            1 => self.t("phys_select_title").to_string(),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                return (title, self.exec_app_bar_subtitle());
+            }
         };
-        Some(wizard_action_bar(title, Some(subtitle)))
+        (title, None)
     }
 
     pub(crate) fn dump_phys_loader_step(&self) -> Element<'_, Message> {
@@ -758,18 +990,15 @@ impl App {
     }
 
     pub(crate) fn dump_phys_select_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let header = row![
-            text(" ")
-                .size(d.text(11.0))
-                .width(Length::Fixed(d.width(32.0))),
+            text(" ").size(11.0).width(Length::Fixed(32.0)),
             text(self.t("phys_col_storage").to_string())
-                .size(d.text(11.0))
+                .size(11.0)
                 .width(Length::Fill)
                 .style(muted_style),
         ]
-        .spacing(d.space(8.0))
-        .padding(d.padding(6.0, 10.0))
+        .spacing(8.0)
+        .padding([6.0, 10.0])
         .align_y(iced::Alignment::Center);
 
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
@@ -779,13 +1008,11 @@ impl App {
                 .style(m3_checkbox_style)
                 .on_toggle(move |_| Message::DumpPhys(DumpPhysMsg::DumpPhysToggleRow(idx)));
             let data_row = iced::widget::row![
-                container(cb).width(Length::Fixed(d.width(32.0))),
-                text(format!("LUN {idx}"))
-                    .size(d.text(12.0))
-                    .width(Length::Fill),
+                container(cb).width(Length::Fixed(32.0)),
+                text(format!("LUN {idx}")).size(12.0).width(Length::Fill),
             ]
-            .spacing(d.space(8.0))
-            .padding(d.padding(4.0, 10.0))
+            .spacing(8.0)
+            .padding([4.0, 10.0])
             .align_y(iced::Alignment::Center);
             list = list.push(data_row);
         }
@@ -799,13 +1026,24 @@ impl App {
         }
 
         let step_labels: Vec<&str> = FLASH_PHYS_STEPS.iter().map(|k| self.t(k)).collect();
-        let step_bar = wizard_step_bar(&step_labels, self.flash_phys.step);
+        let is_exec = self.flash_phys.step >= 3;
+        let step_bar = if is_exec {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.flash_phys.step, self.window_size_class())
+        };
 
         let body: Element<'_, Message> = match self.flash_phys.step {
             0 => self.flash_phys_loader_step(),
             1 => self.flash_phys_select_step(),
             2 => self.flash_phys_confirm_step(),
             _ => self.exec_step_view(),
+        };
+        let (step_title, app_bar_subtitle) = self.flash_phys_step_copy();
+        let body = if is_exec {
+            body
+        } else {
+            wizard_step_body(step_title, body)
         };
 
         let nav = if self.flash_phys.step < 3 {
@@ -838,36 +1076,32 @@ impl App {
             empty_wizard_nav()
         };
 
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.flash_phys_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t(AdvAction::FlashPhysical.label_key()).to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn flash_phys_action_bar(&self) -> Option<Element<'_, Message>> {
-        let (title, subtitle) = match self.flash_phys.step {
-            0 => (
-                self.t("edl_loader_title").to_string(),
-                self.t("edl_loader_subtitle").to_string(),
-            ),
-            1 => (
-                self.t("phys_select_title").to_string(),
-                self.t("flash_phys_select_subtitle").to_string(),
-            ),
-            2 => (
-                self.t("flash_parts_confirm_title").to_string(),
-                self.t("flash_phys_confirm_subtitle").to_string(),
-            ),
-            _ => return Some(self.exec_action_bar()),
+    fn flash_phys_step_copy(&self) -> (String, Option<String>) {
+        let title = match self.flash_phys.step {
+            0 => self.t("edl_loader_title").to_string(),
+            1 => self.t("phys_select_title").to_string(),
+            2 => self.t("flash_parts_confirm_title").to_string(),
+            _ => {
+                let (title, _) = self.exec_status_copy();
+                return (title, self.exec_app_bar_subtitle());
+            }
         };
-        Some(wizard_action_bar(title, Some(subtitle)))
+        (title, None)
     }
 
     pub(crate) fn flash_phys_loader_step(&self) -> Element<'_, Message> {
@@ -880,22 +1114,19 @@ impl App {
     }
 
     pub(crate) fn flash_phys_select_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let header = row![
-            text(" ")
-                .size(d.text(11.0))
-                .width(Length::Fixed(d.width(32.0))),
+            text(" ").size(11.0).width(Length::Fixed(32.0)),
             text(self.t("phys_col_storage").to_string())
-                .size(d.text(11.0))
+                .size(11.0)
                 .width(Length::FillPortion(2))
                 .style(muted_style),
             text(self.t("flash_parts_col_file").to_string())
-                .size(d.text(11.0))
+                .size(11.0)
                 .width(Length::FillPortion(3))
                 .style(muted_style),
         ]
-        .spacing(d.space(8.0))
-        .padding(d.padding(6.0, 10.0))
+        .spacing(8.0)
+        .padding([6.0, 10.0])
         .align_y(iced::Alignment::Center);
 
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
@@ -915,29 +1146,37 @@ impl App {
                 })
                 .unwrap_or_default();
 
+            // Picking a file used to need a double-click on the row, which
+            // nothing announced. The partition table already spells the same
+            // action as a folder button, so this borrows it.
             let data_row = iced::widget::row![
-                container(cb).width(Length::Fixed(d.width(32.0))),
+                container(cb).width(Length::Fixed(32.0)),
                 text(format!("LUN {idx}"))
-                    .size(d.text(12.0))
+                    .size(12.0)
                     .width(Length::FillPortion(2)),
-                text(file_disp)
-                    .size(d.text(12.0))
-                    .width(Length::FillPortion(3)),
+                row![
+                    text(file_disp).size(12.0).width(Length::Fill),
+                    partition_file_button(
+                        icon::fab_open_folder(),
+                        Some(Message::FlashPhys(FlashPhysMsg::FlashPhysPickRowFile(idx))),
+                        false,
+                    ),
+                ]
+                .spacing(8.0)
+                .align_y(iced::Alignment::Center)
+                .width(Length::FillPortion(3)),
             ]
-            .spacing(d.space(8.0))
-            .padding(d.padding(4.0, 10.0))
+            .spacing(8.0)
+            .padding([4.0, 10.0])
             .align_y(iced::Alignment::Center);
 
-            let clickable = iced::widget::mouse_area(data_row)
-                .on_double_click(Message::FlashPhys(FlashPhysMsg::FlashPhysPickRowFile(idx)));
-            list = list.push(clickable);
+            list = list.push(data_row);
         }
 
         self.select_step_frame(list)
     }
 
     pub(crate) fn flash_phys_confirm_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let pairs = self.flash_phys.active_pairs();
 
         let mut leading: Vec<Element<'_, Message>> = Vec::new();
@@ -945,10 +1184,10 @@ impl App {
         if !pairs.is_empty() {
             let mut list = column![
                 text(self.t("flash_parts_confirm_flash_hdr").to_string())
-                    .size(d.text(14.0))
+                    .size(14.0)
                     .style(on_surface_style)
             ]
-            .spacing(d.space(4.0));
+            .spacing(4.0);
             for (lun, path) in &pairs {
                 let fname = std::path::Path::new(path)
                     .file_name()
@@ -956,16 +1195,11 @@ impl App {
                     .unwrap_or_else(|| path.clone());
                 list = list.push(
                     text(format!("• LUN {lun} ← {fname}"))
-                        .size(d.text(12.0))
+                        .size(12.0)
                         .style(muted_style),
                 );
             }
-            leading.push(
-                container(list)
-                    .padding(d.space(14.0))
-                    .width(Length::Fill)
-                    .into(),
-            );
+            leading.push(container(list).padding(14.0).width(Length::Fill).into());
         }
 
         self.confirm_step_frame(leading, vec![], vec![])
@@ -975,24 +1209,16 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::widgets::{
-        WIZARD_CARD_GROW_FROM_CONTENT, WIZARD_CARD_GROW_TO_CONTENT, density_for_content_width,
-    };
 
     #[test]
     fn the_tri_state_marker_always_fits_its_cell() {
         // Scaling the marker twice put it at 27 px inside a 26 px cell, which
         // squeezed the erase badge flat while the checkbox beside it — scaled
         // once — still looked right.
-        for content_width in [
-            WIZARD_CARD_GROW_FROM_CONTENT,
-            1200.0,
-            WIZARD_CARD_GROW_TO_CONTENT,
-            4000.0,
-        ] {
-            let d = density_for_content_width(content_width);
-            let side = marker_side(d);
-            let cell = d.size(FLASH_PARTS_MARKER_CELL_HEIGHT);
+        // Exercise compact, both sides of the class boundary, and expanded.
+        for content_width in [756.0, 999.999, 1000.0, 1256.0, 4000.0] {
+            let side = FLASH_PARTS_MARKER_SIZE;
+            let cell = FLASH_PARTS_ROW_HEIGHT;
             assert!(
                 side <= cell,
                 "marker {side} does not fit the {cell} cell at content width {content_width}"

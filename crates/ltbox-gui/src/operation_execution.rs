@@ -28,6 +28,8 @@ pub(crate) struct OperationExecution {
     pub(crate) steps: Vec<OpStep>,
     completed_step: usize,
     writes_started: bool,
+    started_at: Option<std::time::Instant>,
+    elapsed: std::time::Duration,
     pub(crate) direct_update: crate::DirectUpdateState,
 }
 
@@ -49,6 +51,8 @@ impl OperationExecution {
             .unwrap_or_default();
         self.completed_step = 0;
         self.writes_started = false;
+        self.started_at = Some(std::time::Instant::now());
+        self.elapsed = std::time::Duration::ZERO;
         self.active = Some(ActiveOperation {
             id: OperationId(self.generation),
             view,
@@ -102,6 +106,10 @@ impl OperationExecution {
                 .and_then(|active| active.reporter.as_ref())
                 .is_some_and(PhaseReporter::writes_started)
     }
+    pub(crate) fn elapsed(&self) -> std::time::Duration {
+        self.started_at
+            .map_or(self.elapsed, |started_at| started_at.elapsed())
+    }
     pub(crate) fn finish(&mut self, success: bool) {
         self.completed_step = if success && !self.steps.is_empty() {
             self.steps.len() - 1
@@ -109,6 +117,8 @@ impl OperationExecution {
             self.current_step()
         };
         self.writes_started = self.writes_started();
+        self.elapsed = self.elapsed();
+        self.started_at = None;
         self.active = None;
     }
     pub(crate) fn set_completed_step(&mut self, step: usize) {
@@ -147,6 +157,8 @@ impl Default for OperationExecution {
             steps: Vec::new(),
             completed_step: 0,
             writes_started: false,
+            started_at: None,
+            elapsed: std::time::Duration::ZERO,
             direct_update: crate::DirectUpdateState::Ready,
         }
     }

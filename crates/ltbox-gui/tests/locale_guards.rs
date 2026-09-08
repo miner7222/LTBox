@@ -585,6 +585,10 @@ const CARD_ONE_COLUMN_TITLES: &[CopySource] = &[key("verchoice_nightly")];
 const CARD_ONE_COLUMN_DESCRIPTIONS: &[CopySource] = &[key("verchoice_nightly_desc")];
 
 const CARD_TWO_COLUMN_TITLES: &[CopySource] = &[
+    key("family_magisk"),
+    key("family_ksu"),
+    key("family_apatch"),
+    key("family_skroot"),
     key("region_prc"),
     key("region_row"),
     key("flashtarget_other"),
@@ -595,6 +599,10 @@ const CARD_TWO_COLUMN_TITLES: &[CopySource] = &[
     key("provider_magisk_forks"),
     key("provider_apatch"),
     key("provider_folkpatch"),
+    key("provider_ksu"),
+    key("provider_ksu_next"),
+    key("provider_sukisu"),
+    key("provider_resukisu"),
     key("rootmode_lkm"),
     key("rootmode_gki"),
     key("skroot_flavor_lite"),
@@ -608,6 +616,10 @@ const CARD_TWO_COLUMN_TITLES: &[CopySource] = &[
 ];
 
 const CARD_TWO_COLUMN_DESCRIPTIONS: &[CopySource] = &[
+    key("family_magisk_desc"),
+    key("family_ksu_desc"),
+    key("family_apatch_desc"),
+    key("family_skroot_desc"),
     key("region_prc_name"),
     key("region_row_name"),
     key("flashtarget_other_desc"),
@@ -622,6 +634,10 @@ const CARD_TWO_COLUMN_DESCRIPTIONS: &[CopySource] = &[
     key("provider_magisk_forks_desc"),
     key("provider_apatch_desc"),
     key("provider_folkpatch_desc"),
+    key("provider_ksu_desc"),
+    key("provider_ksu_next_desc"),
+    key("provider_sukisu_desc"),
+    key("provider_resukisu_desc"),
     key("rootmode_lkm_desc"),
     key("rootmode_gki_desc"),
     key("skroot_flavor_lite_desc"),
@@ -695,14 +711,14 @@ const DIRECT_UPDATE_READY_ACTIONS: &[CopySource] = &[
 // row plus its copy-key list; the measurement and diagnostics stay shared.
 const CONSTRAINED_SLOTS: &[ConstrainedSlot] = &[
     ConstrainedSlot {
-        name: "wizard.option-card.1-column",
+        name: "wizard.selection-row.1-option",
         kind: SlotKind::Card(CardSlot {
             titles: CARD_ONE_COLUMN_TITLES,
             descriptions: CARD_ONE_COLUMN_DESCRIPTIONS,
         }),
     },
     ConstrainedSlot {
-        name: "wizard.option-card.2-column",
+        name: "wizard.selection-row.multiple-options",
         kind: SlotKind::Card(CardSlot {
             titles: CARD_TWO_COLUMN_TITLES,
             descriptions: CARD_TWO_COLUMN_DESCRIPTIONS,
@@ -847,15 +863,23 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
             let table = load_locale(locale);
             match slot.kind {
                 SlotKind::Card(card) => {
-                    let side = WIZARD_CARD_SQUARE;
-                    let icon = WIZARD_CARD_ICON;
-                    let inner_width = side - 2.0 * WIZARD_CARD_HORIZONTAL_PADDING;
-                    let title_height_limit = side
-                        - 2.0 * WIZARD_CARD_VERTICAL_PADDING
-                        - LineHeight::default().to_absolute(Pixels(icon)).0
-                        - WIZARD_CARD_ICON_TITLE_GAP
-                        - WIZARD_CARD_TITLE_DESC_GAP
-                        - WIZARD_CARD_SQUARE_SUB_HEIGHT;
+                    let row_width = WIZARD_LIST_MAX_WIDTH - 2.0 * WIZARD_STEP_HORIZONTAL_PADDING;
+                    let text_width_limit = row_width
+                        - 2.0 * WIZARD_LIST_HORIZONTAL_PADDING
+                        - WIZARD_LIST_ICON_SIZE
+                        - WIZARD_LIST_ICON_GAP;
+                    let text_height_limit =
+                        WIZARD_LIST_CARD_HEIGHT - 2.0 * WIZARD_LIST_VERTICAL_PADDING;
+                    let one_label_line = LineHeight::default()
+                        .to_absolute(Pixels(WIZARD_LIST_LABEL_SIZE))
+                        .0;
+                    let one_description_line = LineHeight::default()
+                        .to_absolute(Pixels(WIZARD_LIST_DESC_SIZE))
+                        .0;
+                    let title_height_limit =
+                        text_height_limit - WIZARD_LIST_TEXT_GAP - one_description_line;
+                    let description_height_limit =
+                        text_height_limit - WIZARD_LIST_TEXT_GAP - one_label_line;
                     let mut max_title = Size::ZERO;
                     let mut max_description = Size::ZERO;
 
@@ -864,14 +888,14 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
                         let measured = measure_text(
                             locale,
                             value,
-                            WIZARD_CARD_TITLE_SIZE,
+                            WIZARD_LIST_LABEL_SIZE,
                             Weight::Medium,
-                            Some(inner_width),
+                            Some(text_width_limit),
                         );
                         if measured.height > max_title.height {
                             max_title = measured;
                         }
-                        if measured.width > inner_width + f32::EPSILON
+                        if measured.width > text_width_limit + f32::EPSILON
                             || measured.height > title_height_limit + f32::EPSILON
                         {
                             failures.push(overflow_message(
@@ -879,7 +903,7 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
                                 key,
                                 locale,
                                 format!("{:.1}x{:.1}px", measured.width, measured.height),
-                                format!("{inner_width:.1}x{title_height_limit:.1}px"),
+                                format!("{text_width_limit:.1}x{title_height_limit:.1}px"),
                             ));
                         }
                     }
@@ -889,38 +913,40 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
                         let measured = measure_text(
                             locale,
                             value,
-                            WIZARD_CARD_DESC_SIZE,
+                            WIZARD_LIST_DESC_SIZE,
                             Weight::Normal,
-                            Some(inner_width),
+                            Some(text_width_limit),
                         );
                         if measured.height > max_description.height {
                             max_description = measured;
                         }
-                        if measured.width > inner_width + f32::EPSILON
-                            || measured.height > WIZARD_CARD_SQUARE_SUB_HEIGHT + f32::EPSILON
+                        if measured.width > text_width_limit + f32::EPSILON
+                            || measured.height > description_height_limit + f32::EPSILON
                         {
                             failures.push(overflow_message(
                                 slot.name,
                                 key,
                                 locale,
                                 format!("{:.1}x{:.1}px", measured.width, measured.height),
-                                format!("{inner_width:.1}x{:.1}px", WIZARD_CARD_SQUARE_SUB_HEIGHT),
+                                format!("{text_width_limit:.1}x{description_height_limit:.1}px"),
                             ));
                         }
                     }
 
                     println!(
-                        "HEADROOM slot={} locale={} title={:.1}x{:.1}/{:.1}x{:.1}px description={:.1}x{:.1}/{:.1}x{:.1}px",
+                        "HEADROOM slot={} locale={} label={:.1}x{:.1}/{:.1}x{:.1}px description={:.1}x{:.1}/{:.1}x{:.1}px row={:.1}x{:.1}px",
                         slot.name,
                         locale,
                         max_title.width,
                         max_title.height,
-                        inner_width,
+                        text_width_limit,
                         title_height_limit,
                         max_description.width,
                         max_description.height,
-                        inner_width,
-                        WIZARD_CARD_SQUARE_SUB_HEIGHT,
+                        text_width_limit,
+                        description_height_limit,
+                        row_width,
+                        WIZARD_LIST_CARD_HEIGHT,
                     );
                 }
                 SlotKind::ListRow(list_row) => {
@@ -1046,7 +1072,7 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
                     .width
                         + 2.0 * M3_BUTTON_H_PADDING;
                     let measured = title_width + action_width;
-                    let limit = REGION_TARGET_POPUP_WIDTH - 2.0 * REGION_TARGET_POPUP_PADDING;
+                    let limit = REGION_TARGET_POPUP_WIDTH - 2.0 * DIALOG_H_PADDING;
                     if measured > limit + f32::EPSILON {
                         failures.push(overflow_message(
                             slot.name,
@@ -1081,7 +1107,7 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
                         .width
                             + 2.0 * M3_BUTTON_H_PADDING;
                     }
-                    let limit = DIRECT_UPDATE_DIALOG_WIDTH - 2.0 * DIRECT_UPDATE_DIALOG_PADDING;
+                    let limit = DIRECT_UPDATE_DIALOG_WIDTH - 2.0 * DIALOG_H_PADDING;
                     if measured > limit + f32::EPSILON {
                         failures.push(overflow_message(
                             slot.name,
@@ -1105,4 +1131,60 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
         "bundled localized copy outgrew a constrained layout slot:\n- {}",
         failures.join("\n- ")
     );
+}
+
+#[test]
+fn compact_flash_and_root_step_labels_fit_default_content_width() {
+    load_bundled_locale_fonts();
+    const DEFAULT_CONTENT_WIDTH: f32 = 756.0;
+    const COMPACT_TRACK_WIDTH: f32 = 110.0;
+    const COMPACT_HORIZONTAL_PADDING: f32 = 48.0;
+    const COMPACT_ITEM_GAPS: f32 = 20.0;
+    const FLASH_STEP_KEYS: &[&str] = &[
+        "flash_step_region",
+        "flash_step_target",
+        "flash_step_data",
+        "flash_step_folder",
+        "flash_step_confirm",
+        "flash_step_flash",
+    ];
+    const ROOT_STEP_KEYS: &[&str] = &[
+        "root_step_type",
+        "root_step_mode",
+        "root_step_provider",
+        "root_step_version",
+        "edl_loader_label",
+        "root_step_confirm",
+        "root_step_flash",
+    ];
+
+    let label_budget = DEFAULT_CONTENT_WIDTH
+        - COMPACT_TRACK_WIDTH
+        - COMPACT_HORIZONTAL_PADDING
+        - COMPACT_ITEM_GAPS;
+    for (flow, keys) in [("flash", FLASH_STEP_KEYS), ("root", ROOT_STEP_KEYS)] {
+        let total = keys.len();
+        for locale in ["en", "ko", "zh", "ru", "ja"] {
+            let table = load_locale(locale);
+            let mut widest = ("", 0.0_f32, String::new());
+            for (index, key) in keys.iter().enumerate() {
+                let label = table
+                    .get(*key)
+                    .unwrap_or_else(|| panic!("missing compact step label {key} for {locale}"));
+                let indicator = format!("{} / {total} · {label}", index + 1);
+                let width = measure_text(locale, &indicator, 12.0, Weight::Medium, None).width;
+                if width > widest.1 {
+                    widest = (key, width, indicator.clone());
+                }
+                assert!(
+                    width <= label_budget + f32::EPSILON,
+                    "flow={flow} key={key} locale={locale} indicator={indicator:?} measured={width:.1}px budget={label_budget:.1}px"
+                );
+            }
+            println!(
+                "HEADROOM compact-step flow={flow} locale={locale} key={} indicator={:?} measured={:.1}px budget={label_budget:.1}px",
+                widest.0, widest.2, widest.1,
+            );
+        }
+    }
 }

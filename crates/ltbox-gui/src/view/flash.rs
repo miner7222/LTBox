@@ -1,23 +1,286 @@
 //! Flash wizard view + steps (region, target, data, folder, confirm, exec). Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
+use theme::with_alpha;
+
+const FLASH_CONFIRM_LABEL_WIDTH: f32 = 180.0;
+const FLASH_CONFIRM_MAX_WIDTH: f32 = 820.0;
+const PICKER_PATH_HEIGHT: f32 = 36.0;
+const PICKER_RECENT_ROW_HEIGHT: f32 = 44.0;
+
+/// Longest path the fields show before they start dropping the head.
+///
+/// The tail is the part that identifies a build, so a path too long to fit
+/// loses its beginning rather than its end. Sized for the minimum window: the
+/// field is narrowest there, and a monospace advance makes a character count
+/// stand in for a width.
+const PICKER_PATH_MAX_CHARS: usize = 58;
+
+/// How far before the budget [`elide_path_head`] may reach for a separator.
+/// The budget is sized for the narrowest window, so a few characters of
+/// overshoot still fit everywhere and read far better than a name cut in half.
+const SEPARATOR_SLACK: usize = 6;
+
+/// Drop the head of a path that cannot fit, marking the cut.
+///
+/// Prefers to start at a separator so what is left reads as a path rather than
+/// a name cut in half: among the separators, take the earliest whose remainder
+/// still fits. Falls back to a hard cut when no separator qualifies.
+fn elide_path_head(path: &str) -> String {
+    let chars: Vec<char> = path.chars().collect();
+    if chars.len() <= PICKER_PATH_MAX_CHARS {
+        return path.to_string();
+    }
+    let keep = PICKER_PATH_MAX_CHARS - 1;
+    let first_fitting = chars.len() - keep;
+    let earliest = first_fitting.saturating_sub(SEPARATOR_SLACK);
+    // Search the window ending at the first index that fits: a separator inside
+    // it costs at most `SEPARATOR_SLACK` extra characters, which the budget can
+    // absorb, while one past it would throw away a segment that fits.
+    let cut = (earliest..=first_fitting)
+        .find(|i| chars[*i] == '/' || chars[*i] == '\\')
+        .filter(|cut| 1 + chars.len() - cut < chars.len())
+        .unwrap_or(first_fitting);
+    let tail: String = chars[cut..].iter().collect();
+    format!("\u{2026}{tail}")
+}
+
+fn picker_path_field(
+    value: Option<&str>,
+    placeholder: String,
+    filled_background: bool,
+) -> Element<'static, Message> {
+    let selected = value.is_some();
+    let shown = value.map(elide_path_head).unwrap_or(placeholder);
+    let path = text(shown)
+        .size(if selected {
+            theme::text_size::BODY_SMALL
+        } else {
+            theme::text_size::BODY_MEDIUM
+        })
+        .font_maybe(selected.then_some(theme::mono_font()))
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Left)
+        .wrapping(iced::widget::text::Wrapping::None)
+        .style(move |t: &Theme| iced::widget::text::Style {
+            color: Some(if selected {
+                pal_of(t).on_surface
+            } else {
+                pal_of(t).on_surface_variant
+            }),
+        });
+    container(path)
+        .width(Length::Fill)
+        .height(Length::Fixed(PICKER_PATH_HEIGHT))
+        .padding([0, 12])
+        .align_y(iced::alignment::Vertical::Center)
+        .clip(true)
+        .style(move |t: &Theme| container::Style {
+            background: filled_background.then_some(pal_of(t).background.into()),
+            border: iced::Border {
+                color: pal_of(t).outline,
+                width: 1.0,
+                radius: theme::shape::SM.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn picker_action_button(
+    label: String,
+    message: Message,
+    outlined: bool,
+) -> Element<'static, Message> {
+    button(
+        container(
+            text(label)
+                .size(theme::text_size::BODY_SMALL)
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .height(Length::Fill)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press(message)
+    .height(Length::Fixed(PICKER_PATH_HEIGHT))
+    .padding([0, 12])
+    .style(move |t: &Theme, status| {
+        let p = pal_of(t);
+        let alpha = theme::state_alpha(status);
+        button::Style {
+            background: (alpha > 0.0).then_some(with_alpha(p.on_surface, alpha).into()),
+            text_color: p.on_surface,
+            border: iced::Border {
+                color: if outlined {
+                    p.outline
+                } else {
+                    iced::Color::TRANSPARENT
+                },
+                width: if outlined { 1.0 } else { 0.0 },
+                radius: theme::shape::SM.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .into()
+}
+
+fn flash_confirm_static_definition_row(label: String, value: String) -> Element<'static, Message> {
+    column![
+        row![
+            container(
+                text(label)
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            )
+            .width(Length::Fixed(FLASH_CONFIRM_LABEL_WIDTH)),
+            text(value)
+                .size(theme::text_size::BODY_MEDIUM)
+                .font(theme::emphasis::medium())
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(16)
+        .align_y(iced::Alignment::Start)
+        .width(Length::Fill)
+        .padding([9, 0]),
+        iced::widget::rule::horizontal(1).style(shell_rule_style),
+    ]
+    .spacing(0)
+    .width(Length::Fill)
+    .into()
+}
+
+/// One interactive row in the flash review definition list. All values stay
+/// left-aligned; destructive outcomes use the error role without turning the
+/// entire editable row into an error surface.
+fn flash_confirm_definition_row(
+    label: String,
+    value: String,
+    hint: Option<String>,
+    destructive: bool,
+    changed: bool,
+    caution: Option<String>,
+    on_open: Message,
+) -> Element<'static, Message> {
+    let mut value_column = column![
+        text(value)
+            .size(theme::text_size::BODY_MEDIUM)
+            .font(theme::emphasis::medium())
+            .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .style(move |t: &Theme| iced::widget::text::Style {
+                color: Some(if destructive {
+                    pal_of(t).error
+                } else {
+                    pal_of(t).on_surface
+                }),
+            })
+    ]
+    .spacing(2)
+    .width(Length::Fill)
+    .align_x(iced::Alignment::Start);
+    if let Some(hint) = hint {
+        value_column = value_column.push(
+            text(hint)
+                .size(theme::text_size::LABEL_SMALL)
+                .style(muted_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        );
+    }
+
+    let content = row![
+        container(
+            text(label)
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        )
+        .width(Length::Fixed(FLASH_CONFIRM_LABEL_WIDTH)),
+        value_column,
+    ]
+    .spacing(16)
+    .align_y(iced::Alignment::Start)
+    .width(Length::Fill);
+
+    let action = button(content)
+        .on_press(on_open)
+        .padding([9, 0])
+        .width(Length::Fill)
+        .style(move |t: &Theme, status| {
+            let p = pal_of(t);
+            let background = if changed {
+                Some(with_alpha(p.primary, 0.12 + theme::state_alpha(status)))
+            } else {
+                theme::state_layer_bg(status, p.on_surface)
+            };
+            button::Style {
+                background: background.map(Into::into),
+                text_color: p.on_surface,
+                border: iced::Border {
+                    color: if changed {
+                        p.primary
+                    } else {
+                        iced::Color::TRANSPARENT
+                    },
+                    width: if changed { 1.0 } else { 0.0 },
+                    radius: theme::shape::SM.into(),
+                },
+                ..Default::default()
+            }
+        });
+
+    let action: Element<'static, Message> = if changed {
+        if let Some(caution) = caution {
+            iced::widget::tooltip(
+                action,
+                container(
+                    text(caution)
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(warning_style)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                )
+                .padding([6, 10])
+                .max_width(360)
+                .style(|t: &Theme| theme::tooltip_style(t, theme::shape::SM)),
+                iced::widget::tooltip::Position::Top,
+            )
+            .into()
+        } else {
+            action.into()
+        }
+    } else {
+        action.into()
+    };
+
+    column![
+        action,
+        iced::widget::rule::horizontal(1).style(shell_rule_style)
+    ]
+    .spacing(0)
+    .width(Length::Fill)
+    .into()
+}
 
 impl App {
     pub(crate) fn view_flash_wizard(&self) -> Element<'_, Message> {
-        if self.log_popup_open && self.flash.is_in_exec() {
-            return self.log_popup_view();
-        }
+        let current_step = self.flash.current_step();
         let step_labels: Vec<&str> = self
             .flash
             .visible_steps()
             .iter()
             .map(|step| self.t(step.label_key()))
             .collect();
-        let step_bar = wizard_step_bar(&step_labels, self.flash.step);
-        let current_step = self.flash.current_step();
+        let step_bar = if current_step == FlashStep::Flash {
+            empty_wizard_step_bar()
+        } else {
+            wizard_step_bar(&step_labels, self.flash.step, self.window_size_class())
+        };
         let body = match current_step {
             FlashStep::Region => self.flash_region_step(),
             FlashStep::Target => self.flash_target_step(),
@@ -27,6 +290,16 @@ impl App {
             FlashStep::Confirm => self.flash_confirm_step(),
             FlashStep::Flash => self.flash_exec_step(),
         };
+        let (step_title, app_bar_subtitle) = self.flash_step_copy();
+        let is_selection_step = matches!(
+            current_step,
+            FlashStep::Region | FlashStep::Target | FlashStep::Data
+        );
+        let body = if current_step == FlashStep::Flash || is_selection_step {
+            body
+        } else {
+            wizard_step_body(step_title, body)
+        };
         let nav = if current_step != FlashStep::Flash {
             let is_start = current_step == FlashStep::Confirm;
             let label_owned = if is_start {
@@ -35,6 +308,9 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let can = self.flash.can_next()
+                && (current_step != FlashStep::Region
+                    || (self.queries.region_pending.is_none()
+                        && self.flash_serial_prompt.is_none()))
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav_generic(
@@ -48,118 +324,155 @@ impl App {
         } else {
             empty_wizard_nav()
         };
-        let mut layout = column![].width(Length::Fill).height(Length::Fill);
-        if let Some(header) = self.flash_action_bar() {
-            layout = layout.push(header);
-        }
-        layout
-            .push(step_bar)
-            .push(body)
-            .push(nav)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            wizard_action_bar(
+                self.window_size_class(),
+                self.t("nav_flash").to_string(),
+                app_bar_subtitle,
+            ),
+            step_bar,
+            body,
+            nav,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    fn flash_action_bar(&self) -> Option<Element<'_, Message>> {
+    fn flash_step_copy(&self) -> (String, Option<String>) {
         let (title_key, subtitle_key) = match self.flash.current_step() {
-            FlashStep::Region => ("flash_region_title", Some("flash_region_subtitle")),
-            FlashStep::Target => ("flash_target_title", Some("flash_target_subtitle")),
-            FlashStep::Data => ("flash_data_title", Some("flash_data_subtitle")),
-            FlashStep::Folder => ("flash_folder_title", Some("flash_folder_subtitle")),
+            FlashStep::Region => ("flash_region_title", None),
+            FlashStep::Target => ("flash_target_title", None),
+            FlashStep::Data => ("flash_data_title", None),
+            FlashStep::Folder => ("flash_folder_title", None),
             FlashStep::Bootloader => (
                 "flash_bootloader_title",
-                Some(if self.flash.uses_gbl() {
-                    "flash_bootloader_efisp_desc"
-                } else {
-                    "flash_bootloader_subtitle"
-                }),
+                self.flash
+                    .uses_gbl()
+                    .then_some("flash_bootloader_efisp_desc"),
             ),
-            FlashStep::Confirm => ("flash_confirm_title", Some("flash_confirm_subtitle")),
-            FlashStep::Flash => return Some(self.exec_action_bar()),
+            FlashStep::Confirm => ("flash_confirm_title", None),
+            FlashStep::Flash => {
+                let (title, _) = self.exec_status_copy();
+                return (title, self.exec_app_bar_subtitle());
+            }
         };
-        Some(wizard_action_bar(
+        (
             self.t(title_key).to_string(),
             subtitle_key.map(|key| self.t(key).to_string()),
-        ))
+        )
     }
 
     pub(crate) fn flash_region_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
-        let prc_icon = lucide_primary(icon::region_prc(), self.wizard_square_icon());
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
+        let prc_icon = lucide_list_primary(icon::region_prc(), icon_size);
+        let auto_card = wizard_list_option_card(
+            lucide_list_primary(icon::nightly_auto(), icon_size),
+            self.t("flash_region_auto"),
+            self.t("flash_region_auto_desc"),
+            self.flash.region_selection == Some(FlashRegionSelection::Auto),
+            Some(Message::Flash(FlashMsg::FlashRegionAuto)),
+            metrics,
+        );
         // TB322FC is a PRC-only SKU. Render ROW as a disabled card with
         // a grayed icon so the constraint is visible — silent skip
         // would confuse users who expect both options.
         let tb322fc = self.model_capabilities().prc_only;
         let unsupported_tb322fc = tr_args!("model_unsupported", model = self.device.model.as_str());
         let row_card: Element<'_, Message> = if tb322fc {
-            icon_option_card_sub_square_disabled_sized(
-                lucide_disabled(icon::region_row(), self.wizard_square_icon()),
+            wizard_list_option_card(
+                lucide_list_disabled(icon::region_row(), icon_size),
                 self.t("region_row"),
                 &unsupported_tb322fc,
-                side,
+                false,
+                None,
+                metrics,
             )
         } else {
-            icon_option_card_sub_square_sized(
-                lucide_primary(icon::region_row(), self.wizard_square_icon()),
+            wizard_list_option_card(
+                lucide_list_primary(icon::region_row(), icon_size),
                 self.t("region_row"),
                 self.t("region_row_name"),
-                self.flash.device_region == Some(DeviceRegion::Row),
-                Message::Flash(FlashMsg::FlashRegion(DeviceRegion::Row)),
-                side,
+                self.flash.region_selection
+                    == Some(FlashRegionSelection::Manual(DeviceRegion::Row)),
+                Some(Message::Flash(FlashMsg::FlashRegion(DeviceRegion::Row))),
+                metrics,
             )
         };
-        // While the on-entry auto-detect runs, show a progress ring + label instead
-        // of the cards — the user briefly sees this, then lands on the target
-        // step. The manual PRC/ROW cards are the fallback (probe failed /
-        // inconclusive / skipped from the serial prompt).
-        if self.queries.region_pending.is_some() {
-            let probing = column![
-                material_circular_progress(MaterialProgressSize::Standard),
-                text(self.t("flash_region_detecting").to_string())
-                    .size(d.text(13.0))
-                    .style(muted_style),
-            ]
-            .spacing(d.space(16.0))
-            .align_x(iced::Alignment::Center);
-            // Shrink-height content centered in the filled body slot — both
-            // axes, so the indicator sits dead center rather than at the top.
-            return container(probing)
-                .padding(d.space(28.0))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .into();
-        }
-        let col = column![
-            row![
-                icon_option_card_sub_square_sized(
-                    prc_icon,
-                    self.t("region_prc"),
-                    self.t("region_prc_name"),
-                    self.flash.device_region == Some(DeviceRegion::Prc),
-                    Message::Flash(FlashMsg::FlashRegion(DeviceRegion::Prc)),
-                    side,
-                ),
-                row_card,
-            ]
-            .spacing(d.space(12.0)),
+        let mut cards = column![
+            auto_card,
+            wizard_list_option_card(
+                prc_icon,
+                self.t("region_prc"),
+                self.t("region_prc_name"),
+                self.flash.region_selection
+                    == Some(FlashRegionSelection::Manual(DeviceRegion::Prc)),
+                Some(Message::Flash(FlashMsg::FlashRegion(DeviceRegion::Prc))),
+                metrics,
+            ),
+            row_card,
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        .spacing(8.0)
+        .width(Length::Fill);
+        if self.queries.region_pending.is_some() {
+            cards = cards.push(
+                container(
+                    row![
+                        material_circular_progress(MaterialProgressSize::Standard),
+                        text(self.t("flash_region_detecting").to_string())
+                            .size(theme::text_size::BODY_SMALL)
+                            .style(muted_style),
+                    ]
+                    .spacing(12.0)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding([8, 12]),
+            );
+        } else if self.flash.region_auto_unknown {
+            // Keep the conditional result below all choices, like the data
+            // step's wipe warning, so selecting Auto does not move the rows.
+            cards = cards.push(
+                self.message_banner(
+                    BannerSeverity::Warning,
+                    icon::banner_warning(),
+                    self.t("flash_region_auto_unknown").to_string(),
+                    text(self.t("flash_region_auto_unknown_body").to_string())
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(warning_container_text_style)
+                        .width(Length::Fill)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                ),
+            );
+        }
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("flash_region_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("flash_region_title").to_string(),
+                vec![self.t("flash_region_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn flash_target_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
-        let device = lucide_primary(icon::tile_device(), self.wizard_square_icon());
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
+        let device = lucide_list_primary(icon::tile_device(), icon_size);
         // TB322FC ships only in PRC, so cross-region (OtherRegion) is
         // never a valid target. Disable the card with a grayed icon to
         // keep the constraint visible on the picker.
@@ -175,223 +488,344 @@ impl App {
             None => ("flashtarget_same_desc", "flashtarget_other_desc"),
         };
         let other_card: Element<'_, Message> = if tb322fc {
-            icon_option_card_sub_square_disabled_sized(
-                lucide_disabled(icon::tile_globe(), self.wizard_square_icon()),
+            wizard_list_option_card(
+                lucide_list_disabled(icon::tile_globe(), icon_size),
                 self.t(FlashTarget::OtherRegion.label_key()),
                 &unsupported_tb322fc,
-                side,
+                false,
+                None,
+                metrics,
             )
         } else {
-            icon_option_card_sub_square_sized(
-                lucide_primary(icon::tile_globe(), self.wizard_square_icon()),
+            wizard_list_option_card(
+                lucide_list_primary(icon::tile_globe(), icon_size),
                 self.t(FlashTarget::OtherRegion.label_key()),
                 self.t(other_desc),
                 self.flash.target == Some(FlashTarget::OtherRegion),
-                Message::Flash(FlashMsg::FlashTarget(FlashTarget::OtherRegion)),
-                side,
+                Some(Message::Flash(FlashMsg::FlashTarget(
+                    FlashTarget::OtherRegion,
+                ))),
+                metrics,
             )
         };
-        let col = column![
-            row![
-                other_card,
-                icon_option_card_sub_square_sized(
-                    device,
-                    self.t(FlashTarget::SameRegion.label_key()),
-                    self.t(same_desc),
-                    self.flash.target == Some(FlashTarget::SameRegion),
-                    Message::Flash(FlashMsg::FlashTarget(FlashTarget::SameRegion)),
-                    side,
-                ),
-            ]
-            .spacing(d.space(12.0)),
+        let cards = column![
+            other_card,
+            wizard_list_option_card(
+                device,
+                self.t(FlashTarget::SameRegion.label_key()),
+                self.t(same_desc),
+                self.flash.target == Some(FlashTarget::SameRegion),
+                Some(Message::Flash(FlashMsg::FlashTarget(
+                    FlashTarget::SameRegion
+                ))),
+                metrics,
+            ),
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+        .spacing(8.0)
+        .width(Length::Fill);
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("flash_target_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("flash_target_title").to_string(),
+                vec![self.t("flash_target_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn flash_data_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let columns = 2;
-        let side = self.wizard_square_side();
-        let shield = lucide_primary(icon::tile_shield(), self.wizard_square_icon());
+        let size_class = self.window_size_class();
+        let content_width = self.window_size.0
+            - match size_class {
+                WindowSizeClass::Compact => SIDEBAR_RAIL_WIDTH,
+                WindowSizeClass::Expanded => SIDEBAR_EXPANDED_WIDTH,
+            };
+        let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
+        let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
+        let shield = lucide_list_primary(icon::tile_shield(), icon_size);
         // Erasing `metadata` + `userdata` is the one irreversible choice
         // on this step, so it carries the error role rather than looking
         // like the sibling it is not.
-        let wipe = lucide_error(icon::tile_wipe(), self.wizard_square_icon());
-        let col = column![
-            row![
-                icon_option_card_sub_square_sized(
-                    shield,
-                    self.t(DataMode::Keep.label_key()),
-                    self.t("datamode_keep_desc"),
-                    self.flash.data_mode == Some(DataMode::Keep),
-                    Message::Flash(FlashMsg::FlashDataMode(DataMode::Keep)),
-                    side,
+        let wipe = lucide_error(icon::tile_wipe(), icon_size);
+        let mut cards = column![].spacing(8.0).width(Length::Fill);
+        cards = cards
+            .push(wizard_list_option_card(
+                shield,
+                self.t(DataMode::Keep.label_key()),
+                self.t("datamode_keep_desc"),
+                self.flash.data_mode == Some(DataMode::Keep),
+                Some(Message::Flash(FlashMsg::FlashDataMode(DataMode::Keep))),
+                metrics,
+            ))
+            .push(wizard_list_option_card_destructive(
+                wipe,
+                self.t(DataMode::Wipe.label_key()),
+                self.t("datamode_wipe_desc"),
+                self.flash.data_mode == Some(DataMode::Wipe),
+                Some(Message::Flash(FlashMsg::FlashDataMode(DataMode::Wipe))),
+                metrics,
+            ));
+        // Below the options, not above: this banner appears only when erase
+        // is chosen, and placing it first shoved both rows down on selection.
+        if self.flash.data_mode == Some(DataMode::Wipe) {
+            cards = cards.push(
+                self.message_banner(
+                    BannerSeverity::Error,
+                    icon::banner_error(),
+                    self.t("flash_data_wipe_warning_title").to_string(),
+                    text(self.t("flash_data_wipe_warning_body").to_string())
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(error_container_text_style)
+                        .width(Length::Fill)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
                 ),
-                icon_option_card_sub_square_destructive_sized(
-                    wipe,
-                    self.t(DataMode::Wipe.label_key()),
-                    self.t("datamode_wipe_desc"),
-                    self.flash.data_mode == Some(DataMode::Wipe),
-                    Message::Flash(FlashMsg::FlashDataMode(DataMode::Wipe)),
-                    side,
-                ),
-            ]
-            .spacing(d.space(12.0)),
-        ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        centered_step(col, self.square_step_max_width(columns))
+            );
+        }
+        wizard_selection_step(
+            size_class,
+            content_width,
+            self.t("flash_data_title").to_string(),
+            cards.into(),
+            Some((
+                self.t("flash_data_title").to_string(),
+                vec![self.t("flash_data_subtitle").to_string()],
+            )),
+        )
     }
 
     pub(crate) fn flash_folder_step(&self) -> Element<'_, Message> {
-        let d = self.density();
-        let selected = self.flash.firmware_folder.is_some();
-        let status = if let Some(p) = &self.flash.firmware_folder {
-            p.clone()
-        } else {
-            self.t("flash_folder_placeholder").to_string()
-        };
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_folder").to_string())
-                        .size(d.text(14.0))
-                        .center(),
-                    text(self.t("flash_folder_desc").to_string())
-                        .size(d.text(11.0))
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(d.space(6.0))
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .on_press(Message::Flash(FlashMsg::FlashSelectFolder))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        let chips = self.recent_chips(
-            self.recent_paths
-                .recent(PickerTarget::FlashFolder.kind().storage_key()),
-            |p| Message::RecentFolderPicked(PickerTarget::FlashFolder, p),
-            "picker_recents",
-            false,
-        );
-        let mut col = column![
-            btn,
-            text(status)
-                .size(d.text(12.0))
-                .width(Length::Fill)
-                .style(move |t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(if selected { p.success } else { p.outline }),
-                    }
-                })
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        let selected_path = self.flash.firmware_folder.as_deref();
+        let mut path_row = row![
+            picker_path_field(
+                selected_path,
+                self.t("flash_folder_placeholder").to_string(),
+                false,
+            ),
+            picker_action_button(
+                self.t("btn_browse_folder").to_string(),
+                Message::Flash(FlashMsg::FlashSelectFolder),
+                true,
+            ),
         ]
-        .spacing(d.space(14.0))
-        .padding(d.space(28.0))
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-
-        // The picked firmware folder ships no EDL loader — require a
-        // separately-picked loader (or the configured default) before Next.
-        if selected && self.flash.loader_required {
-            let has = self.flash.loader_override.is_some();
-            let notice = text(
-                self.t(if has {
-                    "flash_loader_provided"
-                } else {
-                    "flash_loader_missing"
-                })
-                .to_string(),
-            )
-            .size(d.text(12.0))
-            .style(move |t: &Theme| iced::widget::text::Style {
-                color: Some(if has {
-                    pal_of(t).success
-                } else {
-                    pal_of(t).warning
-                }),
-            })
-            .center()
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
-            let browse = m3_text_button(
-                self.t(if has {
-                    "flash_loader_change"
-                } else {
-                    "flash_loader_browse"
-                })
-                .to_string(),
-            )
-            .on_press(Message::Flash(FlashMsg::FlashSelectLoader));
-            let mut loader_col = column![notice]
-                .spacing(d.space(6.0))
-                .align_x(iced::Alignment::Center);
-            if let Some(p) = &self.flash.loader_override {
-                loader_col = loader_col.push(
-                    text(p.clone())
-                        .size(d.text(11.0))
-                        .style(muted_style)
-                        .center()
-                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-                );
-            }
-            if let Some(err) = &self.flash.loader_error {
-                loader_col = loader_col.push(
-                    text(err.clone())
-                        .size(d.text(11.0))
-                        .style(|t: &Theme| iced::widget::text::Style {
-                            color: Some(pal_of(t).error),
-                        })
-                        .center()
-                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-                );
-            }
-            col = col.push(loader_col.push(browse));
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
+        if selected_path.is_some() {
+            path_row = path_row.push(picker_action_button(
+                self.t("btn_clear").to_string(),
+                Message::Flash(FlashMsg::FlashClearFolder),
+                false,
+            ));
         }
 
-        col = col.push(chips);
-        container(col)
+        let mut content = column![
+            path_row,
+            text(self.t("flash_folder_desc").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(6)
+        .padding(iced::Padding {
+            top: 18.0,
+            right: 28.0,
+            bottom: 28.0,
+            left: 28.0,
+        })
+        .width(Length::Fill)
+        .align_x(iced::Alignment::Start);
+
+        // The picked firmware folder ships no EDL loader — keep the warning
+        // and its corrective action together as one shared message banner.
+        if selected_path.is_some() && self.flash.loader_required {
+            let has_loader = self.flash.loader_override.is_some();
+            let loader_path_row = row![
+                picker_path_field(
+                    self.flash.loader_override.as_deref(),
+                    self.t("edl_loader_placeholder").to_string(),
+                    true,
+                ),
+                picker_action_button(
+                    self.t(if has_loader {
+                        "flash_loader_change"
+                    } else {
+                        "flash_loader_browse"
+                    })
+                    .to_string(),
+                    Message::Flash(FlashMsg::FlashSelectLoader),
+                    true,
+                ),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill);
+            let mut banner_body = column![
+                text(self.t("flash_loader_missing_body").to_string())
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(warning_container_text_style)
+                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                loader_path_row,
+            ]
+            .spacing(10)
+            .width(Length::Fill);
+            if let Some(error) = &self.flash.loader_error {
+                banner_body = banner_body.push(
+                    text(error.clone())
+                        .size(theme::text_size::LABEL_SMALL)
+                        .width(Length::Fill)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                );
+            }
+            content =
+                content
+                    .push(Space::new().height(Length::Fixed(16.0)))
+                    .push(self.message_banner(
+                        BannerSeverity::Warning,
+                        icon::banner_warning(),
+                        self.t("flash_loader_missing_title").to_string(),
+                        banner_body,
+                    ));
+        }
+
+        let recents = self
+            .recent_paths
+            .recent(PickerTarget::FlashFolder.kind().storage_key());
+        if !recents.is_empty() {
+            let mut recent_rows = column![].spacing(0).width(Length::Fill);
+            for (index, path) in recents.iter().take(settings_store::RECENT_MAX).enumerate() {
+                if index > 0 {
+                    recent_rows =
+                        recent_rows.push(iced::widget::rule::horizontal(1).style(|t: &Theme| {
+                            iced::widget::rule::Style {
+                                color: pal_of(t).outline_variant,
+                                radius: 0.0.into(),
+                                fill_mode: iced::widget::rule::FillMode::Full,
+                                snap: true,
+                            }
+                        }));
+                }
+                let exists = std::path::Path::new(path).is_dir();
+                let foreground = move |t: &Theme| {
+                    with_alpha(
+                        pal_of(t).on_surface_variant,
+                        if exists { 1.0 } else { 0.45 },
+                    )
+                };
+                let mut recent_content = row![
+                    lucide_icon(icon::fab_open_folder(), 17.0, foreground),
+                    container(
+                        text(elide_path_head(path))
+                            .font(theme::mono_font())
+                            .size(theme::text_size::BODY_SMALL)
+                            .style(move |t: &Theme| iced::widget::text::Style {
+                                color: Some(foreground(t)),
+                            })
+                            .width(Length::Fill)
+                            .align_x(iced::alignment::Horizontal::Left)
+                            .wrapping(iced::widget::text::Wrapping::None),
+                    )
+                    .height(Length::Fill)
+                    .width(Length::Fill)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .clip(true),
+                ]
+                .spacing(11)
+                .align_y(iced::Alignment::Center)
+                .width(Length::Fill);
+                if !exists {
+                    recent_content = recent_content.push(
+                        text(self.t("recent_missing_folder").to_string())
+                            .size(theme::text_size::LABEL_SMALL)
+                            .style(move |t: &Theme| iced::widget::text::Style {
+                                color: Some(pal_of(t).error),
+                            })
+                            .wrapping(iced::widget::text::Wrapping::None),
+                    );
+                }
+                let message = if exists {
+                    Message::RecentFolderPicked(PickerTarget::FlashFolder, path.clone())
+                } else {
+                    Message::NoticeRecentMissing(false)
+                };
+                recent_rows = recent_rows.push(
+                    button(recent_content)
+                        .on_press(message)
+                        .height(Length::Fixed(PICKER_RECENT_ROW_HEIGHT))
+                        .width(Length::Fill)
+                        .padding([0, 14])
+                        .style(move |t: &Theme, status| {
+                            let p = pal_of(t);
+                            let alpha = if exists {
+                                theme::state_alpha(status)
+                            } else {
+                                0.0
+                            };
+                            button::Style {
+                                background: (alpha > 0.0)
+                                    .then_some(with_alpha(p.on_surface, alpha).into()),
+                                text_color: p.on_surface,
+                                ..Default::default()
+                            }
+                        }),
+                );
+            }
+            let recent_list =
+                container(recent_rows)
+                    .width(Length::Fill)
+                    .clip(true)
+                    .style(|t: &Theme| container::Style {
+                        border: iced::Border {
+                            color: pal_of(t).outline_variant,
+                            width: 1.0,
+                            radius: theme::shape::MD.into(),
+                        },
+                        ..Default::default()
+                    });
+            content = content
+                .push(Space::new().height(Length::Fixed(16.0)))
+                .push(
+                    row![
+                        lucide_icon(icon::history(), 12.0, |t: &Theme| pal_of(t)
+                            .on_surface_variant),
+                        text(self.t("picker_recents").to_string())
+                            .size(theme::text_size::LABEL_SMALL)
+                            .font(theme::emphasis::medium())
+                            .style(muted_style),
+                    ]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
+                )
+                .push(recent_list);
+        }
+
+        scrollable(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .style(m3_scrollable_style)
             .into()
     }
 
     pub(crate) fn flash_bootloader_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let selected = self.flash.user_abl_path.is_some();
         let analyzing = self.flash.user_abl_analyzing;
         let mut browse = button(
             container(
                 column![
                     text(self.t("flash_bootloader_select").to_string())
-                        .size(d.text(14.0))
+                        .size(14.0)
                         .center(),
-                    text("abl.elf")
-                        .size(d.text(11.0))
-                        .style(muted_style)
-                        .center(),
+                    text("abl.elf").size(11.0).style(muted_style).center(),
                 ]
-                .spacing(d.space(6.0))
+                .spacing(6.0)
                 .width(Length::Fill)
                 .align_x(iced::Alignment::Center),
             )
-            .padding(d.padding(20.0, 24.0))
-            .width(Length::Fixed(d.width(280.0)))
+            .padding([20.0, 24.0])
+            .width(Length::Fixed(280.0))
             .style(move |theme: &Theme| sel_card_style(theme, selected)),
         )
         .padding(0)
@@ -402,7 +836,7 @@ impl App {
                     background: Some(palette.surface_container.into()),
                     text_color: with_alpha(palette.on_surface, 0.38),
                     border: iced::Border {
-                        radius: theme::shape::LG.into(),
+                        radius: theme::shape::MD.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -418,7 +852,7 @@ impl App {
         let clear_slot: Element<'_, Message> = if selected {
             // Same control as the Root wizard's KPM remove button: the shared
             // lucide `minus` glyph in a neutral circular icon button.
-            m3_icon_button(icon::kpm_remove(), d.image(18.0), |theme, status| {
+            m3_icon_button(icon::kpm_remove(), 18.0, |theme, status| {
                 let palette = pal_of(theme);
                 button::Style {
                     background: Some(
@@ -426,7 +860,7 @@ impl App {
                     ),
                     text_color: palette.on_surface,
                     border: iced::Border {
-                        radius: theme::shape::FULL.into(),
+                        radius: theme::shape::SM.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -447,7 +881,7 @@ impl App {
             browse,
             clear_slot,
         ]
-        .spacing(d.space(8.0))
+        .spacing(8.0)
         .align_y(iced::Alignment::Center);
 
         let verdict_key = if !selected {
@@ -474,7 +908,7 @@ impl App {
             self.t(verdict_key).to_string()
         };
         let verdict = text(verdict_text)
-            .size(d.text(13.0))
+            .size(theme::text_size::BODY_MEDIUM)
             .style(move |theme: &Theme| iced::widget::text::Style {
                 color: Some(if valid {
                     pal_of(theme).success
@@ -486,19 +920,19 @@ impl App {
             });
 
         let mut content = column![picker_row, verdict]
-            .spacing(d.space(10.0))
+            .spacing(10.0)
             .align_x(iced::Alignment::Center);
         if self.flash.uses_gbl() && !selected && !self.flash.bootloader_can_next() {
             content = content.push(
                 text(self.t("err_abl_efisp_undetermined").to_string())
-                    .size(d.text(13.0))
+                    .size(13.0)
                     .center(),
             );
         }
         if let Some(path) = &self.flash.user_abl_path {
             content = content.push(
                 text(path.clone())
-                    .size(d.text(11.0))
+                    .size(11.0)
                     .style(muted_style)
                     .center()
                     .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
@@ -506,16 +940,15 @@ impl App {
         }
 
         container(content)
-            .padding(d.space(28.0))
+            .padding(28.0)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 
     pub(crate) fn flash_confirm_step(&self) -> Element<'_, Message> {
-        let d = self.density();
         let dash = "—".to_string();
         // `wf_config` is the worker's only input, so the summary derives every
         // editable row from it (not the wizard cards). The values match the
@@ -525,6 +958,21 @@ impl App {
         let base = self.confirm_baseline.as_ref();
         let caution = self.t("flash_confirm_override_warning").to_string();
         let open = |f: ConfirmField| Message::Flash(FlashMsg::FlashConfirmOpen(f));
+
+        let device_name = if self.device.market_name.is_empty() {
+            dash.as_str()
+        } else {
+            self.device.market_name.as_str()
+        };
+        let device_model = if self.device.model.is_empty() {
+            dash.as_str()
+        } else {
+            self.device.model.as_str()
+        };
+        let device_row = flash_confirm_static_definition_row(
+            self.t("dash_device").to_string(),
+            format!("{device_name} · {device_model}"),
+        );
 
         let region = cfg
             .device_region
@@ -579,58 +1027,73 @@ impl App {
             caution.clone()
         };
 
-        // Destructive-op callout, hoisted above the summary so the hazard
-        // reads before the device details. Amber `warning` colour — not an
-        // error/failure. Wipe vs keep-data show different cautions.
-        let warning_key = if cfg.wipe {
-            "flash_confirm_warning_wipe"
+        // The operation can destroy data or leave a kept-data downgrade
+        // unbootable, so this is an error-role safety banner rather than an
+        // amber inline note. The icon is separate from localized copy.
+        let (warning_title_key, warning_key) = if cfg.wipe {
+            (
+                "flash_data_wipe_warning_title",
+                "flash_confirm_warning_wipe",
+            )
         } else {
-            "flash_confirm_warning"
+            ("flash_confirm_warning_title", "flash_confirm_warning")
         };
-        let warning = container(
+        let warning = self.message_banner(
+            BannerSeverity::Error,
+            icon::banner_error(),
+            self.t(warning_title_key).to_string(),
             text(self.t(warning_key).to_string())
-                .size(d.text(12.0))
-                .style(warning_style)
-                .center()
+                .size(theme::text_size::BODY_SMALL)
+                .style(error_container_text_style)
                 .width(Length::Fill)
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-        )
-        .padding(d.padding(4.0, 8.0))
-        .width(Length::Fill);
+        );
 
-        let region_row = info_kv_center_editable(
-            self.t("flash_confirm_region"),
-            &region,
+        let region_row = flash_confirm_definition_row(
+            self.t("flash_confirm_region").to_string(),
+            region,
+            None,
+            false,
             region_changed,
-            &caution,
+            Some(caution.clone()),
             open(ConfirmField::Region),
         );
-        let target_row = info_kv_center_editable(
-            self.t("flash_confirm_target"),
-            &target,
+        let target_row = flash_confirm_definition_row(
+            self.t("flash_confirm_target").to_string(),
+            target,
+            None,
+            false,
             modify_changed,
-            &caution,
+            Some(caution.clone()),
             open(ConfirmField::Target),
         );
-        let data_row = info_kv_center_editable(
-            self.t("flash_confirm_data"),
-            &data,
+        let data_row = flash_confirm_definition_row(
+            self.t("flash_confirm_data").to_string(),
+            data,
+            None,
+            cfg.wipe,
             data_changed,
-            &caution,
+            Some(caution.clone()),
             open(ConfirmField::Data),
         );
-        let region_edit_row = info_kv_center_editable(
-            self.t("flash_confirm_region_edit"),
-            &modify_region,
+        let region_edit_row = flash_confirm_definition_row(
+            self.t("flash_confirm_region_edit").to_string(),
+            modify_region,
+            None,
+            false,
             modify_changed,
-            &caution,
+            Some(caution.clone()),
             open(ConfirmField::RegionEdit),
         );
-        let rollback_row = info_kv_center_editable(
-            self.t("flash_confirm_rollback"),
-            &rollback,
+        let rollback_hint = (cfg.modify_rollback == RollbackSetting::Auto)
+            .then(|| self.t("flash_confirm_rb_bootloader_hint").to_string());
+        let rollback_row = flash_confirm_definition_row(
+            self.t("flash_confirm_rollback").to_string(),
+            rollback,
+            rollback_hint,
+            cfg.modify_rollback != RollbackSetting::Off,
             rollback_changed,
-            &rollback_caution,
+            Some(rollback_caution),
             // Always the setting list, Manual included: the row is how the user
             // gets back to On/Auto/Off, and picking Manual there opens the
             // editor anyway.
@@ -647,11 +1110,13 @@ impl App {
         } else {
             self.t("flash_confirm_country_skip").to_string()
         };
-        let country_row = info_kv_center_editable(
-            self.t("flash_confirm_country"),
-            &country_label,
+        let country_row = flash_confirm_definition_row(
+            self.t("flash_confirm_country").to_string(),
+            country_label,
+            None,
+            false,
             country_changed,
-            &caution,
+            Some(caution),
             open(ConfirmField::Country),
         );
         let folder_owned = self
@@ -659,27 +1124,112 @@ impl App {
             .firmware_folder
             .clone()
             .unwrap_or_else(|| dash.clone());
-        let folder_row = info_kv_center_action(
-            self.t("flash_confirm_folder"),
-            &folder_owned,
+        let folder_row = flash_confirm_definition_row(
+            self.t("flash_confirm_folder").to_string(),
+            folder_owned,
+            None,
+            false,
+            false,
+            None,
             Message::Flash(FlashMsg::FlashSelectFolder),
         );
 
-        self.confirm_step_frame(
-            vec![warning.into()],
-            vec![
-                region_row,
-                target_row,
-                data_row,
-                region_edit_row,
-                rollback_row,
-                country_row,
-            ],
-            vec![folder_row],
+        let definitions = column![
+            device_row,
+            region_row,
+            target_row,
+            data_row,
+            region_edit_row,
+            rollback_row,
+            country_row,
+            folder_row,
+        ]
+        .spacing(0)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::Start);
+        let content = column![warning, definitions]
+            .spacing(16.0)
+            .padding([18.0, 28.0])
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Start);
+        let summary = iced::widget::scrollable(content)
+            .style(m3_scrollable_style)
+            .height(Length::Shrink)
+            .width(Length::Fill);
+
+        container(
+            container(summary)
+                .width(Length::Fill)
+                .max_width(FLASH_CONFIRM_MAX_WIDTH),
         )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .align_y(iced::alignment::Vertical::Top)
+        .into()
     }
 
     pub(crate) fn flash_exec_step(&self) -> Element<'_, Message> {
-        self.exec_step_view()
+        self.exec_step_view_with_inline_log()
+    }
+}
+
+#[cfg(test)]
+mod picker_path_tests {
+    use super::{PICKER_PATH_MAX_CHARS, SEPARATOR_SLACK, elide_path_head};
+
+    #[test]
+    fn a_path_that_fits_is_left_alone() {
+        let path = "/Users/ltbox/Firmware";
+        assert_eq!(elide_path_head(path), path);
+    }
+
+    #[test]
+    fn a_long_path_keeps_its_tail_and_starts_at_a_separator() {
+        let elided = elide_path_head(
+            "/Users/ltbox/Firmware/TB520FU_ROW_OPEN_USER_Q00002.0_W_ZUI_17.5.10.096_ST_251127",
+        );
+        assert!(elided.starts_with("\u{2026}/"), "{elided}");
+        assert!(elided.ends_with("ST_251127"), "{elided}");
+    }
+
+    #[test]
+    fn windows_separators_count_too() {
+        let elided = elide_path_head(
+            r"D:\Git\DynoBox\References\Firmware\TB324ZC\TB324_ZUXOS_2.0.10.165_Tool\223",
+        );
+        assert!(elided.starts_with("\u{2026}\\"), "{elided}");
+    }
+
+    #[test]
+    fn a_separatorless_path_still_gets_cut_to_the_budget() {
+        let path = "x".repeat(PICKER_PATH_MAX_CHARS * 2);
+        let elided = elide_path_head(&path);
+        assert_eq!(elided.chars().count(), PICKER_PATH_MAX_CHARS);
+    }
+
+    #[test]
+    fn multibyte_paths_are_cut_on_character_boundaries() {
+        let path = format!("/펌웨어/{}", "가".repeat(PICKER_PATH_MAX_CHARS));
+        let elided = elide_path_head(&path);
+        assert!(
+            elided.chars().count() <= PICKER_PATH_MAX_CHARS + SEPARATOR_SLACK,
+            "{} chars: {elided}",
+            elided.chars().count()
+        );
+    }
+
+    #[test]
+    fn eliding_never_makes_a_path_longer() {
+        for len in PICKER_PATH_MAX_CHARS..PICKER_PATH_MAX_CHARS + SEPARATOR_SLACK + 4 {
+            let path = format!("/a/{}", "b".repeat(len));
+            let elided = elide_path_head(&path);
+            assert!(
+                elided.chars().count() <= path.chars().count(),
+                "len {len}: {} -> {}",
+                path.chars().count(),
+                elided.chars().count()
+            );
+        }
     }
 }
