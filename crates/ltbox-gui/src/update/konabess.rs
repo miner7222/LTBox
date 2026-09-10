@@ -314,6 +314,7 @@ mod tests {
     };
 
     const SUN_EXPORT: &str = "konabess://H4sIAAAAAAAACmWOywrCMBBFf6WM2wTiYxUf+CFu2mSsAzGmmUbF0n+XpEUUF7O551zmDmAuFEADJw8CLLIBDclTDwLOETvQ0JnbVbQhyfCIDu/oWKpqOPmSc0C0siFf7audejZ42M6EPPVUu09rEpaZL5heKA06x1OqSlpbG5H5GxT9b8Cx/I/YFulHyZvn6mq9yWgsB+MbZCgNFesAAAA=";
+    const UNKNOWN_FIELD_EXPORT: &str = "konabess://H4sIAAAAAAAACmWPywrCMBBFf6WM2wbqYxUf+CGCtMm1BtKY5qFi6b9L0iKKi9nccy4zM5C4KkucfDRUkoQXxCkaFaiki0NPnHpx68rWRmYfTuMO7VlVDCeTc28ByRplin2xq54NDtuZKKOCqvWnNQnLxBdevcAEtPZTWuW0ltLB+2+Q9b8Djnm/Q5ulHyXdPFdX601CY570TgzR4dzdJIgPBFM3GpJ4cBHj+AbhUQm8CgEAAA==";
 
     fn table(frequency: u32) -> GpuTable {
         GpuTable {
@@ -474,6 +475,7 @@ mod tests {
                 chip: "sun".into(),
                 description: "sidebar state".into(),
                 table: table(800_000_000),
+                import_warnings: vec![],
             })
             .unwrap();
         app.konabess.import_path = Some("imported-settings.txt".into());
@@ -563,6 +565,39 @@ mod tests {
         assert!(error.contains("sun"));
         assert_eq!(app.konabess.edited_table, before);
         assert!(!app.konabess.edited_dirty);
+        assert_eq!(task.units(), 0);
+    }
+
+    #[test]
+    fn imported_unknown_field_is_accepted_and_surfaces_a_warning() {
+        let root = tempfile::tempdir().unwrap();
+        let export_path = root.path().join("settings.txt");
+        std::fs::write(&export_path, UNKNOWN_FIELD_EXPORT).unwrap();
+        let mut app = app_ready_for_inspection_result();
+        app.konabess
+            .apply_inspection_result(vec![candidate(4, "sun", 700_000_000)], Some(4));
+        assert!(app.konabess.select_target(4));
+        assert_eq!(app.konabess.confirm_target(), Some(4));
+
+        let task = app.update_konabess(KonaBessMsg::KonaBessImportChosen(Some(
+            export_path.display().to_string(),
+        )));
+
+        assert!(app.konabess.import_error.is_none());
+        assert_eq!(
+            app.konabess.import_path.as_deref(),
+            Some(export_path.to_str().unwrap())
+        );
+        assert!(
+            app.konabess
+                .editor_validation()
+                .warnings
+                .iter()
+                .any(|warning| {
+                    warning.path == "export / future_mode"
+                        && warning.message.contains("unknown export field")
+                })
+        );
         assert_eq!(task.units(), 0);
     }
 

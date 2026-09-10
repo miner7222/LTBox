@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 
 use ltbox_patch::konabess::{
     GpuGroup, GpuTable, GpuTableIssue, GpuTableValidation, KonaBessExport, VendorBootDtbInfo,
-    build_gpu_level_from_template, normalize_edited_gpu_table, parse_gpu_cell, validate_gpu_table,
+    build_gpu_level_from_template, chip_names_match, normalize_edited_gpu_table, parse_gpu_cell,
+    validate_gpu_table,
 };
 
 // Internal steps: 0=Family, 1=Mode, 2=Provider, 3=Version,
@@ -1559,6 +1560,7 @@ pub(crate) struct KonaBessWizard {
     pub(crate) loader_error: Option<String>,
     pub(crate) import_path: Option<String>,
     pub(crate) import_error: Option<String>,
+    pub(crate) import_warnings: Vec<GpuTableIssue>,
     /// Device table retained for comparison and one-click revert.
     pub(crate) stock_table: Option<GpuTable>,
     /// In-memory table that will be passed directly to the AVB build path.
@@ -1682,6 +1684,7 @@ impl KonaBessWizard {
         self.edited_dirty = false;
         self.import_path = None;
         self.import_error = None;
+        self.import_warnings.clear();
         true
     }
 
@@ -1729,7 +1732,7 @@ impl KonaBessWizard {
         let Some(expected) = target.chip.as_deref() else {
             return Err(KonaBessImportError::TargetChipUnknown);
         };
-        if export.chip != expected {
+        if !chip_names_match(&export.chip, expected) {
             return Err(KonaBessImportError::ChipMismatch {
                 expected: expected.to_string(),
                 actual: export.chip,
@@ -1767,6 +1770,7 @@ impl KonaBessWizard {
         self.edited_table = Some(table);
         self.cell_edits.clear();
         self.edited_dirty = self.edited_table != self.stock_table;
+        self.import_warnings = export.import_warnings;
         Ok(())
     }
 
@@ -1858,6 +1862,9 @@ impl KonaBessWizard {
             validation.warnings = normalized.advisories;
         }
         validation
+            .warnings
+            .extend(self.import_warnings.iter().cloned());
+        validation
     }
 
     /// Append a copy of the last sibling through the core's schema-preserving
@@ -1934,6 +1941,7 @@ impl KonaBessWizard {
         self.edited_dirty = false;
         self.import_path = None;
         self.import_error = None;
+        self.import_warnings.clear();
         true
     }
 
@@ -1945,6 +1953,7 @@ impl KonaBessWizard {
         self.edited_dirty = false;
         self.import_path = None;
         self.import_error = None;
+        self.import_warnings.clear();
     }
 
     /// Remove inspection scratch when the flow is closed or abandoned. Stock
@@ -2513,6 +2522,7 @@ mod konabess_tests {
                 chip: "sun".into(),
                 description: "import from first target".into(),
                 table: table(800_000_000),
+                import_warnings: vec![],
             })
             .unwrap();
         wizard.import_path = Some("first-target.txt".into());
@@ -2568,6 +2578,7 @@ mod konabess_tests {
                 chip: "sun".into(),
                 description: "import".into(),
                 table: table(950_000_000),
+                import_warnings: vec![],
             })
             .unwrap();
 
@@ -2604,6 +2615,7 @@ mod konabess_tests {
                 chip: "sun".into(),
                 description: "normalization regression".into(),
                 table: imported,
+                import_warnings: vec![],
             })
             .unwrap();
 
@@ -2777,6 +2789,7 @@ mod konabess_tests {
                 chip: "sun".into(),
                 description: "unsafe header replacement".into(),
                 table: imported,
+                import_warnings: vec![],
             })
             .unwrap();
 
@@ -2885,10 +2898,31 @@ mod konabess_tests {
                 chip: "sun".into(),
                 description: String::new(),
                 table: table(700_000_000),
+                import_warnings: vec![],
             })
             .unwrap();
 
         assert!(!wizard.edited_dirty);
+    }
+
+    #[test]
+    fn import_naming_an_existing_chip_alias_is_accepted() {
+        let mut wizard = KonaBessWizard::default();
+        wizard.apply_inspection_result(vec![candidate(1, Some("sun"), Some(700_000_000))], None);
+        assert!(wizard.select_target(1));
+
+        wizard
+            .overwrite_edited_from_import(KonaBessExport {
+                chip: "tuna".into(),
+                description: String::new(),
+                table: table(900_000_000),
+                import_warnings: vec![],
+            })
+            .unwrap();
+
+        assert_eq!(wizard.stock_table, Some(table(700_000_000)));
+        assert_eq!(wizard.edited_table, Some(table(900_000_000)));
+        assert!(wizard.edited_dirty);
     }
 
     #[test]
@@ -2903,6 +2937,7 @@ mod konabess_tests {
                 chip: "pineapple".into(),
                 description: String::new(),
                 table: table(900_000_000),
+                import_warnings: vec![],
             })
             .unwrap_err();
 

@@ -27,8 +27,8 @@ pub use export::{
     build_gpu_level_from_template, parse_export, parse_gpu_cell, validate_gpu_table,
 };
 pub use fdt::{
-    FdtGpuInfo, GpuTableNormalization, normalize_edited_gpu_table, parse_fdt_gpu_info,
-    replace_fdt_gpu_table, replace_fdt_gpu_table_from_table,
+    FdtGpuInfo, GpuTableNormalization, chip_names_match, normalize_edited_gpu_table,
+    parse_fdt_gpu_info, replace_fdt_gpu_table, replace_fdt_gpu_table_from_table,
 };
 pub use regulator_levels::{regulator_level_name, regulator_level_votes};
 pub use vendor_boot::{
@@ -154,6 +154,7 @@ pub fn build_konabess_avb_images_from_table_with_progress(
         chip: chip.to_string(),
         description: String::new(),
         table: table.clone(),
+        import_warnings: vec![],
     };
     build_konabess_avb_images_from_export(
         &vendor_boot_src,

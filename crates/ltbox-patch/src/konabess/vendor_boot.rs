@@ -215,6 +215,7 @@ pub fn replace_vendor_boot_gpu_table(
             chip: chip.to_string(),
             description: String::new(),
             table: table.clone(),
+            import_warnings: vec![],
         },
     )
 }
@@ -655,6 +656,7 @@ mod tests {
             chip: "sun".into(),
             description: String::new(),
             table: table(&[(0, 2), (3, 1)], 900),
+            import_warnings: vec![],
         };
         let classified = classify_vendor_boot_dtbs(&image, &export).unwrap();
         let candidates = inspect_vendor_boot_gpu_candidates(&image).unwrap();
@@ -697,6 +699,7 @@ mod tests {
             chip: "sun".into(),
             description: String::new(),
             table: table(&[(0, 300)], 900),
+            import_warnings: vec![],
         };
         let rebuilt = replace_vendor_boot_dtb(&image, 0, &export).unwrap();
         assert_eq!(rebuilt.len(), image.len());
@@ -721,6 +724,7 @@ mod tests {
             chip: "sun".into(),
             description: String::new(),
             table: table(&[(0, 300)], 900),
+            import_warnings: vec![],
         };
         let error = replace_vendor_boot_dtb(&image, 0, &export).unwrap_err();
         assert!(error.to_string().contains("nonzero trailing content"));
@@ -734,6 +738,7 @@ mod tests {
             chip: "pineapple".into(),
             description: String::new(),
             table: table(&[(0, 1)], 900),
+            import_warnings: vec![],
         };
         let temp = tempfile::tempdir().unwrap();
         let input = temp.path().join("vendor_boot.img");
@@ -762,6 +767,7 @@ mod tests {
             chip: "sun".into(),
             description: "forced growth".into(),
             table: table(&[(0, 300)], 900),
+            import_warnings: vec![],
         };
 
         let source = std::fs::read(firmware.join("vendor_boot.img")).unwrap();
@@ -796,6 +802,7 @@ mod tests {
             chip: "sun".into(),
             description: "forced shrink".into(),
             table: table(&[(0, 1)], 900),
+            import_warnings: vec![],
         };
 
         let (output, _) = build_avb_from_export(&firmware, &output_dir, &export);
@@ -823,6 +830,7 @@ mod tests {
             chip: "sun".into(),
             description: String::new(),
             table: table(&[(0, 1)], 900),
+            import_warnings: vec![],
         };
 
         assert_failure_preserves_output(

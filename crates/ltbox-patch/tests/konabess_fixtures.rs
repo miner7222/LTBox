@@ -245,6 +245,7 @@ fn real_vendor_boot_images_match_known_shapes_and_apply_exactly() {
         chip: "sun".into(),
         description: "fixture round-trip".into(),
         table: original_table.clone(),
+        import_warnings: vec![],
     };
     let round_trip = replace_vendor_boot_dtb(&sun_image, 2, &self_export).unwrap();
     let round_trip_blobs = extract_vendor_boot_dtbs(&round_trip).unwrap();

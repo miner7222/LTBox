@@ -1,6 +1,9 @@
 //! KonaBess URI and machine-generated DTS-like frequency-table parsing.
 
-use std::io::{Cursor, Read};
+use std::{
+    collections::BTreeMap,
+    io::{Cursor, Read},
+};
 
 use ltbox_core::Result;
 use serde::Deserialize;
@@ -44,6 +47,8 @@ pub struct KonaBessExport {
     pub chip: String,
     pub description: String,
     pub table: GpuTable,
+    /// Non-blocking findings discovered while reading the export envelope.
+    pub import_warnings: Vec<GpuTableIssue>,
 }
 
 /// One table-validation finding suitable for display next to an editor cell or row.
@@ -316,13 +321,14 @@ fn issue(path: impl Into<String>, message: impl Into<String>) -> GpuTableIssue {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExportJson {
     chip: String,
     desc: String,
     freq: String,
     #[serde(default)]
     volt: Option<serde_json::Value>,
+    #[serde(flatten)]
+    unknown_fields: BTreeMap<String, serde::de::IgnoredAny>,
 }
 
 /// Parse a complete `konabess://` export string.
@@ -346,10 +352,20 @@ pub fn parse_export(input: &str) -> Result<KonaBessExport> {
         return Err(error("export chip is empty"));
     }
 
+    let import_warnings = raw
+        .unknown_fields
+        .into_keys()
+        .map(|field| GpuTableIssue {
+            path: format!("export / {field}"),
+            message: "unknown export field was ignored".to_string(),
+        })
+        .collect();
+
     Ok(KonaBessExport {
         chip: raw.chip,
         description: raw.desc,
         table: parse_frequency_table(&raw.freq)?,
+        import_warnings,
     })
 }
 
@@ -701,18 +717,45 @@ mod tests {
     use super::*;
 
     const VALID_EXPORT: &str = "konabess://H4sIAAAAAAAACmWOywrCMBBFf6WM2wTiYxUf+CFu2mSsAzGmmUbF0n+XpEUUF7O551zmDmAuFEADJw8CLLIBDclTDwLOETvQ0JnbVbQhyfCIDu/oWKpqOPmSc0C0siFf7audejZ42M6EPPVUu09rEpaZL5heKA06x1OqSlpbG5H5GxT9b8Cx/I/YFulHyZvn6mq9yWgsB+MbZCgNFesAAAA=";
+    const UNKNOWN_FIELD_EXPORT: &str = "konabess://H4sIAAAAAAAACmWPywrCMBBFf6WM2wbqYxUf+CGCtMm1BtKY5qFi6b9L0iKKi9nccy4zM5C4KkucfDRUkoQXxCkaFaiki0NPnHpx68rWRmYfTuMO7VlVDCeTc28ByRplin2xq54NDtuZKKOCqvWnNQnLxBdevcAEtPZTWuW0ltLB+2+Q9b8Djnm/Q5ulHyXdPFdX601CY570TgzR4dzdJIgPBFM3GpJ4cBHj+AbhUQm8CgEAAA==";
 
     #[test]
     fn parses_typed_export() {
         let export = parse_export(VALID_EXPORT).unwrap();
         assert_eq!(export.chip, "sun");
         assert_eq!(export.description, "unit");
+        assert!(export.import_warnings.is_empty());
         assert_eq!(export.table.groups.len(), 1);
         assert_eq!(export.table.groups[0].id, 0);
         assert_eq!(export.table.groups[0].levels[0].id, 0);
         assert_eq!(
             export.table.groups[0].levels[0].properties[1].cells,
             [0x1234]
+        );
+    }
+
+    #[test]
+    fn unknown_top_level_field_is_ignored_and_reported() {
+        let export = parse_export(UNKNOWN_FIELD_EXPORT).unwrap();
+
+        assert_eq!(export.chip, "sun");
+        assert_eq!(
+            export.import_warnings,
+            [GpuTableIssue {
+                path: "export / future_mode".into(),
+                message: "unknown export field was ignored".into(),
+            }]
+        );
+
+        let missing_frequency = serde_json::from_str::<ExportJson>(
+            r#"{"chip":"sun","desc":"unit","future_mode":true}"#,
+        )
+        .err()
+        .expect("missing required frequency must be rejected");
+        assert!(
+            missing_frequency
+                .to_string()
+                .contains("missing field `freq`")
         );
     }
 

@@ -92,6 +92,7 @@ pub fn replace_fdt_gpu_table_from_table(
             chip: chip.to_string(),
             description: String::new(),
             table: table.clone(),
+            import_warnings: vec![],
         },
     )
 }
@@ -652,30 +653,37 @@ fn parse_cell_property(name: &str, value: &[u8]) -> Result<GpuProperty> {
     })
 }
 
+const CHIP_ALIAS_SETS: [(&str, &[&str]); 4] = [
+    (
+        "pineapple",
+        &["pineapple", "pineapplep", "volcano", "volcanop"],
+    ),
+    ("sun", &["sun", "sunp", "tuna", "tunap"]),
+    ("diwali", &["diwali", "diwali-lte", "diwalip"]),
+    ("canoe", &["canoe", "canoep"]),
+];
+
+/// Whether two supported chip names belong to the same KonaBess alias set.
+pub fn chip_names_match(left: &str, right: &str) -> bool {
+    match (chip_family(left), chip_family(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn chip_family(name: &str) -> Option<&'static str> {
+    let name = name.strip_prefix("qcom,").unwrap_or(name);
+    CHIP_ALIAS_SETS
+        .iter()
+        .find_map(|(family, aliases)| aliases.contains(&name).then_some(*family))
+}
+
 fn infer_chip(compatible: &[String]) -> Option<String> {
-    for (chip, values) in [
-        (
-            "pineapple",
-            &[
-                "qcom,pineapple",
-                "qcom,pineapplep",
-                "qcom,volcano",
-                "qcom,volcanop",
-            ][..],
-        ),
-        (
-            "sun",
-            &["qcom,sun", "qcom,sunp", "qcom,tuna", "qcom,tunap"][..],
-        ),
-        (
-            "diwali",
-            &["qcom,diwali", "qcom,diwali-lte", "qcom,diwalip"][..],
-        ),
-        ("canoe", &["qcom,canoe", "qcom,canoep"][..]),
-    ] {
+    for (chip, aliases) in CHIP_ALIAS_SETS {
         if compatible
             .iter()
-            .any(|compatible| values.contains(&compatible.as_str()))
+            .filter_map(|compatible| compatible.strip_prefix("qcom,"))
+            .any(|compatible| aliases.contains(&compatible))
         {
             return Some(chip.to_string());
         }
@@ -912,6 +920,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chip_name_matching_reuses_the_fdt_alias_families() {
+        for alias in ["sun", "sunp", "tuna", "tunap", "qcom,tuna"] {
+            assert!(chip_names_match("sun", alias));
+        }
+        assert!(chip_names_match("pineapple", "volcano"));
+        assert!(chip_names_match("diwali", "diwali-lte"));
+        assert!(chip_names_match("canoe", "canoep"));
+        assert!(!chip_names_match("sun", "pineapple"));
+        assert!(!chip_names_match("unknown", "unknown"));
+    }
+
+    #[test]
     fn self_table_round_trip_is_functionally_identical_and_preserves_splices() {
         let original_table = table(&[(0, 2), (3, 1)], 100);
         let fdt = synthetic_fdt("sun", "Synthetic Sun", &original_table);
@@ -921,6 +941,7 @@ mod tests {
             chip: "sun".into(),
             description: "self".into(),
             table: original_table.clone(),
+            import_warnings: vec![],
         };
 
         let rebuilt = replace_fdt_gpu_table(&fdt, &export).unwrap();
@@ -960,6 +981,7 @@ mod tests {
             chip: "sun".into(),
             description: String::new(),
             table: replacement.clone(),
+            import_warnings: vec![],
         };
         let rebuilt = replace_fdt_gpu_table(&fdt, &export).unwrap();
         let after = parse_fdt(&rebuilt).unwrap();
@@ -987,6 +1009,7 @@ mod tests {
             chip: "pineapple".into(),
             description: String::new(),
             table: table(&[(0, 1)], 100),
+            import_warnings: vec![],
         };
         let error = replace_fdt_gpu_table(&fdt, &export).unwrap_err();
         assert!(error.to_string().contains("chip mismatch"));

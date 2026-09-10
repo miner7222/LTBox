@@ -4,7 +4,7 @@
 //! `adb-conflict`, `software-fix`, and `dual-usb-advisory`, plus wizard scenes `<flow>:<step>`
 //! where `flow` is `same` or `other` and `step` is `region`, `target`, `data`,
 //! `country`, `folder`, `confirm`, or `flash`. It also accepts first-screen view scenes
-//! `view:root`, `view:unroot`, `view:sysupdate`, `view:konabess`,
+//! `view:root`, `view:unroot`, `view:sysupdate`, `view:konabess`, `view:konabess-table`,
 //! `view:reboot`, `view:reboot-wait`, `view:advanced`, `view:settings`, and
 //! `view:about`, plus the
 //! static inspection scenes enumerated in [`VALID_SCENES`], including the
@@ -42,6 +42,7 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "view:unroot",
     "view:sysupdate",
     "view:konabess",
+    "view:konabess-table",
     "view:reboot",
     "view:reboot-wait",
     "view:advanced",
@@ -72,6 +73,7 @@ pub(crate) enum Scene {
     DualUsbAdvisory,
     Wizard { flow: Flow, step: WizardStep },
     View(View),
+    KonaBessTable,
     RebootWait,
     Root(RootScene),
     AdvancedRegionTarget,
@@ -133,6 +135,7 @@ impl Scene {
             "view:unroot" => Some(Self::View(View::Unroot)),
             "view:sysupdate" => Some(Self::View(View::SystemUpdate)),
             "view:konabess" => Some(Self::View(View::KonaBess)),
+            "view:konabess-table" => Some(Self::KonaBessTable),
             "view:reboot" => Some(Self::View(View::Reboot)),
             "view:reboot-wait" => Some(Self::RebootWait),
             "view:advanced" => Some(Self::View(View::Advanced)),
@@ -208,6 +211,7 @@ impl Scene {
             Self::Dashboard
             | Self::Wizard { .. }
             | Self::View(_)
+            | Self::KonaBessTable
             | Self::RebootWait
             | Self::Root(_)
             | Self::AdvancedRegionTarget
@@ -266,6 +270,7 @@ pub(crate) fn initialize(app: &mut App) {
     match scene {
         Scene::Wizard { flow, step } => apply_wizard_scene(app, flow, step),
         Scene::View(view) => app.current_view = view,
+        Scene::KonaBessTable => apply_konabess_table_scene(app),
         Scene::RebootWait => apply_reboot_wait_scene(app),
         Scene::Root(root_scene) => apply_root_scene(app, root_scene),
         Scene::AdvancedRegionTarget => apply_advanced_region_target_scene(app),
@@ -293,6 +298,127 @@ fn apply_dual_usb_advisory_scene(app: &mut App) {
     app.dual_usb_advisory_dismissed.clear();
     app.dual_usb_advisory_closed.clear();
     drop(app.update(Message::DevicePolled(Scene::DualUsbAdvisory.poll_result())));
+}
+
+fn apply_konabess_table_scene(app: &mut App) {
+    use ltbox_patch::konabess::{GpuGroup, GpuLevel, GpuProperty, GpuTable, VendorBootDtbInfo};
+
+    fn property(name: &str, value: u32) -> GpuProperty {
+        GpuProperty {
+            name: name.to_string(),
+            cells: vec![value],
+        }
+    }
+
+    fn level(id: u32, frequency_mhz: u32, voltage: u32, bus: [u32; 3]) -> GpuLevel {
+        GpuLevel {
+            id,
+            properties: vec![
+                property("reg", id),
+                property("qcom,gpu-freq", frequency_mhz * 1_000_000),
+                property("qcom,level", voltage),
+                property("qcom,bus-freq", bus[0]),
+                property("qcom,bus-min", bus[1]),
+                property("qcom,bus-max", bus[2]),
+            ],
+        }
+    }
+
+    fn group(id: u32, initial: u32, floor: u32, levels: Vec<GpuLevel>) -> GpuGroup {
+        GpuGroup {
+            id,
+            header_properties: vec![
+                property("qcom,speed-bin", id),
+                property("qcom,initial-pwrlevel", initial),
+                property("qcom,initial-min-pwrlevel", floor),
+            ],
+            levels,
+        }
+    }
+
+    let stock = GpuTable {
+        groups: vec![
+            group(
+                0,
+                2,
+                5,
+                vec![
+                    level(0, 1200, 452, [12, 10, 12]),
+                    level(1, 1100, 448, [12, 10, 12]),
+                    level(2, 1000, 432, [11, 9, 12]),
+                    level(3, 900, 416, [10, 8, 11]),
+                    level(4, 800, 384, [8, 7, 10]),
+                    level(5, 700, 320, [6, 5, 8]),
+                ],
+            ),
+            group(
+                1,
+                1,
+                3,
+                vec![
+                    level(0, 1150, 448, [12, 10, 12]),
+                    level(1, 1050, 432, [11, 9, 12]),
+                    level(2, 950, 416, [10, 8, 11]),
+                    level(3, 850, 384, [8, 7, 10]),
+                ],
+            ),
+        ],
+    };
+    let edited = GpuTable {
+        groups: vec![
+            group(
+                0,
+                2,
+                5,
+                vec![
+                    level(0, 1200, 448, [12, 10, 12]),
+                    level(1, 1100, 448, [12, 10, 12]),
+                    level(2, 1050, 452, [11, 9, 12]),
+                    level(3, 900, 416, [10, 8, 11]),
+                    level(4, 800, 384, [8, 7, 10]),
+                    level(5, 700, 320, [6, 5, 8]),
+                ],
+            ),
+            group(
+                1,
+                1,
+                2,
+                vec![
+                    level(0, 1150, 448, [12, 10, 12]),
+                    level(1, 1050, 432, [11, 9, 12]),
+                    level(2, 950, 416, [10, 8, 11]),
+                ],
+            ),
+        ],
+    };
+    let target = VendorBootDtbInfo {
+        index: 3,
+        model: Some("Qualcomm Technologies, Inc. Sun GPU".to_string()),
+        chip: Some("sun".to_string()),
+        gpu_shape: None,
+        table: Some(stock.clone()),
+    };
+
+    app.current_view = View::KonaBess;
+    app.konabess = KonaBessWizard {
+        step: 1,
+        loader_path: Some(LOADER_PATH.to_string()),
+        stock_table: Some(stock),
+        edited_table: Some(edited),
+        edited_dirty: true,
+        candidates: vec![target],
+        selected_target_index: Some(3),
+        probable_target_index: Some(3),
+        prepared: Some(KonaBessPrepared {
+            work_dir: "demo/konabess".into(),
+            vendor_boot: "demo/vendor_boot.img".into(),
+            vbmeta: "demo/vbmeta.img".into(),
+            backup_dir: "demo/backup".into(),
+            slot_suffix: "_a".to_string(),
+            probable_dtb_index: Some(3),
+        }),
+        ..KonaBessWizard::default()
+    };
 }
 
 fn apply_root_scene(app: &mut App, scene: RootScene) {
@@ -702,6 +828,37 @@ mod tests {
                 View::Dashboard | View::Flash => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn konabess_table_scene_opens_a_populated_comparison() {
+        let scene = Scene::parse("view:konabess-table").unwrap();
+        let mut app = App {
+            demo_scene: Some(scene),
+            ..App::default()
+        };
+        drop(app.update(Message::DevicePolled(scene.poll_result())));
+        apply_konabess_table_scene(&mut app);
+
+        assert_eq!(app.current_view, View::KonaBess);
+        assert_eq!(app.konabess.step, 1);
+        assert_eq!(app.konabess.selected_chip(), Some("sun"));
+        assert_eq!(app.konabess.stock_table.as_ref().unwrap().groups.len(), 2);
+        assert_eq!(app.konabess.edited_table.as_ref().unwrap().groups.len(), 2);
+        assert_eq!(
+            app.konabess.stock_table.as_ref().unwrap().groups[1]
+                .levels
+                .len(),
+            4
+        );
+        assert_eq!(
+            app.konabess.edited_table.as_ref().unwrap().groups[1]
+                .levels
+                .len(),
+            3
+        );
+        assert!(app.konabess.edited_dirty);
+        assert!(app.konabess.can_next());
     }
 
     #[test]
