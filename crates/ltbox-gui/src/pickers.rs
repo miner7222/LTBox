@@ -84,6 +84,19 @@ impl FilePickSpec {
     }
 }
 
+/// Match display history using the same extension set as the native dialog.
+pub(crate) fn path_matches_extensions(path: &str, extensions: &[&str]) -> bool {
+    extensions.is_empty()
+        || std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extensions
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(extension))
+            })
+}
+
 /// Open a folder picker seeded from that kind's most-recent path.
 pub fn pick_folder_for<M: 'static + Send>(
     kind: PickerKind,

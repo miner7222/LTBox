@@ -14,17 +14,34 @@ fn settings_row(
     description: String,
     control: Element<'static, Message>,
 ) -> Element<'static, Message> {
-    let copy = column![
+    settings_row_with_help(label, description, None, control)
+}
+
+fn settings_row_with_help(
+    label: String,
+    description: String,
+    help: Option<String>,
+    control: Element<'static, Message>,
+) -> Element<'static, Message> {
+    let mut title = row![
         text(label)
             .size(theme::text_size::BODY_MEDIUM)
             .line_height(1.0),
-        text(description)
-            .size(theme::text_size::BODY_SMALL)
-            .style(muted_style)
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
     ]
-    .spacing(3.0)
-    .width(Length::Fill);
+    .spacing(6.0)
+    .align_y(iced::Alignment::Center);
+    if let Some(help) = help {
+        title = title.push(settings_help(help));
+    }
+    let mut copy = column![title].spacing(3.0).width(Length::Fill);
+    if !description.is_empty() {
+        copy = copy.push(
+            text(description)
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        );
+    }
 
     // `Fill` height so the row centres inside the minimum-height spacer the
     // stack below establishes. Left at Shrink it sat at the spacer's top edge,
@@ -80,16 +97,24 @@ fn settings_card(title: String, rows: Vec<Element<'static, Message>>) -> Element
         .into()
 }
 
-fn segment_divider_style(t: &Theme) -> widget::rule::Style {
+fn segment_divider_style(t: &Theme, enabled: bool) -> widget::rule::Style {
+    let p = pal_of(t);
     widget::rule::Style {
-        color: pal_of(t).outline,
+        color: if enabled {
+            p.outline
+        } else {
+            with_alpha(p.on_surface, 0.12)
+        },
         radius: 0.0.into(),
         fill_mode: widget::rule::FillMode::Full,
         snap: true,
     }
 }
 
-fn settings_segmented_control(options: Vec<(String, bool, Message)>) -> Element<'static, Message> {
+fn settings_segmented_control(
+    options: Vec<(String, bool, Message)>,
+    enabled: bool,
+) -> Element<'static, Message> {
     let height = SETTINGS_CONTROL_HEIGHT;
     let border_width = 1.0;
     let segment_height = Length::Fixed(height - 2.0 * border_width);
@@ -112,7 +137,10 @@ fn settings_segmented_control(options: Vec<(String, bool, Message)>) -> Element<
             },
         };
         if index > 0 {
-            segments = segments.push(widget::rule::vertical(1).style(segment_divider_style));
+            segments = segments.push(
+                widget::rule::vertical(1)
+                    .style(move |theme: &Theme| segment_divider_style(theme, enabled)),
+            );
         }
         let mut label = text(label)
             .size(SETTINGS_SEGMENT_TEXT_SIZE)
@@ -127,7 +155,7 @@ fn settings_segmented_control(options: Vec<(String, bool, Message)>) -> Element<
             .align_y(iced::alignment::Vertical::Center);
         segments = segments.push(
             button(cell)
-                .on_press(message)
+                .on_press_maybe(enabled.then_some(message))
                 .padding(0)
                 .height(segment_height)
                 .style(move |t: &Theme, status| {
@@ -141,7 +169,11 @@ fn settings_segmented_control(options: Vec<(String, bool, Message)>) -> Element<
         .padding(border_width)
         .style(move |t: &Theme| container::Style {
             border: iced::Border {
-                color: pal_of(t).outline,
+                color: if enabled {
+                    pal_of(t).outline
+                } else {
+                    with_alpha(pal_of(t).on_surface, 0.12)
+                },
                 width: border_width,
                 radius: theme::shape::SM.into(),
             },
@@ -152,12 +184,14 @@ fn settings_segmented_control(options: Vec<(String, bool, Message)>) -> Element<
 
 fn settings_help(tip: String) -> Element<'static, Message> {
     widget::tooltip(
-        container(text("?").size(11.0).style(muted_style))
+        button(text("?").size(11.0))
             .padding([2, 6])
-            .style(|t: &Theme| {
+            .on_press(Message::ToastShow(tip.clone()))
+            .style(|t: &Theme, status| {
                 let p = pal_of(t);
-                container::Style {
-                    background: Some(with_alpha(p.on_surface_variant, 0.10).into()),
+                button::Style {
+                    background: theme::state_layer_bg(status, p.on_surface_variant).map(Into::into),
+                    text_color: p.on_surface_variant,
                     border: iced::Border {
                         radius: theme::shape::SM.into(),
                         ..Default::default()
@@ -359,10 +393,11 @@ impl App {
                     )
                 })
                 .collect(),
+            true,
         );
         let theme_row = settings_row(
             self.t("settings_theme").to_string(),
-            self.t("settings_theme_desc").to_string(),
+            String::new(),
             theme_control,
         );
 
@@ -377,6 +412,7 @@ impl App {
                     )
                 })
                 .collect(),
+            true,
         );
         let seed_row = settings_row(
             self.t("settings_theme_seed").to_string(),
@@ -401,10 +437,6 @@ impl App {
 
         let driver_userspace = self.t("settings_qcom_driver_mode_userspace").to_string();
         let driver_kernel = self.t("settings_qcom_driver_mode_kernel").to_string();
-        let current_driver_label = match self.qcom_driver_mode {
-            ltbox_device::driver::QcomDriverMode::Userspace => driver_userspace.clone(),
-            ltbox_device::driver::QcomDriverMode::Kernel => driver_kernel.clone(),
-        };
         let kernel_mode_supported = ltbox_device::driver::kernel_mode_supported();
         let driver_help_key = if cfg!(target_os = "macos") {
             "settings_qcom_driver_mode_macos"
@@ -413,60 +445,29 @@ impl App {
         } else {
             "settings_qcom_driver_mode_help"
         };
-        let driver_picker: Element<'static, Message> =
-            if self.operation.is_running() || !kernel_mode_supported {
-                container(
-                    text(current_driver_label)
-                        .size(SETTINGS_PICK_LIST_TEXT_SIZE)
-                        .style(|t: &Theme| iced::widget::text::Style {
-                            color: Some(with_alpha(pal_of(t).on_surface, 0.38)),
-                        }),
+        let driver_control = settings_segmented_control(
+            [
+                (driver_kernel, ltbox_device::driver::QcomDriverMode::Kernel),
+                (
+                    driver_userspace,
+                    ltbox_device::driver::QcomDriverMode::Userspace,
+                ),
+            ]
+            .into_iter()
+            .map(|(label, mode)| {
+                (
+                    label,
+                    self.qcom_driver_mode == mode,
+                    Message::Settings(SettingsMsg::SetQcomDriverMode(mode)),
                 )
-                .padding(field_padding)
-                .width(Length::Fixed(SETTINGS_PICK_LIST_WIDTH))
-                .style(|t: &Theme| {
-                    let p = pal_of(t);
-                    container::Style {
-                        border: iced::Border {
-                            color: with_alpha(p.on_surface, 0.12),
-                            width: 1.0,
-                            radius: theme::shape::SM.into(),
-                        },
-                        ..Default::default()
-                    }
-                })
-                .into()
-            } else {
-                let driver_kernel_for_pick = driver_kernel.clone();
-                widget::pick_list(
-                    vec![driver_kernel, driver_userspace],
-                    Some(current_driver_label),
-                    move |selected| {
-                        let mode = if selected == driver_kernel_for_pick {
-                            ltbox_device::driver::QcomDriverMode::Kernel
-                        } else {
-                            ltbox_device::driver::QcomDriverMode::Userspace
-                        };
-                        Message::Settings(SettingsMsg::SetQcomDriverMode(mode))
-                    },
-                )
-                .text_size(SETTINGS_PICK_LIST_TEXT_SIZE)
-                .padding(field_padding)
-                .style(m3_pick_list_style)
-                .menu_style(m3_pick_list_menu_style)
-                .width(Length::Fixed(SETTINGS_PICK_LIST_WIDTH))
-                .into()
-            };
-        let driver_control: Element<'static, Message> = row![
-            settings_help(self.t(driver_help_key).to_string()),
-            driver_picker,
-        ]
-        .spacing(8.0)
-        .align_y(iced::Alignment::Center)
-        .into();
-        let driver_row = settings_row(
+            })
+            .collect(),
+            !self.operation.is_running() && kernel_mode_supported,
+        );
+        let driver_row = settings_row_with_help(
             self.t("settings_qcom_driver_mode").to_string(),
             self.t("settings_qcom_driver_mode_desc").to_string(),
+            Some(self.t(driver_help_key).to_string()),
             driver_control,
         );
 
@@ -474,27 +475,29 @@ impl App {
             .default_loader_path
             .clone()
             .unwrap_or_else(|| self.t("settings_default_loader_unset").to_string());
-        let mut default_loader_control = row![
-            settings_help(self.t("settings_default_loader_help").to_string()),
+        let default_loader_control = row![
             settings_value_field(default_loader_value),
-            settings_text_action(
+            settings_icon_action(
+                icon::fab_open_folder(),
                 self.t("settings_default_loader_browse").to_string(),
                 Some(Message::Settings(SettingsMsg::SettingsPickDefaultLoader)),
+                false,
+            ),
+            settings_icon_action(
+                icon::settings_clear(),
+                self.t("settings_default_loader_clear").to_string(),
+                self.default_loader_path
+                    .is_some()
+                    .then_some(Message::Settings(SettingsMsg::SettingsClearDefaultLoader)),
+                true,
             ),
         ]
         .spacing(8.0)
         .align_y(iced::Alignment::Center);
-        if self.default_loader_path.is_some() {
-            default_loader_control = default_loader_control.push(settings_icon_action(
-                icon::settings_clear(),
-                self.t("settings_default_loader_clear").to_string(),
-                Some(Message::Settings(SettingsMsg::SettingsClearDefaultLoader)),
-                true,
-            ));
-        }
-        let default_loader_row = settings_row(
+        let default_loader_row = settings_row_with_help(
             self.t("settings_default_loader").to_string(),
             self.t("settings_default_loader_desc").to_string(),
+            Some(self.t("settings_default_loader_help").to_string()),
             default_loader_control.into(),
         );
         let device_card = settings_card(
@@ -534,16 +537,12 @@ impl App {
         let cleanup_description = tr_args!("settings_cleanup_desc", size = cleanup_size);
         let cleanup_message =
             cleanup_enabled.then_some(Message::Settings(SettingsMsg::CleanupTempFiles));
-        let cleanup_control: Element<'static, Message> = row![
-            settings_help(self.t("settings_cleanup_help").to_string()),
-            settings_text_action(cleanup_tip, cleanup_message),
-        ]
-        .spacing(8.0)
-        .align_y(iced::Alignment::Center)
-        .into();
-        let cleanup_row = settings_row(
+        let cleanup_control =
+            settings_icon_action(icon::settings_clear(), cleanup_tip, cleanup_message, true);
+        let cleanup_row = settings_row_with_help(
             self.t("settings_cleanup").to_string(),
             cleanup_description,
+            Some(self.t("settings_cleanup_help").to_string()),
             cleanup_control,
         );
         let files_card = settings_card(

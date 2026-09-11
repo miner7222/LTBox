@@ -24,9 +24,14 @@ impl App {
                 Task::none()
             }
             SettingsMsg::SetUseSystemFont(use_system_font) => {
+                if self.use_system_font == use_system_font {
+                    return Task::none();
+                }
                 self.use_system_font = use_system_font;
                 self.persist_settings();
-                Task::none()
+                Task::done(Message::ToastShow(
+                    self.t("settings_font_restart_required").to_string(),
+                ))
             }
             SettingsMsg::SetQcomDriverMode(mode) => {
                 if self.operation.is_running() {
@@ -72,7 +77,7 @@ impl App {
                 ])
             }
             SettingsMsg::SettingsPickDefaultLoader => {
-                let spec = loader_file_spec();
+                let spec = self.model_loader_file_spec();
                 pickers::pick_file_for(spec, &self.recent_paths, |__v| {
                     Message::Settings(SettingsMsg::SettingsDefaultLoaderChosen(__v))
                 })

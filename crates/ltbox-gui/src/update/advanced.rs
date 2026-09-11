@@ -837,7 +837,7 @@ impl App {
                         Message::Adv(AdvMsg::AdvWizBrowseDone(__v))
                     });
                 }
-                let (filter_label, filter_exts) = self.adv_wizard.accepted_exts();
+                let (filter_label, filter_exts) = self.advanced_picker_exts();
                 let mut spec = pickers::FilePickSpec::single();
                 if !filter_exts.is_empty() {
                     spec = spec.with_filter(filter_label, filter_exts);

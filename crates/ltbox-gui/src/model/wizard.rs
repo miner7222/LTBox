@@ -2224,10 +2224,9 @@ impl AdvWizard {
             Some(AdvAction::RegionConvert)
             | Some(AdvAction::ImageInfo)
             | Some(AdvAction::RebuildVbmeta) => ("Android partition image (*.img)", &["img"]),
-            Some(AdvAction::DetectArb) | Some(AdvAction::PatchDevinfo) => (
-                "EDL loader (.melf / .mbn / .elf / .xml / .x)",
-                LOADER_PICKER_EXTS,
-            ),
+            Some(AdvAction::DetectArb) | Some(AdvAction::PatchDevinfo) => {
+                ("EDL loader (.melf / .xml)", LOADER_PICKER_EXTS)
+            }
             _ => ("", &[]),
         }
     }

@@ -530,10 +530,6 @@ fn m3_button<'a>(
     .style(style)
 }
 
-/// Shared width of the Root wizard's KPM browse card and the picked-file
-/// list beneath it, so the two stack as a single centred column.
-pub(crate) const KPM_COLUMN_WIDTH: f32 = 280.0;
-
 /// Interior padding of the Dashboard's hero device card. Sized against
 /// its `LG` corner via M3's `outer radius - padding = inner
 /// radius` rule.

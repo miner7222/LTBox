@@ -205,6 +205,17 @@ pub(crate) fn m3_segment_button_style(
     radius: iced::border::Radius,
 ) -> button::Style {
     let p = pal_of(t);
+    if matches!(status, button::Status::Disabled) {
+        return button::Style {
+            background: selected.then_some(with_alpha(p.on_surface, 0.12).into()),
+            text_color: with_alpha(p.on_surface, 0.38),
+            border: iced::Border {
+                radius,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    }
     let foreground = if selected {
         p.on_surface
     } else {

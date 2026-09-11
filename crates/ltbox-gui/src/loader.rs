@@ -1,10 +1,23 @@
 //! EDL loader discovery + validation helpers, extracted from `main.rs`.
 
 /// File-dialog / recent-chip extension filter for the EDL loader picker:
-/// a stock `.melf` Firehose loader, or the `.xml` / encrypted `.x` Sahara
-/// manifest (Y700 Gen 5). Single source so every loader picker + recents
-/// chip row offers the same set.
-pub(crate) const LOADER_PICKER_EXTS: &[&str] = &["melf", "mbn", "elf", "xml", "x"];
+/// a stock `.melf` Firehose loader or the `.xml` Sahara manifest.
+/// Resolver compatibility with encrypted/legacy inputs is separate.
+pub(crate) const LOADER_PICKER_EXTS: &[&str] = &["melf", "xml"];
+
+/// User-facing choices, independent of the resolver's legacy compatibility.
+pub(crate) fn loader_picker_extensions(
+    model_known: bool,
+    manifest: bool,
+) -> &'static [&'static str] {
+    if manifest {
+        &["xml"]
+    } else if model_known {
+        &["melf"]
+    } else {
+        LOADER_PICKER_EXTS
+    }
+}
 
 /// Locate the multi-image Sahara manifest in `dir`, case-insensitively.
 /// Prefers the plaintext `qsahara_device_programmer.xml`; otherwise returns
@@ -269,5 +282,33 @@ mod tests {
         std::fs::create_dir(&firmware).unwrap();
 
         assert_eq!(find_firmware_loader(&firmware), None);
+    }
+}
+#[cfg(test)]
+mod picker_filter_tests {
+    use super::loader_picker_extensions;
+    use crate::pickers::path_matches_extensions;
+
+    #[test]
+    fn switching_models_filters_shared_history_and_excludes_bootloader_paths() {
+        let history = [
+            "C:/Temp/session/abl.elf",
+            "D:/Downloads/abl.ELF",
+            "D:/Firmware/loader.MeLf",
+            "D:/Firmware/manifest.XML",
+            "D:/Firmware/manifest.x",
+            "D:/Firmware/payload.mbn",
+        ];
+        let visible = |known, manifest| {
+            history
+                .into_iter()
+                .filter(|path| {
+                    path_matches_extensions(path, loader_picker_extensions(known, manifest))
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(visible(false, false), vec![history[2], history[3]]);
+        assert_eq!(visible(true, false), vec![history[2]]);
+        assert_eq!(visible(true, true), vec![history[3]]);
     }
 }

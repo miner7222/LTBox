@@ -1,5 +1,6 @@
 //! Flash wizard view + steps (region, target, data, folder, confirm, exec). Extracted from `main.rs`.
 
+use super::components::{picker_action_button, picker_path_field};
 use crate::*;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
@@ -8,126 +9,6 @@ use theme::with_alpha;
 
 const FLASH_CONFIRM_LABEL_WIDTH: f32 = 180.0;
 const FLASH_CONFIRM_MAX_WIDTH: f32 = 820.0;
-const PICKER_PATH_HEIGHT: f32 = 36.0;
-const PICKER_RECENT_ROW_HEIGHT: f32 = 44.0;
-
-/// Longest path the fields show before they start dropping the head.
-///
-/// The tail is the part that identifies a build, so a path too long to fit
-/// loses its beginning rather than its end. Sized for the minimum window: the
-/// field is narrowest there, and a monospace advance makes a character count
-/// stand in for a width.
-const PICKER_PATH_MAX_CHARS: usize = 58;
-
-/// How far before the budget [`elide_path_head`] may reach for a separator.
-/// The budget is sized for the narrowest window, so a few characters of
-/// overshoot still fit everywhere and read far better than a name cut in half.
-const SEPARATOR_SLACK: usize = 6;
-
-/// Drop the head of a path that cannot fit, marking the cut.
-///
-/// Prefers to start at a separator so what is left reads as a path rather than
-/// a name cut in half: among the separators, take the earliest whose remainder
-/// still fits. Falls back to a hard cut when no separator qualifies.
-fn elide_path_head(path: &str) -> String {
-    let chars: Vec<char> = path.chars().collect();
-    if chars.len() <= PICKER_PATH_MAX_CHARS {
-        return path.to_string();
-    }
-    let keep = PICKER_PATH_MAX_CHARS - 1;
-    let first_fitting = chars.len() - keep;
-    let earliest = first_fitting.saturating_sub(SEPARATOR_SLACK);
-    // Search the window ending at the first index that fits: a separator inside
-    // it costs at most `SEPARATOR_SLACK` extra characters, which the budget can
-    // absorb, while one past it would throw away a segment that fits.
-    let cut = (earliest..=first_fitting)
-        .find(|i| chars[*i] == '/' || chars[*i] == '\\')
-        .filter(|cut| 1 + chars.len() - cut < chars.len())
-        .unwrap_or(first_fitting);
-    let tail: String = chars[cut..].iter().collect();
-    format!("\u{2026}{tail}")
-}
-
-fn picker_path_field(
-    value: Option<&str>,
-    placeholder: String,
-    filled_background: bool,
-) -> Element<'static, Message> {
-    let selected = value.is_some();
-    let shown = value.map(elide_path_head).unwrap_or(placeholder);
-    let path = text(shown)
-        .size(if selected {
-            theme::text_size::BODY_SMALL
-        } else {
-            theme::text_size::BODY_MEDIUM
-        })
-        .font_maybe(selected.then_some(theme::mono_font()))
-        .width(Length::Fill)
-        .align_x(iced::alignment::Horizontal::Left)
-        .wrapping(iced::widget::text::Wrapping::None)
-        .style(move |t: &Theme| iced::widget::text::Style {
-            color: Some(if selected {
-                pal_of(t).on_surface
-            } else {
-                pal_of(t).on_surface_variant
-            }),
-        });
-    container(path)
-        .width(Length::Fill)
-        .height(Length::Fixed(PICKER_PATH_HEIGHT))
-        .padding([0, 12])
-        .align_y(iced::alignment::Vertical::Center)
-        .clip(true)
-        .style(move |t: &Theme| container::Style {
-            background: filled_background.then_some(pal_of(t).background.into()),
-            border: iced::Border {
-                color: pal_of(t).outline,
-                width: 1.0,
-                radius: theme::shape::SM.into(),
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-fn picker_action_button(
-    label: String,
-    message: Message,
-    outlined: bool,
-) -> Element<'static, Message> {
-    button(
-        container(
-            text(label)
-                .size(theme::text_size::BODY_SMALL)
-                .wrapping(iced::widget::text::Wrapping::None),
-        )
-        .height(Length::Fill)
-        .align_y(iced::alignment::Vertical::Center),
-    )
-    .on_press(message)
-    .height(Length::Fixed(PICKER_PATH_HEIGHT))
-    .padding([0, 12])
-    .style(move |t: &Theme, status| {
-        let p = pal_of(t);
-        let alpha = theme::state_alpha(status);
-        button::Style {
-            background: (alpha > 0.0).then_some(with_alpha(p.on_surface, alpha).into()),
-            text_color: p.on_surface,
-            border: iced::Border {
-                color: if outlined {
-                    p.outline
-                } else {
-                    iced::Color::TRANSPARENT
-                },
-                width: if outlined { 1.0 } else { 0.0 },
-                radius: theme::shape::SM.into(),
-            },
-            ..Default::default()
-        }
-    })
-    .into()
-}
-
 fn flash_confirm_static_definition_row(label: String, value: String) -> Element<'static, Message> {
     column![
         row![
@@ -597,28 +478,12 @@ impl App {
 
     pub(crate) fn flash_folder_step(&self) -> Element<'_, Message> {
         let selected_path = self.flash.firmware_folder.as_deref();
-        let mut path_row = row![
-            picker_path_field(
-                selected_path,
-                self.t("flash_folder_placeholder").to_string(),
-                false,
-            ),
-            picker_action_button(
-                self.t("btn_browse_folder").to_string(),
-                Message::Flash(FlashMsg::FlashSelectFolder),
-                true,
-            ),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
-        if selected_path.is_some() {
-            path_row = path_row.push(picker_action_button(
-                self.t("btn_clear").to_string(),
-                Message::Flash(FlashMsg::FlashClearFolder),
-                false,
-            ));
-        }
+        let path_row = self.wizard_picker_row(
+            selected_path,
+            self.t("flash_folder_placeholder").to_string(),
+            Some(Message::Flash(FlashMsg::FlashSelectFolder)),
+            selected_path.map(|_| Message::Flash(FlashMsg::FlashClearFolder)),
+        );
 
         let mut content = column![
             path_row,
@@ -647,6 +512,7 @@ impl App {
                     self.flash.loader_override.as_deref(),
                     self.t("edl_loader_placeholder").to_string(),
                     true,
+                    self.picker_text_width(1),
                 ),
                 picker_action_button(
                     self.t(if has_loader {
@@ -655,7 +521,7 @@ impl App {
                         "flash_loader_browse"
                     })
                     .to_string(),
-                    Message::Flash(FlashMsg::FlashSelectLoader),
+                    Some(Message::Flash(FlashMsg::FlashSelectLoader)),
                     true,
                 ),
             ]
@@ -691,116 +557,15 @@ impl App {
                     ));
         }
 
-        let recents = self
-            .recent_paths
-            .recent(PickerTarget::FlashFolder.kind().storage_key());
-        if !recents.is_empty() {
-            let mut recent_rows = column![].spacing(0).width(Length::Fill);
-            for (index, path) in recents.iter().take(settings_store::RECENT_MAX).enumerate() {
-                if index > 0 {
-                    recent_rows =
-                        recent_rows.push(iced::widget::rule::horizontal(1).style(|t: &Theme| {
-                            iced::widget::rule::Style {
-                                color: pal_of(t).outline_variant,
-                                radius: 0.0.into(),
-                                fill_mode: iced::widget::rule::FillMode::Full,
-                                snap: true,
-                            }
-                        }));
-                }
-                let exists = std::path::Path::new(path).is_dir();
-                let foreground = move |t: &Theme| {
-                    with_alpha(
-                        pal_of(t).on_surface_variant,
-                        if exists { 1.0 } else { 0.45 },
-                    )
-                };
-                let mut recent_content = row![
-                    lucide_icon(icon::fab_open_folder(), 17.0, foreground),
-                    container(
-                        text(elide_path_head(path))
-                            .font(theme::mono_font())
-                            .size(theme::text_size::BODY_SMALL)
-                            .style(move |t: &Theme| iced::widget::text::Style {
-                                color: Some(foreground(t)),
-                            })
-                            .width(Length::Fill)
-                            .align_x(iced::alignment::Horizontal::Left)
-                            .wrapping(iced::widget::text::Wrapping::None),
-                    )
-                    .height(Length::Fill)
-                    .width(Length::Fill)
-                    .align_y(iced::alignment::Vertical::Center)
-                    .clip(true),
-                ]
-                .spacing(11)
-                .align_y(iced::Alignment::Center)
-                .width(Length::Fill);
-                if !exists {
-                    recent_content = recent_content.push(
-                        text(self.t("recent_missing_folder").to_string())
-                            .size(theme::text_size::LABEL_SMALL)
-                            .style(move |t: &Theme| iced::widget::text::Style {
-                                color: Some(pal_of(t).error),
-                            })
-                            .wrapping(iced::widget::text::Wrapping::None),
-                    );
-                }
-                let message = if exists {
-                    Message::RecentFolderPicked(PickerTarget::FlashFolder, path.clone())
-                } else {
-                    Message::NoticeRecentMissing(false)
-                };
-                recent_rows = recent_rows.push(
-                    button(recent_content)
-                        .on_press(message)
-                        .height(Length::Fixed(PICKER_RECENT_ROW_HEIGHT))
-                        .width(Length::Fill)
-                        .padding([0, 14])
-                        .style(move |t: &Theme, status| {
-                            let p = pal_of(t);
-                            let alpha = if exists {
-                                theme::state_alpha(status)
-                            } else {
-                                0.0
-                            };
-                            button::Style {
-                                background: (alpha > 0.0)
-                                    .then_some(with_alpha(p.on_surface, alpha).into()),
-                                text_color: p.on_surface,
-                                ..Default::default()
-                            }
-                        }),
-                );
-            }
-            let recent_list =
-                container(recent_rows)
-                    .width(Length::Fill)
-                    .clip(true)
-                    .style(|t: &Theme| container::Style {
-                        border: iced::Border {
-                            color: pal_of(t).outline_variant,
-                            width: 1.0,
-                            radius: theme::shape::MD.into(),
-                        },
-                        ..Default::default()
-                    });
-            content = content
-                .push(Space::new().height(Length::Fixed(16.0)))
-                .push(
-                    row![
-                        lucide_icon(icon::history(), 12.0, |t: &Theme| pal_of(t)
-                            .on_surface_variant),
-                        text(self.t("picker_recents").to_string())
-                            .size(theme::text_size::LABEL_SMALL)
-                            .font(theme::emphasis::medium())
-                            .style(muted_style),
-                    ]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center),
-                )
-                .push(recent_list);
-        }
+        content = content.push(
+            self.recent_chips(
+                self.recent_paths
+                    .recent(PickerTarget::FlashFolder.kind().storage_key()),
+                |path| Message::RecentFolderPicked(PickerTarget::FlashFolder, path),
+                "picker_recents",
+                false,
+            ),
+        );
 
         scrollable(content)
             .width(Length::Fill)
@@ -812,77 +577,12 @@ impl App {
     pub(crate) fn flash_bootloader_step(&self) -> Element<'_, Message> {
         let selected = self.flash.user_abl_path.is_some();
         let analyzing = self.flash.user_abl_analyzing;
-        let mut browse = button(
-            container(
-                column![
-                    text(self.t("flash_bootloader_select").to_string())
-                        .size(14.0)
-                        .center(),
-                    text("abl.elf").size(11.0).style(muted_style).center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |theme: &Theme| sel_card_style(theme, selected)),
-        )
-        .padding(0)
-        .style(move |theme: &Theme, status| {
-            if analyzing {
-                let palette = pal_of(theme);
-                button::Style {
-                    background: Some(palette.surface_container.into()),
-                    text_color: with_alpha(palette.on_surface, 0.38),
-                    border: iced::Border {
-                        radius: theme::shape::MD.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            } else {
-                sel_card_btn_style(theme, status, selected)
-            }
-        });
-        if !analyzing {
-            browse = browse.on_press(Message::Flash(FlashMsg::FlashSelectBootloader));
-        }
-
-        let clear_slot: Element<'_, Message> = if selected {
-            // Same control as the Root wizard's KPM remove button: the shared
-            // lucide `minus` glyph in a neutral circular icon button.
-            m3_icon_button(icon::kpm_remove(), 18.0, |theme, status| {
-                let palette = pal_of(theme);
-                button::Style {
-                    background: Some(
-                        with_alpha(palette.on_surface, 0.10 + theme::state_alpha(status)).into(),
-                    ),
-                    text_color: palette.on_surface,
-                    border: iced::Border {
-                        radius: theme::shape::SM.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .on_press(Message::Flash(FlashMsg::FlashClearBootloader))
-            .into()
-        } else {
-            iced::widget::Space::new()
-                .width(Length::Fixed(M3_ICON_BUTTON_SIZE))
-                .height(Length::Fixed(M3_ICON_BUTTON_SIZE))
-                .into()
-        };
-        let picker_row = row![
-            iced::widget::Space::new()
-                .width(Length::Fixed(M3_ICON_BUTTON_SIZE))
-                .height(Length::Fixed(M3_ICON_BUTTON_SIZE)),
-            browse,
-            clear_slot,
-        ]
-        .spacing(8.0)
-        .align_y(iced::Alignment::Center);
+        let picker_row = self.wizard_picker_row(
+            self.flash.user_abl_path.as_deref(),
+            "abl.elf".to_string(),
+            (!analyzing).then_some(Message::Flash(FlashMsg::FlashSelectBootloader)),
+            selected.then_some(Message::Flash(FlashMsg::FlashClearBootloader)),
+        );
 
         let verdict_key = if !selected {
             "flash_bootloader_empty"
@@ -921,21 +621,13 @@ impl App {
 
         let mut content = column![picker_row, verdict]
             .spacing(10.0)
-            .align_x(iced::Alignment::Center);
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Start);
         if self.flash.uses_gbl() && !selected && !self.flash.bootloader_can_next() {
             content = content.push(
                 text(self.t("err_abl_efisp_undetermined").to_string())
                     .size(13.0)
                     .center(),
-            );
-        }
-        if let Some(path) = &self.flash.user_abl_path {
-            content = content.push(
-                text(path.clone())
-                    .size(11.0)
-                    .style(muted_style)
-                    .center()
-                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             );
         }
 
@@ -1171,65 +863,5 @@ impl App {
 
     pub(crate) fn flash_exec_step(&self) -> Element<'_, Message> {
         self.exec_step_view_with_inline_log()
-    }
-}
-
-#[cfg(test)]
-mod picker_path_tests {
-    use super::{PICKER_PATH_MAX_CHARS, SEPARATOR_SLACK, elide_path_head};
-
-    #[test]
-    fn a_path_that_fits_is_left_alone() {
-        let path = "/Users/ltbox/Firmware";
-        assert_eq!(elide_path_head(path), path);
-    }
-
-    #[test]
-    fn a_long_path_keeps_its_tail_and_starts_at_a_separator() {
-        let elided = elide_path_head(
-            "/Users/ltbox/Firmware/TB520FU_ROW_OPEN_USER_Q00002.0_W_ZUI_17.5.10.096_ST_251127",
-        );
-        assert!(elided.starts_with("\u{2026}/"), "{elided}");
-        assert!(elided.ends_with("ST_251127"), "{elided}");
-    }
-
-    #[test]
-    fn windows_separators_count_too() {
-        let elided = elide_path_head(
-            r"D:\Git\DynoBox\References\Firmware\TB324ZC\TB324_ZUXOS_2.0.10.165_Tool\223",
-        );
-        assert!(elided.starts_with("\u{2026}\\"), "{elided}");
-    }
-
-    #[test]
-    fn a_separatorless_path_still_gets_cut_to_the_budget() {
-        let path = "x".repeat(PICKER_PATH_MAX_CHARS * 2);
-        let elided = elide_path_head(&path);
-        assert_eq!(elided.chars().count(), PICKER_PATH_MAX_CHARS);
-    }
-
-    #[test]
-    fn multibyte_paths_are_cut_on_character_boundaries() {
-        let path = format!("/펌웨어/{}", "가".repeat(PICKER_PATH_MAX_CHARS));
-        let elided = elide_path_head(&path);
-        assert!(
-            elided.chars().count() <= PICKER_PATH_MAX_CHARS + SEPARATOR_SLACK,
-            "{} chars: {elided}",
-            elided.chars().count()
-        );
-    }
-
-    #[test]
-    fn eliding_never_makes_a_path_longer() {
-        for len in PICKER_PATH_MAX_CHARS..PICKER_PATH_MAX_CHARS + SEPARATOR_SLACK + 4 {
-            let path = format!("/a/{}", "b".repeat(len));
-            let elided = elide_path_head(&path);
-            assert!(
-                elided.chars().count() <= path.chars().count(),
-                "len {len}: {} -> {}",
-                path.chars().count(),
-                elided.chars().count()
-            );
-        }
     }
 }

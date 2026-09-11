@@ -251,7 +251,7 @@ impl App {
                 // via `pick_loader_with_default`) so the Change button can pick
                 // a different loader — the default was already applied when the
                 // loader-less folder was selected.
-                pickers::pick_file_for(loader_file_spec(), &self.recent_paths, |v| {
+                pickers::pick_file_for(self.model_loader_file_spec(), &self.recent_paths, |v| {
                     Message::Flash(FlashMsg::FlashLoaderChosen(v))
                 })
             }

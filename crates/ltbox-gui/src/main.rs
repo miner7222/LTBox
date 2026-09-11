@@ -1617,21 +1617,6 @@ fn probe_connection_for_edl() -> Option<ConnectionStatus> {
     }
 }
 
-fn loader_file_spec() -> pickers::FilePickSpec {
-    // LTBox-supported devices ship `xbl_s_devprg_ns.melf` as the only
-    // viable Firehose loader, so the picker accepts `.melf`. TB323FU
-    // uses a multi-image manifest instead — a
-    // `qsahara_device_programmer.xml` enumerating the per-id ELF / MBN
-    // payloads — so the picker also accepts `.xml`. Filename itself is
-    // not enforced for the .melf case; the model-aware resolver
-    // upgrades a TB323FU `.melf` selection to the manifest sitting
-    // next to it.
-    pickers::FilePickSpec::single().with_filter(
-        "EDL loader (.melf / .mbn / .elf / .xml / .x)",
-        LOADER_PICKER_EXTS,
-    )
-}
-
 /// Wrap a heavy blocking flow as a `Task<Message>`. Runs `f` on the
 /// 64 MiB heavy-task pool via `spawn_blocking + run_heavy`, then sends
 /// the result through `done`. Both `run_heavy` panics and the
@@ -2788,7 +2773,7 @@ impl App {
         if let Some(path) = self.resolved_default_loader() {
             return self.update(on_chosen(Some(path)));
         }
-        pickers::pick_file_for(loader_file_spec(), &self.recent_paths, on_chosen)
+        pickers::pick_file_for(self.model_loader_file_spec(), &self.recent_paths, on_chosen)
     }
 
     /// Record the picked flash firmware folder and flag whether it ships an EDL
@@ -3419,6 +3404,30 @@ impl App {
         }
     }
 
+    fn loader_picker_exts(&self) -> &'static [&'static str] {
+        loader::loader_picker_extensions(
+            !self.device.model.is_empty(),
+            self.requires_sahara_manifest(),
+        )
+    }
+
+    fn model_loader_file_spec(&self) -> pickers::FilePickSpec {
+        let exts = self.loader_picker_exts();
+        pickers::FilePickSpec::single()
+            .with_filter(format!("EDL loader ({})", exts.join(" / ")), exts)
+    }
+
+    fn advanced_picker_exts(&self) -> (&'static str, &'static [&'static str]) {
+        if matches!(
+            self.adv_wizard.action,
+            Some(AdvAction::DetectArb | AdvAction::PatchDevinfo)
+        ) {
+            ("EDL loader", self.loader_picker_exts())
+        } else {
+            self.adv_wizard.accepted_exts()
+        }
+    }
+
     /// Whether the polled device is a TB322FC. PRC-only SKU — the Flash
     /// wizard hides ROW + OtherRegion as disabled cards so the user
     /// cannot pick a region or cross-region flash target that the
@@ -3546,12 +3555,7 @@ impl App {
             all.to_vec()
         } else {
             all.iter()
-                .filter(|p| {
-                    std::path::Path::new(p)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| accepted_exts.iter().any(|x| x.eq_ignore_ascii_case(e)))
-                })
+                .filter(|p| pickers::path_matches_extensions(p, accepted_exts))
                 .cloned()
                 .collect()
         };
@@ -3570,56 +3574,7 @@ impl App {
     where
         F: Fn(String) -> Message,
     {
-        if items.is_empty() {
-            return iced::widget::column![].into();
-        }
-        let label_row = row![
-            lucide_icon(icon::history(), 12.0, |t: &Theme| pal_of(t)
-                .on_surface_variant),
-            text(self.t(label_key).to_string())
-                .size(11)
-                .style(muted_style),
-        ]
-        .spacing(6)
-        .align_y(iced::Alignment::Center);
-        let mut col = column![label_row]
-            .spacing(4)
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        for path in items.iter().take(settings_store::RECENT_MAX) {
-            let exists = std::path::Path::new(path).exists();
-            let display = path.clone();
-            let path_for_msg = path.clone();
-            // Missing entries used to be `on_press`-less (silent no-op),
-            // which was confusing — the chip looked clickable but didn't
-            // do anything. Route clicks on a stale chip to a banner so
-            // the user actually learns *why* nothing happened. The
-            // file/folder split decides which i18n key fires; we pick it
-            // up at click time, not now, so the kind enum stays out of
-            // the chip closure.
-            let on_press = if exists {
-                on_pick(path_for_msg)
-            } else {
-                Message::NoticeRecentMissing(is_file_picker)
-            };
-            let btn = button(
-                text(display)
-                    .size(11)
-                    .style(muted_style)
-                    .width(Length::Fill)
-                    .center()
-                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            )
-            .width(Length::Fill)
-            .padding([4, 10])
-            .style(|_t: &Theme, _s| button::Style {
-                background: None,
-                ..Default::default()
-            })
-            .on_press(on_press);
-            col = col.push(btn);
-        }
-        col.into()
+        self.picker_recent_list(items, on_pick, label_key, is_file_picker)
     }
 }
 

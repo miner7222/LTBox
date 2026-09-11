@@ -1,7 +1,7 @@
 //! Root wizard view + steps + superkey/run-id/kernel-version popups. Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 use theme::with_alpha;
@@ -143,36 +143,13 @@ impl App {
 
     pub(crate) fn root_kpm_step(&self) -> Element<'_, Message> {
         // No recents here — the KPM list already competes for vertical space.
-        let kpm_selected = !self.root.kpm_paths.is_empty();
-        let pick_btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_kpm").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(self.t("root_kpm_desc").to_string())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(KPM_COLUMN_WIDTH)
-            .style(move |t: &Theme| sel_card_style(t, kpm_selected)),
-        )
-        .on_press(Message::Root(RootMsg::RootSelectKpm))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, kpm_selected));
-
-        // Same width as the browse card, not `Fill`. A fill-width child
-        // ignores the parent column's centering and spans the whole
-        // content area, which packed every row against the far left edge
-        // while the card it belongs to sat centred — the two read as
-        // unrelated. Matching widths makes them one column.
-        let mut list = column![].spacing(4.0).width(KPM_COLUMN_WIDTH);
+        let pick_btn = self.wizard_picker_row(
+            None,
+            self.t("btn_browse_kpm").to_string(),
+            Some(Message::Root(RootMsg::RootSelectKpm)),
+            None,
+        );
+        let mut list = column![].spacing(4.0).width(Length::Fill);
         for path in &self.root.kpm_paths {
             let name = std::path::Path::new(path)
                 .file_name()
@@ -211,11 +188,17 @@ impl App {
             );
         }
 
-        let col = column![pick_btn, list,]
-            .spacing(14.0)
-            .padding(28.0)
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
+        let col = column![
+            pick_btn,
+            text(self.t("root_kpm_desc").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+            list,
+        ]
+        .spacing(14.0)
+        .padding(28.0)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::Center);
         container(col)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -550,144 +533,43 @@ impl App {
     }
 
     pub(crate) fn root_file_step(&self, subtitle: &str) -> Element<'_, Message> {
-        let selected = self.root.file_path.is_some();
-        let status_text = if let Some(p) = &self.root.file_path {
-            p.clone()
-        } else {
-            self.t("flash_folder_placeholder").to_string()
-        };
-
-        let btn_label = if self.root.is_gki() {
-            self.t("btn_browse_kernel_image")
-        } else {
-            self.t("btn_browse_apk")
-        };
-
-        let btn = button(
-            container(
-                column![
-                    text(btn_label.to_string()).size(14.0).center(),
-                    text(subtitle.to_string())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .on_press(Message::Root(RootMsg::RootSelectFile))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-
-        // Root OTA file picker flips between AnyKernel3 zip + raw
-        // boot.img (GKI route) and provider APK (Magisk fork / APatch
-        // manual) — mirror the dialog filter so recents don't surface
-        // the wrong family.
         let accepted: &[&str] = if self.root.is_gki() {
             &["zip", "img"]
         } else {
             &["apk"]
         };
-        let chips = self.recent_file_chips(
-            accepted,
-            |p| Message::RecentFilePicked(PickerTarget::RootFile, p),
-            "picker_recents",
-        );
-        let col = column![
-            btn,
-            text(status_text)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(move |t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(if selected { p.success } else { p.outline }),
-                    }
-                })
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
-        ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        scrollable(
+            column![
+                self.wizard_picker_row(
+                    self.root.file_path.as_deref(),
+                    self.t("flash_folder_placeholder").to_string(),
+                    Some(Message::Root(RootMsg::RootSelectFile)),
+                    None
+                ),
+                text(subtitle.to_string())
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
+                self.recent_file_chips(
+                    accepted,
+                    |p| Message::RecentFilePicked(PickerTarget::RootFile, p),
+                    "picker_recents"
+                ),
+            ]
+            .spacing(6)
+            .padding(28)
+            .width(Length::Fill),
+        )
+        .height(Length::Fill)
+        .into()
     }
 
     pub(crate) fn root_folder_step(&self) -> Element<'_, Message> {
-        // Root pipeline now needs only the EDL loader (`.melf`) — the
-        // full firmware folder was dropped when dump/flash stopped
-        // depending on `rawprogram*.xml` and started resolving partition
-        // names against the device's on-storage GPT. File-pick only.
-        let selected = self.root.folder_path.is_some();
-        let status = if let Some(p) = &self.root.folder_path {
-            p.clone()
-        } else {
-            self.t("edl_loader_placeholder").to_string()
-        };
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_loader").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(self.loader_picker_desc())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .on_press(Message::Root(RootMsg::RootSelectFolder))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        let chips = self.recent_file_chips(
-            LOADER_PICKER_EXTS,
+        self.loader_picker_card(
+            &self.root.folder_path,
+            None,
+            Message::Root(RootMsg::RootSelectFolder),
             |p| Message::Root(RootMsg::RootLoaderChosen(Some(p))),
-            "picker_recents",
-        );
-        let col = column![
-            btn,
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(move |t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(if selected { p.success } else { p.outline }),
-                    }
-                })
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
-        ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        )
     }
 
     pub(crate) fn root_mode_step(&self) -> Element<'_, Message> {

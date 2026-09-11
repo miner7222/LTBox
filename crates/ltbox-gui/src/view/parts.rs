@@ -238,9 +238,8 @@ impl App {
         (title, app_bar_subtitle)
     }
 
-    /// Shared loader-picker card for the EDL parts / physical-storage
-    /// wizards: a Browse-loader button, the resolved-path / error status
-    /// line, and the recent-loader chips. Only the wizard's loader fields
+    /// Shared loader picker for EDL wizards: path/action row, description,
+    /// error status, and filtered recent paths. Only the wizard's loader fields
     /// and the two Message variants differ between callers, so they are
     /// threaded in as params; the title / placeholder / accepted
     /// extensions / colors are identical across all four wizards.
@@ -255,68 +254,34 @@ impl App {
         on_select: Message,
         on_chosen: impl Fn(String) -> Message,
     ) -> Element<'a, Message> {
-        let selected = loader_path.is_some();
-        let loader_error = error;
-        let status = match (loader_path, loader_error) {
-            (_, Some(e)) => format!("⚠ {e}"),
-            (Some(p), None) => p.clone(),
-            _ => self.t("edl_loader_placeholder").to_string(),
-        };
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_loader").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(self.loader_picker_desc())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .on_press(on_select)
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        let has_error = loader_error.is_some();
-        let status_style = move |t: &Theme| {
-            let p = pal_of(t);
-            iced::widget::text::Style {
-                color: Some(if has_error {
-                    p.error
-                } else if selected {
-                    p.success
-                } else {
-                    p.outline
-                }),
-            }
-        };
-        let chips = self.recent_file_chips(LOADER_PICKER_EXTS, on_chosen, "picker_recents");
-        let col = column![
-            btn,
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(status_style)
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
+        let mut content = column![
+            self.wizard_picker_row(
+                loader_path.as_deref(),
+                self.t("edl_loader_placeholder").to_string(),
+                Some(on_select),
+                None
+            ),
+            text(self.loader_picker_desc())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
         ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
+        .spacing(6)
+        .width(Length::Fill);
+        if let Some(error) = error {
+            content = content.push(text(error.clone()).size(12).style(|t: &Theme| {
+                iced::widget::text::Style {
+                    color: Some(pal_of(t).error),
+                }
+            }));
+        }
+        content = content.push(self.recent_file_chips(
+            self.loader_picker_exts(),
+            on_chosen,
+            "picker_recents",
+        ));
+        scrollable(content.padding(28))
             .width(Length::Fill)
             .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
             .into()
     }
 

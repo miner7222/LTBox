@@ -1286,3 +1286,322 @@ impl App {
         .into()
     }
 }
+impl App {
+    /// Width available to picker text after the navigation rail and step padding.
+    pub(crate) fn picker_text_width(&self, actions: usize) -> f32 {
+        let sidebar = if self.window_size_class() == WindowSizeClass::Expanded {
+            SIDEBAR_EXPANDED_WIDTH
+        } else {
+            SIDEBAR_RAIL_WIDTH
+        };
+        (self.window_size.0 - sidebar - 112.0 - actions as f32 * 90.0).max(60.0)
+    }
+
+    pub(crate) fn wizard_picker_row(
+        &self,
+        path: Option<&str>,
+        placeholder: String,
+        select: Option<Message>,
+        clear: Option<Message>,
+    ) -> Element<'static, Message> {
+        let mut controls = row![
+            picker_path_field(
+                path,
+                placeholder,
+                false,
+                self.picker_text_width(if clear.is_some() { 2 } else { 1 })
+            ),
+            picker_action_button(self.t("btn_select").to_string(), select, true),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
+        if let Some(clear) = clear {
+            controls = controls.push(picker_action_button(
+                self.t("btn_clear").to_string(),
+                Some(clear),
+                false,
+            ));
+        }
+        controls.into()
+    }
+}
+impl App {
+    pub(crate) fn picker_recent_list<F>(
+        &self,
+        items: &[String],
+        on_pick: F,
+        label_key: &str,
+        is_file_picker: bool,
+    ) -> Element<'_, Message>
+    where
+        F: Fn(String) -> Message,
+    {
+        if items.is_empty() {
+            return column![].into();
+        }
+        let mut rows = column![].spacing(0).width(Length::Fill);
+        for (index, path) in items.iter().take(settings_store::RECENT_MAX).enumerate() {
+            if index > 0 {
+                rows = rows.push(iced::widget::rule::horizontal(1).style(|t: &Theme| {
+                    iced::widget::rule::Style {
+                        color: pal_of(t).outline_variant,
+                        radius: 0.0.into(),
+                        fill_mode: iced::widget::rule::FillMode::Full,
+                        snap: true,
+                    }
+                }));
+            }
+            let exists = if is_file_picker {
+                std::path::Path::new(path).is_file()
+            } else {
+                std::path::Path::new(path).is_dir()
+            };
+            let foreground = move |t: &Theme| {
+                theme::with_alpha(
+                    pal_of(t).on_surface_variant,
+                    if exists { 1.0 } else { 0.45 },
+                )
+            };
+            let message = if exists {
+                on_pick(path.clone())
+            } else {
+                Message::NoticeRecentMissing(is_file_picker)
+            };
+            let mut content = row![
+                lucide_icon(icon::fab_open_folder(), 17.0, foreground),
+                text(elide_path_middle(
+                    path,
+                    self.picker_text_width(if exists { 0 } else { 2 })
+                ))
+                .font(theme::mono_font())
+                .size(theme::text_size::BODY_SMALL)
+                .style(move |t: &Theme| iced::widget::text::Style {
+                    color: Some(foreground(t))
+                })
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::None),
+            ]
+            .spacing(11)
+            .align_y(iced::Alignment::Center)
+            .width(Length::Fill);
+            if !exists {
+                content = content.push(
+                    text(
+                        self.t(if is_file_picker {
+                            "recent_missing_file"
+                        } else {
+                            "recent_missing_folder"
+                        })
+                        .to_string(),
+                    )
+                    .size(theme::text_size::LABEL_SMALL)
+                    .style(|t: &Theme| iced::widget::text::Style {
+                        color: Some(pal_of(t).error),
+                    }),
+                );
+            }
+            rows = rows.push(
+                button(content)
+                    .on_press(message)
+                    .height(44)
+                    .width(Length::Fill)
+                    .padding([0, 14])
+                    .style(move |t: &Theme, status| button::Style {
+                        background: (exists && theme::state_alpha(status) > 0.0).then_some(
+                            theme::with_alpha(pal_of(t).on_surface, theme::state_alpha(status))
+                                .into(),
+                        ),
+                        text_color: pal_of(t).on_surface,
+                        ..Default::default()
+                    }),
+            );
+        }
+        column![
+            row![
+                lucide_icon(icon::history(), 12.0, |t: &Theme| pal_of(t)
+                    .on_surface_variant),
+                text(self.t(label_key).to_string())
+                    .size(theme::text_size::LABEL_SMALL)
+                    .font(theme::emphasis::medium())
+                    .style(muted_style),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
+            container(rows)
+                .width(Length::Fill)
+                .clip(true)
+                .style(|t: &Theme| container::Style {
+                    border: iced::Border {
+                        color: pal_of(t).outline_variant,
+                        width: 1.0,
+                        radius: theme::shape::MD.into()
+                    },
+                    ..Default::default()
+                }),
+        ]
+        .spacing(8)
+        .padding(iced::Padding {
+            top: 16.0,
+            ..Default::default()
+        })
+        .width(Length::Fill)
+        .into()
+    }
+}
+const PICKER_PATH_HEIGHT: f32 = 36.0;
+
+/// Preserve the drive/root and filename while shortening the intervening path.
+pub(crate) fn elide_path_middle(path: &str, width: f32) -> String {
+    // Monospace Latin glyphs occupy roughly 0.6em; CJK glyphs occupy one em.
+    let budget = (width / (theme::text_size::BODY_SMALL * 0.62))
+        .floor()
+        .max(1.0) as usize;
+    let chars: Vec<char> = path.chars().collect();
+    let units = |c: char| if c as u32 >= 0x1100 { 2usize } else { 1usize };
+    if chars.iter().map(|c| units(*c)).sum::<usize>() <= budget {
+        return path.to_string();
+    }
+    let prefix_len = if chars.get(1) == Some(&':') {
+        3.min(chars.len())
+    } else if chars.first().is_some_and(|c| *c == '/' || *c == '\\') {
+        if chars.get(1) == chars.first() {
+            chars
+                .iter()
+                .enumerate()
+                .skip(2)
+                .filter(|(_, c)| **c == '/' || **c == '\\')
+                .nth(1)
+                .map(|(i, _)| i + 1)
+                .unwrap_or(2)
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    let prefix: String = chars[..prefix_len].iter().collect();
+    let mut remaining = budget.saturating_sub(prefix.chars().map(units).sum::<usize>() + 1);
+    let mut cut = chars.len();
+    while cut > prefix_len && remaining >= units(chars[cut - 1]) {
+        remaining -= units(chars[cut - 1]);
+        cut -= 1;
+    }
+    format!("{}…{}", prefix, chars[cut..].iter().collect::<String>())
+}
+
+pub(crate) fn picker_path_field(
+    value: Option<&str>,
+    placeholder: String,
+    filled_background: bool,
+    width: f32,
+) -> Element<'static, Message> {
+    let selected = value.is_some();
+    let shown = value
+        .map(|path| elide_path_middle(path, width))
+        .unwrap_or(placeholder);
+    let path = text(shown)
+        .size(if selected {
+            theme::text_size::BODY_SMALL
+        } else {
+            theme::text_size::BODY_MEDIUM
+        })
+        .font_maybe(selected.then_some(theme::mono_font()))
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Left)
+        .wrapping(iced::widget::text::Wrapping::None)
+        .style(move |t: &Theme| iced::widget::text::Style {
+            color: Some(if selected {
+                pal_of(t).on_surface
+            } else {
+                pal_of(t).on_surface_variant
+            }),
+        });
+    container(path)
+        .width(Length::Fill)
+        .height(Length::Fixed(PICKER_PATH_HEIGHT))
+        .padding([0, 12])
+        .align_y(iced::alignment::Vertical::Center)
+        .clip(true)
+        .style(move |t: &Theme| container::Style {
+            background: filled_background.then_some(pal_of(t).background.into()),
+            border: iced::Border {
+                color: pal_of(t).outline,
+                width: 1.0,
+                radius: theme::shape::SM.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+pub(crate) fn picker_action_button(
+    label: String,
+    message: Option<Message>,
+    outlined: bool,
+) -> Element<'static, Message> {
+    button(
+        container(
+            text(label)
+                .size(theme::text_size::BODY_SMALL)
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .height(Length::Fill)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press_maybe(message)
+    .height(Length::Fixed(PICKER_PATH_HEIGHT))
+    .padding([0, 12])
+    .style(move |t: &Theme, status| {
+        let p = pal_of(t);
+        let alpha = theme::state_alpha(status);
+        button::Style {
+            background: (alpha > 0.0).then_some(with_alpha(p.on_surface, alpha).into()),
+            text_color: if status == button::Status::Disabled {
+                with_alpha(p.on_surface, 0.38)
+            } else {
+                p.on_surface
+            },
+            border: iced::Border {
+                color: if outlined {
+                    p.outline
+                } else {
+                    iced::Color::TRANSPARENT
+                },
+                width: if outlined { 1.0 } else { 0.0 },
+                radius: theme::shape::SM.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .into()
+}
+
+#[cfg(test)]
+mod picker_path_tests {
+    use super::elide_path_middle;
+
+    #[test]
+    fn resizing_reveals_the_full_path_and_keeps_drive_and_tail_when_narrow() {
+        let path = r"D:\Firmware\SomeLongDeviceName\SomeLongBuildName\image";
+        let narrow = elide_path_middle(path, 180.0);
+        assert!(narrow.starts_with(r"D:\"));
+        assert!(narrow.contains('…'));
+        assert!(narrow.ends_with("image"));
+        assert_eq!(elide_path_middle(path, 2000.0), path);
+    }
+
+    #[test]
+    fn unix_unc_and_unicode_roots_survive_elision() {
+        assert!(
+            elide_path_middle("/home/user/firmware/verylongbuild/image", 100.0).starts_with("/…")
+        );
+        assert!(
+            elide_path_middle(r"\\server\share\firmware\longbuild\image", 230.0)
+                .starts_with(r"\\server\share\")
+        );
+        let result = elide_path_middle("D:/펌웨어/아주긴폴더이름/이미지.img", 100.0);
+        assert!(result.starts_with("D:/"));
+        assert!(result.ends_with(".img"));
+    }
+}

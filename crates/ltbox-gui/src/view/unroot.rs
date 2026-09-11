@@ -1,8 +1,8 @@
 //! Unroot wizard view + steps. Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{button, column, container, text};
-use iced::{Element, Length, Theme};
+use iced::widget::{column, scrollable, text};
+use iced::{Element, Length};
 use ltbox_core::tr_args;
 
 impl App {
@@ -162,68 +162,36 @@ impl App {
     }
 
     pub(crate) fn unroot_folder_step(&self) -> Element<'_, Message> {
-        let selected = self.unroot.folder_path.is_some();
-        let desc_owned = self
+        let description = self
             .unroot
             .unroot_type
-            .map(|t| self.unroot_folder_desc(t).to_string())
+            .map(|kind| self.unroot_folder_desc(kind).to_string())
             .unwrap_or_else(|| self.t("unroot_folder_placeholder").to_string());
-        let status = if let Some(p) = &self.unroot.folder_path {
-            p.clone()
-        } else {
-            self.t("flash_folder_placeholder").to_string()
-        };
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_folder").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(desc_owned).size(11.0).style(muted_style).center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
+        scrollable(
+            column![
+                self.wizard_picker_row(
+                    self.unroot.folder_path.as_deref(),
+                    self.t("flash_folder_placeholder").to_string(),
+                    Some(Message::Unroot(UnrootMsg::UnrootSelectFolder)),
+                    None
+                ),
+                text(description)
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
+                self.recent_chips(
+                    self.recent_paths
+                        .recent(PickerTarget::UnrootFolder.kind().storage_key()),
+                    |p| Message::RecentFolderPicked(PickerTarget::UnrootFolder, p),
+                    "picker_recents",
+                    false
+                ),
+            ]
+            .spacing(6)
+            .padding(28)
+            .width(Length::Fill),
         )
-        .on_press(Message::Unroot(UnrootMsg::UnrootSelectFolder))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        let chips = self.recent_chips(
-            self.recent_paths
-                .recent(PickerTarget::UnrootFolder.kind().storage_key()),
-            |p| Message::RecentFolderPicked(PickerTarget::UnrootFolder, p),
-            "picker_recents",
-            false,
-        );
-        let col = column![
-            btn,
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(move |t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(if selected { p.success } else { p.outline }),
-                    }
-                })
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
-        ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        .height(Length::Fill)
+        .into()
     }
 
     pub(crate) fn unroot_confirm_step(&self) -> Element<'_, Message> {

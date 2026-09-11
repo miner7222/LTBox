@@ -228,72 +228,12 @@ impl App {
     }
 
     pub(crate) fn sysupdate_rescue_folder_step(&self) -> Element<'_, Message> {
-        // Boot Recovery now consumes only the EDL loader file —
-        // dump+flash use GPT-by-name on a fixed LUN, no rawprogram*.xml
-        // is read. Step layout still matches the flash / root / unroot
-        // pickers (title + 280-wide card button + status path + recent
-        // chips), just with file-picker semantics.
-        let selected = self.sysupdate.rescue_folder.is_some();
-        let status = if let Some(p) = &self.sysupdate.rescue_folder {
-            p.clone()
-        } else {
-            self.t("edl_loader_placeholder").to_string()
-        };
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_loader").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(self.loader_picker_desc())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .on_press(Message::Sys(SysMsg::SysRescueSelectFolder))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        // Loader recents share the File bucket with other loader
-        // pickers (root, advanced) — filter to the same ext set the
-        // dialog itself accepts.
-        let chips = self.recent_file_chips(
-            LOADER_PICKER_EXTS,
+        self.loader_picker_card(
+            &self.sysupdate.rescue_folder,
+            None,
+            Message::Sys(SysMsg::SysRescueSelectFolder),
             |p| Message::Sys(SysMsg::SysRescueFolderChosen(Some(p))),
-            "picker_recents",
-        );
-        let col = column![
-            btn,
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(move |t: &Theme| {
-                    let p = pal_of(t);
-                    iced::widget::text::Style {
-                        color: Some(if selected { p.success } else { p.outline }),
-                    }
-                })
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
-        ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        )
     }
 
     pub(crate) fn sysupdate_exec_step(&self) -> Element<'_, Message> {

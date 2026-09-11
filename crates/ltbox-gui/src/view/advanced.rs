@@ -241,112 +241,64 @@ impl App {
         Some((title, Some(subtitle)))
     }
 
-    /// Step 0 — Browse tile. Matches Flash/Root folder steps.
+    /// Step 0 — shared file/folder source picker.
     pub(crate) fn adv_wiz_source_step(&self) -> Element<'_, Message> {
-        let action = match self.adv_wizard.action {
-            Some(a) => a,
-            None => return container(text("")).into(),
+        let Some(action) = self.adv_wizard.action else {
+            return container(text("")).into();
         };
-        let selected = if self.adv_wizard.is_image_info() {
-            !self.adv_wizard.file_paths.is_empty()
-        } else {
-            self.adv_wizard.file_path.is_some()
-        };
-        let status = if self.adv_wizard.is_image_info() && selected {
-            tr_args!(
+        let status = if self.adv_wizard.is_image_info() && !self.adv_wizard.file_paths.is_empty() {
+            Some(tr_args!(
                 "adv_image_info_selected_count",
                 count = self.adv_wizard.file_paths.len().to_string()
-            )
+            ))
         } else {
-            self.adv_wizard
-                .file_path
-                .clone()
-                .unwrap_or_else(|| self.t("adv_source_placeholder").to_string())
+            self.adv_wizard.file_path.clone()
         };
-        let browse_key = if self.adv_wizard.is_image_info() {
-            "btn_browse_files"
-        } else if self.adv_wizard.is_folder_op() {
-            "btn_browse_folder"
+        let description = if matches!(action, AdvAction::DetectArb | AdvAction::PatchDevinfo) {
+            self.loader_picker_desc()
         } else {
-            "btn_browse_file"
+            self.t(action.source_desc_key()).to_string()
         };
-        let btn = button(
-            container(
-                column![
-                    text(self.t(browse_key).to_string()).size(14.0).center(),
-                    text(self.t(action.source_desc_key()).to_string())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fixed(280.0))
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .width(Length::Shrink)
-        .on_press(Message::Adv(AdvMsg::AdvWizBrowse))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        // Shrink-wrap the 280 px card so the hit area stays tight.
-        let btn_row = row![
-            Space::new().width(Length::Fill),
-            btn,
-            Space::new().width(Length::Fill),
-        ];
-        let status_style = move |t: &Theme| {
-            let p = pal_of(t);
-            iced::widget::text::Style {
-                color: Some(if selected { p.success } else { p.outline }),
-            }
-        };
-        let chips: Element<'_, Message> = if self.adv_wizard.is_image_info() {
+        let recents = if self.adv_wizard.is_image_info() {
             self.recent_file_chips(
                 &["img"],
                 |p| Message::Adv(AdvMsg::AdvWizBrowseManyDone(Some(vec![p]))),
                 "picker_recents",
             )
+        } else if self.adv_wizard.is_folder_op() {
+            self.recent_chips(
+                self.recent_paths
+                    .recent(self.adv_wizard.picker_kind().storage_key()),
+                |p| Message::Adv(AdvMsg::AdvWizBrowseDone(Some(p))),
+                "picker_recents",
+                false,
+            )
         } else {
-            let kind = self.adv_wizard.picker_kind();
-            if kind.is_folder() {
-                self.recent_chips(
-                    self.recent_paths.recent(kind.storage_key()),
-                    |p| Message::Adv(AdvMsg::AdvWizBrowseDone(Some(p))),
-                    "picker_recents",
-                    false,
-                )
-            } else {
-                let (_, exts) = self.adv_wizard.accepted_exts();
-                self.recent_file_chips(
-                    exts,
-                    |p| Message::Adv(AdvMsg::AdvWizBrowseDone(Some(p))),
-                    "picker_recents",
-                )
-            }
+            self.recent_file_chips(
+                self.advanced_picker_exts().1,
+                |p| Message::Adv(AdvMsg::AdvWizBrowseDone(Some(p))),
+                "picker_recents",
+            )
         };
-        let col = column![
-            btn_row,
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(status_style)
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
-        ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        scrollable(
+            column![
+                self.wizard_picker_row(
+                    status.as_deref(),
+                    self.t("adv_source_placeholder").to_string(),
+                    Some(Message::Adv(AdvMsg::AdvWizBrowse)),
+                    None
+                ),
+                text(description)
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
+                recents,
+            ]
+            .spacing(6)
+            .padding(28)
+            .width(Length::Fill),
+        )
+        .height(Length::Fill)
+        .into()
     }
 
     /// Step 1 (PatchDevinfo only) — country picker tile; opens the
@@ -419,80 +371,37 @@ impl App {
     /// Step 1 for Change Country Code: pick the EDL loader (the device is
     /// transitioned to EDL with it). Same loader-browse the DetectArb step uses.
     pub(crate) fn adv_wiz_loader_step(&self) -> Element<'_, Message> {
-        let selected = self.adv_wizard.file_path.is_some();
-        let status = self
-            .adv_wizard
-            .file_path
-            .clone()
-            .unwrap_or_else(|| self.t("edl_loader_placeholder").to_string());
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_loader").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(self.loader_picker_desc())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fixed(280.0))
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
-        )
-        .width(Length::Shrink)
-        .on_press(Message::Adv(AdvMsg::AdvWizBrowse))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        let status_style = move |t: &Theme| {
-            let p = pal_of(t);
-            iced::widget::text::Style {
-                color: Some(if selected { p.success } else { p.outline }),
-            }
-        };
-        let mut col = column![
-            row![
-                Space::new().width(Length::Fill),
-                btn,
-                Space::new().width(Length::Fill),
-            ]
-            .align_y(iced::Alignment::Center),
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(status_style)
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        let error = (self.default_loader_path.is_some() && !self.default_loader_fits_model())
+            .then(|| self.t("loader_default_ext_unsupported").to_string());
+        let mut content = column![
+            self.wizard_picker_row(
+                self.adv_wizard.file_path.as_deref(),
+                self.t("edl_loader_placeholder").to_string(),
+                Some(Message::Adv(AdvMsg::AdvWizBrowse)),
+                None
+            ),
+            text(self.loader_picker_desc())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
         ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        // The Settings default EDL loader was bypassed because its extension
-        // doesn't fit the connected model — say so, so the picker's appearance
-        // isn't mistaken for a bug.
-        if self.default_loader_path.is_some() && !self.default_loader_fits_model() {
-            col = col.push(
-                text(self.t("loader_default_ext_unsupported").to_string())
-                    .size(12.0)
-                    .width(Length::Fill)
-                    .style(|t: &Theme| iced::widget::text::Style {
-                        color: Some(pal_of(t).error),
-                    })
-                    .center()
-                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            );
+        .spacing(6)
+        .width(Length::Fill);
+        if let Some(error) = error {
+            content =
+                content.push(
+                    text(error)
+                        .size(12)
+                        .style(|t: &Theme| iced::widget::text::Style {
+                            color: Some(pal_of(t).error),
+                        }),
+                );
         }
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        content = content.push(self.recent_file_chips(
+            self.loader_picker_exts(),
+            |p| Message::Adv(AdvMsg::AdvWizBrowseDone(Some(p))),
+            "picker_recents",
+        ));
+        scrollable(content.padding(28)).height(Length::Fill).into()
     }
 
     /// Step 1 for `RegionConvert`: card that opens the target picker
@@ -604,84 +513,14 @@ impl App {
     /// required); other models just see a Start prompt because the
     /// detection runs entirely over fastboot vars.
     pub(crate) fn adv_wiz_detect_arb_step(&self) -> Element<'_, Message> {
-        let needs_loader = self.is_tb320fc();
-        let mut col = column![]
-            .spacing(14.0)
-            .padding(28.0)
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-        if needs_loader {
-            let selected = self.adv_wizard.file_path.is_some();
-            let status = self
-                .adv_wizard
-                .file_path
-                .clone()
-                .unwrap_or_else(|| self.t("edl_loader_placeholder").to_string());
-            let btn = button(
-                container(
-                    column![
-                        text(self.t("btn_browse_loader").to_string())
-                            .size(14.0)
-                            .center(),
-                        text(self.loader_picker_desc())
-                            .size(11.0)
-                            .style(muted_style)
-                            .center(),
-                    ]
-                    .spacing(6.0)
-                    .width(Length::Fixed(280.0))
-                    .align_x(iced::Alignment::Center),
-                )
-                .padding([20.0, 24.0])
-                .width(Length::Fixed(280.0))
-                .style(move |t: &Theme| sel_card_style(t, selected)),
-            )
-            .width(Length::Shrink)
-            .on_press(Message::Adv(AdvMsg::AdvWizBrowse))
-            .padding(0)
-            .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-            col = col.push(
-                row![
-                    Space::new().width(Length::Fill),
-                    btn,
-                    Space::new().width(Length::Fill),
-                ]
-                .align_y(iced::Alignment::Center),
-            );
-            let status_style = move |t: &Theme| {
-                let p = pal_of(t);
-                iced::widget::text::Style {
-                    color: Some(if selected { p.success } else { p.outline }),
-                }
-            };
-            col = col.push(
-                text(status)
-                    .size(12.0)
-                    .width(Length::Fill)
-                    .style(status_style)
-                    .center()
-                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            );
-            // Default loader bypassed for an extension unsupported on this model.
-            if self.default_loader_path.is_some() && !self.default_loader_fits_model() {
-                col = col.push(
-                    text(self.t("loader_default_ext_unsupported").to_string())
-                        .size(12.0)
-                        .width(Length::Fill)
-                        .style(|t: &Theme| iced::widget::text::Style {
-                            color: Some(pal_of(t).error),
-                        })
-                        .center()
-                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-                );
-            }
+        if self.is_tb320fc() {
+            self.adv_wiz_loader_step()
+        } else {
+            container(column![])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         }
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
     }
 
     /// Confirm step — Next becomes Start.
@@ -873,69 +712,33 @@ impl App {
     /// Source step — top-aligned firmware-folder picker, matching the other
     /// wizard source pickers.
     fn simple_flash_intro_step(&self) -> Element<'_, Message> {
-        let selected = self.simple_flash.firmware_folder.is_some();
-        let status = self
-            .simple_flash
-            .firmware_folder
-            .clone()
-            .unwrap_or_else(|| self.t("flash_folder_placeholder").to_string());
-        let btn = button(
-            container(
-                column![
-                    text(self.t("btn_browse_folder").to_string())
-                        .size(14.0)
-                        .center(),
-                    text(self.t("flash_folder_desc").to_string())
-                        .size(11.0)
-                        .style(muted_style)
-                        .center(),
-                ]
-                .spacing(6.0)
-                .width(Length::Fill)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding([20.0, 24.0])
-            .width(Length::Fixed(280.0))
-            .style(move |t: &Theme| sel_card_style(t, selected)),
+        scrollable(
+            column![
+                self.wizard_picker_row(
+                    self.simple_flash.firmware_folder.as_deref(),
+                    self.t("flash_folder_placeholder").to_string(),
+                    Some(Message::SimpleFlash(
+                        SimpleFlashMsg::SimpleFlashSelectFolder
+                    )),
+                    None
+                ),
+                text(self.t("flash_folder_desc").to_string())
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
+                self.recent_chips(
+                    self.recent_paths
+                        .recent(pickers::PickerKind::QfilFirmwareFolder.storage_key()),
+                    |p| Message::SimpleFlash(SimpleFlashMsg::SimpleFlashFolderChosen(Some(p))),
+                    "picker_recents",
+                    false
+                ),
+            ]
+            .spacing(6)
+            .padding(28)
+            .width(Length::Fill),
         )
-        .on_press(Message::SimpleFlash(
-            SimpleFlashMsg::SimpleFlashSelectFolder,
-        ))
-        .padding(0)
-        .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
-        let status_style = move |t: &Theme| {
-            let p = pal_of(t);
-            iced::widget::text::Style {
-                color: Some(if selected { p.success } else { p.outline }),
-            }
-        };
-        let chips = self.recent_chips(
-            self.recent_paths
-                .recent(pickers::PickerKind::QfilFirmwareFolder.storage_key()),
-            |p| Message::SimpleFlash(SimpleFlashMsg::SimpleFlashFolderChosen(Some(p))),
-            "picker_recents",
-            false,
-        );
-        let col = column![
-            btn,
-            text(status)
-                .size(12.0)
-                .width(Length::Fill)
-                .style(status_style)
-                .center()
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            chips,
-        ]
-        .spacing(14.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
+        .height(Length::Fill)
+        .into()
     }
 
     /// Confirm step — mirrors the firmware-flash confirm, but with fixed
