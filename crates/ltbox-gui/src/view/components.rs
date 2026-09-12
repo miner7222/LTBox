@@ -1725,6 +1725,38 @@ pub(crate) fn picker_action_button(
     })
     .into()
 }
+impl App {
+    /// Name the connected model's required loader; without a device, show
+    /// the standard MELF hint while the picker still accepts XML too.
+    pub(crate) fn loader_picker_subtitle(&self) -> String {
+        let key = if self.device.connection == ConnectionStatus::None {
+            "loader_picker_subtitle_unknown"
+        } else if self.requires_sahara_manifest() {
+            "loader_picker_subtitle_manifest"
+        } else if self.device.model.is_empty() {
+            "loader_picker_subtitle_unknown"
+        } else {
+            "loader_picker_subtitle_standard"
+        };
+        self.t(key).to_string()
+    }
+
+    /// Keep the same supporting pane beside picker and selection steps.
+    pub(crate) fn wizard_picker_step<'a>(
+        &self,
+        title: String,
+        body: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let size = self.window_size_class();
+        let width = self.window_size.0
+            - if size == WindowSizeClass::Expanded {
+                SIDEBAR_EXPANDED_WIDTH
+            } else {
+                SIDEBAR_RAIL_WIDTH
+            };
+        wizard_selection_step(size, width, title, body, Some((String::new(), vec![])))
+    }
+}
 
 #[cfg(test)]
 mod picker_path_tests {
@@ -1778,37 +1810,5 @@ mod picker_path_tests {
                 .sum();
             assert!(units <= budget, "{width}: {shown}");
         }
-    }
-}
-impl App {
-    /// Name the connected model's required loader; without a device, show
-    /// the standard MELF hint while the picker still accepts XML too.
-    pub(crate) fn loader_picker_subtitle(&self) -> String {
-        let key = if self.device.connection == ConnectionStatus::None {
-            "loader_picker_subtitle_unknown"
-        } else if self.requires_sahara_manifest() {
-            "loader_picker_subtitle_manifest"
-        } else if self.device.model.is_empty() {
-            "loader_picker_subtitle_unknown"
-        } else {
-            "loader_picker_subtitle_standard"
-        };
-        self.t(key).to_string()
-    }
-
-    /// Keep the same supporting pane beside picker and selection steps.
-    pub(crate) fn wizard_picker_step<'a>(
-        &self,
-        title: String,
-        body: Element<'a, Message>,
-    ) -> Element<'a, Message> {
-        let size = self.window_size_class();
-        let width = self.window_size.0
-            - if size == WindowSizeClass::Expanded {
-                SIDEBAR_EXPANDED_WIDTH
-            } else {
-                SIDEBAR_RAIL_WIDTH
-            };
-        wizard_selection_step(size, width, title, body, Some((String::new(), vec![])))
     }
 }

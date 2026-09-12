@@ -1204,12 +1204,10 @@ mod tests {
 
     #[test]
     fn material_progress_gap_accounts_for_round_caps() {
-        for size in [MaterialProgressSize::Standard] {
-            let metrics = material_progress_metrics(size);
-            let radius = (metrics.diameter - metrics.stroke_width) / 2.0;
-            let centerline_gap = material_progress_gap_angle(metrics, radius) * radius;
-            assert_eq!(centerline_gap, metrics.track_gap + metrics.stroke_width);
-        }
+        let metrics = material_progress_metrics(MaterialProgressSize::Standard);
+        let radius = (metrics.diameter - metrics.stroke_width) / 2.0;
+        let centerline_gap = material_progress_gap_angle(metrics, radius) * radius;
+        assert_eq!(centerline_gap, metrics.track_gap + metrics.stroke_width);
     }
 
     #[test]

@@ -673,57 +673,57 @@ impl App {
                     return self.update(Message::Adv(AdvMsg::AdvDetectArbExecStart));
                 }
                 // PatchArb source step inspects rollback indices.
-                if matches!(self.adv_wizard.action, Some(AdvAction::PatchArb)) {
-                    if self.adv_wizard.step == 0 {
-                        let Some(folder) = self.adv_wizard.file_path.clone() else {
-                            return Task::none();
-                        };
-                        let dir = std::path::PathBuf::from(&folder);
-                        let boot = dir.join("boot.img");
-                        let vbmeta = dir.join("vbmeta_system.img");
-                        if !boot.is_file() {
-                            self.error_msg = Some(tr_args!(
-                                "err_patch_arb_missing_image",
-                                image = "boot.img",
-                                path = dir.display().to_string()
-                            ));
-                            return Task::none();
-                        }
-                        if !vbmeta.is_file() {
-                            self.error_msg = Some(tr_args!(
-                                "err_patch_arb_missing_image",
-                                image = "vbmeta_system.img",
-                                path = dir.display().to_string()
-                            ));
-                            return Task::none();
-                        }
-                        let boot_info = match ltbox_patch::avb::extract_image_avb_info(&boot) {
-                            Ok(i) => i,
-                            Err(e) => {
-                                self.error_msg = Some(tr_args!(
-                                    "err_patch_arb_inspect_failed",
-                                    image = "boot.img",
-                                    error = e.to_string()
-                                ));
-                                return Task::none();
-                            }
-                        };
-                        let vbmeta_info = match ltbox_patch::avb::extract_image_avb_info(&vbmeta) {
-                            Ok(i) => i,
-                            Err(e) => {
-                                self.error_msg = Some(tr_args!(
-                                    "err_patch_arb_inspect_failed",
-                                    image = "vbmeta_system.img",
-                                    error = e.to_string()
-                                ));
-                                return Task::none();
-                            }
-                        };
-                        self.adv_wizard.arb_inspect =
-                            Some((boot_info.rollback_index, vbmeta_info.rollback_index));
-                        self.error_msg = None;
-                        return self.open_manual_rollback_editor();
+                if matches!(self.adv_wizard.action, Some(AdvAction::PatchArb))
+                    && self.adv_wizard.step == 0
+                {
+                    let Some(folder) = self.adv_wizard.file_path.clone() else {
+                        return Task::none();
+                    };
+                    let dir = std::path::PathBuf::from(&folder);
+                    let boot = dir.join("boot.img");
+                    let vbmeta = dir.join("vbmeta_system.img");
+                    if !boot.is_file() {
+                        self.error_msg = Some(tr_args!(
+                            "err_patch_arb_missing_image",
+                            image = "boot.img",
+                            path = dir.display().to_string()
+                        ));
+                        return Task::none();
                     }
+                    if !vbmeta.is_file() {
+                        self.error_msg = Some(tr_args!(
+                            "err_patch_arb_missing_image",
+                            image = "vbmeta_system.img",
+                            path = dir.display().to_string()
+                        ));
+                        return Task::none();
+                    }
+                    let boot_info = match ltbox_patch::avb::extract_image_avb_info(&boot) {
+                        Ok(i) => i,
+                        Err(e) => {
+                            self.error_msg = Some(tr_args!(
+                                "err_patch_arb_inspect_failed",
+                                image = "boot.img",
+                                error = e.to_string()
+                            ));
+                            return Task::none();
+                        }
+                    };
+                    let vbmeta_info = match ltbox_patch::avb::extract_image_avb_info(&vbmeta) {
+                        Ok(i) => i,
+                        Err(e) => {
+                            self.error_msg = Some(tr_args!(
+                                "err_patch_arb_inspect_failed",
+                                image = "vbmeta_system.img",
+                                error = e.to_string()
+                            ));
+                            return Task::none();
+                        }
+                    };
+                    self.adv_wizard.arb_inspect =
+                        Some((boot_info.rollback_index, vbmeta_info.rollback_index));
+                    self.error_msg = None;
+                    return self.open_manual_rollback_editor();
                 }
                 // Change Country: leaving the Country step → apply the Settings
                 // default EDL loader the same way the dedicated EDL wizards do

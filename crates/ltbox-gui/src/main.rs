@@ -4300,8 +4300,10 @@ mod tests {
 
     #[test]
     fn clear_log_empties_history_and_rebuilds_the_editor() {
-        let mut app = App::default();
-        app.log_lines = vec!["first".into(), "second".into()];
+        let mut app = App {
+            log_lines: vec!["first".into(), "second".into()],
+            ..Default::default()
+        };
         app.rebuild_log_editor();
 
         drop(app.update(Message::ClearLog));
