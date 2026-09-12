@@ -164,7 +164,11 @@ impl App {
         let body = if is_exec {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if self.flash_parts.step == 0 {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
 
         let nav = if self.flash_parts.step < 3 {
@@ -224,7 +228,10 @@ impl App {
 
     fn flash_parts_step_copy(&self) -> (String, Option<String>) {
         let (title, app_bar_subtitle) = match self.flash_parts.step {
-            0 => (self.t("edl_loader_title").to_string(), None),
+            0 => (
+                self.t("edl_loader_title").to_string(),
+                Some(self.loader_picker_subtitle()),
+            ),
             1 => (
                 self.t("flash_parts_select_title").to_string(),
                 Some(self.t("flash_parts_select_subtitle").to_string()),
@@ -254,17 +261,12 @@ impl App {
         on_select: Message,
         on_chosen: impl Fn(String) -> Message,
     ) -> Element<'a, Message> {
-        let mut content = column![
-            self.wizard_picker_row(
-                loader_path.as_deref(),
-                self.t("edl_loader_placeholder").to_string(),
-                Some(on_select),
-                None
-            ),
-            text(self.loader_picker_desc())
-                .size(theme::text_size::BODY_SMALL)
-                .style(muted_style),
-        ]
+        let mut content = column![self.wizard_picker_row(
+            loader_path.as_deref(),
+            PickerPathKind::File,
+            Some(on_select),
+            None
+        ),]
         .spacing(6)
         .width(Length::Fill);
         if let Some(error) = error {
@@ -689,7 +691,11 @@ impl App {
         let body = if is_exec {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if self.dump_parts.step == 0 {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
 
         let nav = if self.dump_parts.step < 2 {
@@ -755,7 +761,10 @@ impl App {
                 return (title, self.exec_app_bar_subtitle());
             }
         };
-        (title, None)
+        (
+            title,
+            (self.dump_parts.step == 0).then(|| self.loader_picker_subtitle()),
+        )
     }
 
     pub(crate) fn dump_parts_loader_step(&self) -> Element<'_, Message> {
@@ -887,7 +896,11 @@ impl App {
         let body = if is_exec {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if self.dump_phys.step == 0 {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
 
         let nav = if self.dump_phys.step < 2 {
@@ -942,7 +955,10 @@ impl App {
                 return (title, self.exec_app_bar_subtitle());
             }
         };
-        (title, None)
+        (
+            title,
+            (self.dump_phys.step == 0).then(|| self.loader_picker_subtitle()),
+        )
     }
 
     pub(crate) fn dump_phys_loader_step(&self) -> Element<'_, Message> {
@@ -1008,7 +1024,11 @@ impl App {
         let body = if is_exec {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if self.flash_phys.step == 0 {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
 
         let nav = if self.flash_phys.step < 3 {
@@ -1066,7 +1086,10 @@ impl App {
                 return (title, self.exec_app_bar_subtitle());
             }
         };
-        (title, None)
+        (
+            title,
+            (self.flash_phys.step == 0).then(|| self.loader_picker_subtitle()),
+        )
     }
 
     pub(crate) fn flash_phys_loader_step(&self) -> Element<'_, Message> {

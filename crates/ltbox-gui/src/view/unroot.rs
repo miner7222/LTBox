@@ -1,8 +1,8 @@
 //! Unroot wizard view + steps. Extracted from `main.rs`.
 
 use crate::*;
-use iced::widget::{column, scrollable, text};
-use iced::{Element, Length};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 
 impl App {
@@ -28,7 +28,11 @@ impl App {
         let body = if is_exec || self.unroot.step == 0 {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if matches!(self.unroot.step, 1 | 2) {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
         let nav = if self.unroot.step < 4 {
             let is_start = self.unroot.step == 3;
@@ -78,7 +82,17 @@ impl App {
                 return (title, self.exec_app_bar_subtitle());
             }
         };
-        (title, None)
+        (
+            title,
+            match self.unroot.step {
+                1 => Some(self.loader_picker_subtitle()),
+                2 => self
+                    .unroot
+                    .unroot_type
+                    .map(|kind| self.unroot_folder_desc(kind).to_string()),
+                _ => None,
+            },
+        )
     }
 
     pub(crate) fn unroot_type_step(&self) -> Element<'_, Message> {
@@ -145,10 +159,7 @@ impl App {
             content_width,
             self.t("unroot_method_title").to_string(),
             cards.into(),
-            Some((
-                self.t("unroot_method_title").to_string(),
-                vec![self.t("unroot_method_subtitle").to_string()],
-            )),
+            Some((self.t("unroot_method_title").to_string(), vec![])),
         )
     }
 
@@ -162,36 +173,162 @@ impl App {
     }
 
     pub(crate) fn unroot_folder_step(&self) -> Element<'_, Message> {
-        let description = self
-            .unroot
-            .unroot_type
-            .map(|kind| self.unroot_folder_desc(kind).to_string())
-            .unwrap_or_else(|| self.t("unroot_folder_placeholder").to_string());
+        let mut backups = column![
+            text(self.t("unroot_backups_title").to_string())
+                .size(theme::text_size::TITLE_MEDIUM)
+                .font(theme::emphasis::medium()),
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+        if let Some(error) = &self.unroot.backup_scan_error {
+            backups = backups.push(dialog_field_error(format!(
+                "{}: {error}",
+                self.t("unroot_backups_error")
+            )));
+        } else if self.unroot.backup_folders.is_empty() {
+            backups = backups.push(
+                container(
+                    text(self.t("unroot_backups_empty").to_string())
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(muted_style),
+                )
+                .padding([12, 4]),
+            );
+        } else {
+            for entry in &self.unroot.backup_folders {
+                let path = entry.path.to_string_lossy().into_owned();
+                let name = entry
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone());
+                let selected = self.unroot.folder_path.as_deref() == Some(path.as_str());
+                let folder = button(
+                    row![
+                        selection_radio(selected, true, false),
+                        text(name).size(WIZARD_LIST_LABEL_SIZE).width(Length::Fill),
+                    ]
+                    .spacing(12)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding([12, 16])
+                .width(Length::Fill)
+                .on_press(Message::Unroot(UnrootMsg::UnrootBackupPicked(path.clone())))
+                .style(move |t: &Theme, status| sel_card_btn_style_for(t, status, selected, false));
+                let mut item = row![folder]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center)
+                    .width(Length::Fill);
+                if entry.has_manifest {
+                    let tooltip_copy = self.t("unroot_backup_details_tooltip").to_string();
+                    let detail = iced::widget::tooltip(
+                        button(
+                            container(text("?").size(16.0).font(theme::emphasis::medium()))
+                                .width(Length::Fixed(48.0))
+                                .height(Length::Fixed(48.0))
+                                .align_x(iced::Alignment::Center)
+                                .align_y(iced::Alignment::Center),
+                        )
+                        .padding(0)
+                        .width(Length::Fixed(48.0))
+                        .height(Length::Fixed(48.0))
+                        .on_press(Message::Unroot(UnrootMsg::UnrootBackupManifestOpen(path)))
+                        .style(|theme: &Theme, status| {
+                            let palette = pal_of(theme);
+                            button::Style {
+                                background: theme::state_layer_bg(status, palette.primary)
+                                    .map(Into::into),
+                                text_color: palette.primary,
+                                border: iced::Border {
+                                    color: palette.outline,
+                                    width: 1.0,
+                                    radius: theme::shape::FULL.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                        container(text(tooltip_copy).size(11.0))
+                            .padding([6, 10])
+                            .max_width(280.0)
+                            .style(|theme: &Theme| theme::tooltip_style(theme, theme::shape::SM)),
+                        iced::widget::tooltip::Position::Top,
+                    )
+                    .gap(6.0);
+                    item = item.push(detail);
+                }
+                backups = backups.push(item);
+            }
+        }
+
         scrollable(
             column![
                 self.wizard_picker_row(
                     self.unroot.folder_path.as_deref(),
-                    self.t("flash_folder_placeholder").to_string(),
+                    PickerPathKind::Folder,
                     Some(Message::Unroot(UnrootMsg::UnrootSelectFolder)),
                     None
                 ),
-                text(description)
-                    .size(theme::text_size::BODY_SMALL)
-                    .style(muted_style),
-                self.recent_chips(
-                    self.recent_paths
-                        .recent(PickerTarget::UnrootFolder.kind().storage_key()),
-                    |p| Message::RecentFolderPicked(PickerTarget::UnrootFolder, p),
-                    "picker_recents",
-                    false
-                ),
+                backups,
             ]
-            .spacing(6)
+            .spacing(20)
             .padding(28)
             .width(Length::Fill),
         )
         .height(Length::Fill)
         .into()
+    }
+
+    pub(crate) fn unroot_backup_manifest_popup(&self) -> Element<'_, Message> {
+        let Some(dialog) = self.unroot.backup_manifest_dialog.as_ref() else {
+            return container(text("")).into();
+        };
+        let folder = dialog.folder.display().to_string();
+        let header = column![
+            text(self.t("unroot_backup_manifest_title").to_string())
+                .size(theme::text_size::TITLE_LARGE),
+            text(folder)
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+        ]
+        .spacing(12);
+        let body: Element<'_, Message> = match &dialog.result {
+            Ok(info) => {
+                let missing = "—".to_string();
+                info_key_value_table(vec![
+                    (
+                        self.t("unroot_backup_manifest_model").to_string(),
+                        info.model.clone().unwrap_or_else(|| missing.clone()),
+                    ),
+                    (
+                        self.t("unroot_backup_manifest_fingerprint").to_string(),
+                        info.fingerprint.clone().unwrap_or_else(|| missing.clone()),
+                    ),
+                    (
+                        self.t("unroot_backup_manifest_recorded_at").to_string(),
+                        info.recorded_at.clone().unwrap_or_else(|| missing.clone()),
+                    ),
+                    (
+                        self.t("unroot_backup_manifest_slot").to_string(),
+                        info.slot.clone().unwrap_or(missing),
+                    ),
+                ])
+            }
+            Err(error) => dialog_field_error(format!(
+                "{}: {error}",
+                self.t("unroot_backup_manifest_error")
+            )),
+        };
+        let close = m3_outlined_button(self.t("btn_close").to_string())
+            .on_press(Message::Unroot(UnrootMsg::UnrootBackupManifestClose));
+        m3_dialog(dialog_sections(
+            header.into(),
+            body,
+            row![Space::new().width(Length::Fill), close]
+                .align_y(iced::Alignment::Center)
+                .into(),
+            theme::DIALOG_WIDTH_MD,
+            dialog.result.is_ok(),
+        ))
     }
 
     pub(crate) fn unroot_confirm_step(&self) -> Element<'_, Message> {
@@ -213,10 +350,13 @@ impl App {
             .unwrap_or_else(|| dash.clone());
         self.confirm_step_frame(
             vec![],
-            vec![info_kv_center(self.t("unroot_step_method"), &method)],
+            vec![confirm_definition_row(
+                self.t("unroot_step_method"),
+                &method,
+            )],
             vec![
-                info_kv_center(self.t("edl_loader_label"), &loader),
-                info_kv_center(self.t("unroot_folder_title"), &folder),
+                confirm_definition_row(self.t("edl_loader_label"), &loader),
+                confirm_definition_row(self.t("unroot_folder_title"), &folder),
             ],
         )
     }

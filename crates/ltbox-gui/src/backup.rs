@@ -4,10 +4,71 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub(crate) const MANIFEST_NAME: &str = "manifest.json";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BackupFolderEntry {
+    pub(crate) path: PathBuf,
+    pub(crate) has_manifest: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct BackupManifestInfo {
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    #[serde(default)]
+    pub(crate) fingerprint: Option<String>,
+    #[serde(default)]
+    pub(crate) recorded_at: Option<String>,
+    #[serde(default)]
+    pub(crate) slot: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BackupManifestDialog {
+    pub(crate) folder: PathBuf,
+    pub(crate) result: Result<BackupManifestInfo, String>,
+}
+
+pub(crate) fn root_backup_folders() -> Result<Vec<BackupFolderEntry>, String> {
+    root_backup_folders_in(&ltbox_core::app_paths::backup_root())
+}
+
+fn root_backup_folders_in(root: &Path) -> Result<Vec<BackupFolderEntry>, String> {
+    let root = root.join("root");
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: {error}", root.display())),
+    };
+    let mut folders = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("{}: {error}", root.display()))?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if !metadata.file_type().is_dir() {
+            continue;
+        }
+        let manifest = path.join(MANIFEST_NAME);
+        let has_manifest = std::fs::symlink_metadata(&manifest)
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false);
+        folders.push(BackupFolderEntry { path, has_manifest });
+    }
+    folders.sort_by(|left, right| right.path.file_name().cmp(&left.path.file_name()));
+    Ok(folders)
+}
+
+pub(crate) fn read_backup_manifest(folder: &Path) -> Result<BackupManifestInfo, String> {
+    let path = folder.join(MANIFEST_NAME);
+    let file =
+        std::fs::File::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    serde_json::from_reader(file).map_err(|error| format!("{}: {error}", path.display()))
+}
 
 fn path_component(value: &str, fallback: &str) -> String {
     let value = value.trim();
@@ -282,5 +343,59 @@ mod tests {
         );
         assert!(manifest["files"][0]["rollback_index"].is_null());
         assert_eq!(std::fs::read(temp.path().join("boot.img")).unwrap(), b"abc");
+    }
+
+    #[test]
+    fn root_backup_list_is_newest_first_and_marks_real_manifests() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir_all(root.join("TB322FC_2026-09-10_080000")).unwrap();
+        std::fs::create_dir_all(root.join("TB322FC_2026-09-12_090000")).unwrap();
+        std::fs::write(root.join("TB322FC_2026-09-12_090000/manifest.json"), b"{}").unwrap();
+        std::fs::write(root.join("not-a-folder"), b"ignored").unwrap();
+
+        let entries = root_backup_folders_in(temp.path()).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].path.file_name().unwrap(),
+            "TB322FC_2026-09-12_090000"
+        );
+        assert!(entries[0].has_manifest);
+        assert!(!entries[1].has_manifest);
+    }
+
+    #[test]
+    fn missing_root_backup_directory_is_an_empty_list() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(root_backup_folders_in(temp.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn manifest_reader_accepts_the_identification_fields_without_file_details() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join(MANIFEST_NAME),
+            br#"{
+                "version": 1,
+                "operation": "root",
+                "model": "TB322FC",
+                "fingerprint": "Lenovo/TB322FC/example",
+                "recorded_at": "2026-09-12T09:30:00+09:00",
+                "slot": "_b",
+                "files": []
+            }"#,
+        )
+        .unwrap();
+
+        let info = read_backup_manifest(temp.path()).unwrap();
+
+        assert_eq!(info.model.as_deref(), Some("TB322FC"));
+        assert_eq!(info.fingerprint.as_deref(), Some("Lenovo/TB322FC/example"));
+        assert_eq!(
+            info.recorded_at.as_deref(),
+            Some("2026-09-12T09:30:00+09:00")
+        );
+        assert_eq!(info.slot.as_deref(), Some("_b"));
     }
 }

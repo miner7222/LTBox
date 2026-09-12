@@ -62,7 +62,112 @@ pub(crate) enum OperationPhaseKind {
     KonaBess,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationTransportHint {
+    Current,
+    Adb,
+    Fastboot,
+    Edl,
+    Disconnected,
+}
+
 impl OperationPhaseKind {
+    /// One-based phases doing the substantive device work and their share of
+    /// the track. Transport setup and teardown share the remaining weight.
+    fn progress_policy(self) -> Option<(&'static [usize], f32)> {
+        match self {
+            // The stock rawprogram pass and LTBox's generated overlays are
+            // both firmware writes and together own 90% of the full flash.
+            Self::Flash => Some((&[7, 8], 0.9)),
+            Self::SimpleFlash => Some((&[3], 0.9)),
+            Self::Root => Some((&[4, 5, 6], 0.8)),
+            Self::Unroot => Some((&[4, 5], 0.8)),
+            Self::BootRecovery => Some((&[4, 5, 6], 0.8)),
+            Self::ChangeCountry => Some((&[3, 4], 0.8)),
+            Self::DetectArb => Some((&[2, 4], 0.8)),
+            Self::FlashPartitions | Self::DumpPartitions => Some((&[2], 0.8)),
+            Self::FlashPhysical | Self::DumpPhysical => Some((&[3], 0.8)),
+            Self::KonaBess => Some((&[2, 3, 4, 5, 6], 0.8)),
+            Self::SysUpdateDisable
+            | Self::SysUpdateEnable
+            | Self::OfflineConvertXml
+            | Self::RegionConversion
+            | Self::PatchArb
+            | Self::RebuildVbmeta => None,
+        }
+    }
+
+    pub(crate) fn progress_fraction(
+        self,
+        current_step: usize,
+        phase_percent: Option<u8>,
+        complete: bool,
+    ) -> f32 {
+        let total = self.keys().len();
+        let Some((work, share)) = self.progress_policy() else {
+            return operation_progress_fraction(current_step, total, phase_percent, complete);
+        };
+        if complete {
+            return 1.0;
+        }
+        let weight = |index: usize| {
+            if work.contains(&(index + 1)) {
+                share / work.len() as f32
+            } else {
+                (1.0 - share) / (total - work.len()) as f32
+            }
+        };
+        let current = current_step.min(total - 1);
+        let before: f32 = (0..current).map(weight).sum();
+        let within = f32::from(phase_percent.unwrap_or(0).min(100)) / 100.0;
+        (before + weight(current) * within).clamp(0.0, 1.0)
+    }
+
+    /// Transport implied by a worker phase. Device polling is intentionally
+    /// paused while a workflow owns USB, so the execution view follows the
+    /// worker's phase boundaries instead of a stale pre-operation poll.
+    pub(crate) const fn transport_hint(self, current_step: usize) -> OperationTransportHint {
+        use OperationTransportHint::{Adb, Current, Disconnected, Edl, Fastboot};
+        match (self, current_step) {
+            (Self::Flash, 0..=3) | (Self::Root | Self::Unroot, 0..=1) => Current,
+            (Self::Flash, 4..=7)
+            | (Self::Root, 2..=5)
+            | (Self::Unroot, 2..=4)
+            | (Self::BootRecovery, 1..=5)
+            | (Self::ChangeCountry, 1..=3)
+            | (Self::DetectArb, 2..=3)
+            | (Self::SimpleFlash, 1..=3)
+            | (Self::FlashPartitions, 0..=1)
+            | (Self::DumpPartitions, 0..=2)
+            | (Self::FlashPhysical, 0..=2)
+            | (Self::DumpPhysical, 0..=3)
+            | (Self::KonaBess, 1..=5) => Edl,
+            (Self::Root, 7) | (Self::SysUpdateDisable | Self::SysUpdateEnable, _) => Adb,
+            (Self::DetectArb, 0..=1) => Fastboot,
+            (Self::BootRecovery | Self::KonaBess, 0) => Current,
+            (Self::Flash, 8)
+            | (Self::Root, 6)
+            | (Self::Unroot, 5)
+            | (Self::BootRecovery, 6)
+            | (Self::ChangeCountry, 4)
+            | (Self::DetectArb, 4)
+            | (Self::SimpleFlash, 4)
+            | (Self::FlashPartitions, 2)
+            | (Self::DumpPartitions, 3)
+            | (Self::FlashPhysical, 3)
+            | (Self::DumpPhysical, 4)
+            | (Self::KonaBess, 6)
+            | (
+                Self::OfflineConvertXml
+                | Self::RegionConversion
+                | Self::PatchArb
+                | Self::RebuildVbmeta,
+                _,
+            ) => Disconnected,
+            _ => Current,
+        }
+    }
+
     pub(crate) const fn all() -> &'static [Self] {
         &[
             Self::Flash,
@@ -96,13 +201,11 @@ impl OperationPhaseKind {
         }
     }
 
-    /// One-based firmware-write phase that may surface live flash progress.
-    /// Only full Flash (step 7) and Advanced SimpleFlash (step 3) qualify.
-    pub(crate) const fn firmware_progress_step(self) -> Option<usize> {
+    pub(crate) const fn is_firmware_progress_step(self, one_based: usize) -> bool {
         match self {
-            Self::Flash => Some(7),
-            Self::SimpleFlash => Some(3),
-            _ => None,
+            Self::Flash => matches!(one_based, 7 | 8),
+            Self::SimpleFlash => one_based == 3,
+            _ => false,
         }
     }
 
@@ -321,5 +424,54 @@ mod tests {
         assert_eq!(operation_progress_fraction(0, 9, None, false), 0.0);
         assert!((operation_progress_fraction(6, 9, Some(50), false) - 6.5 / 9.0).abs() < 0.001);
         assert_eq!(operation_progress_fraction(8, 9, None, true), 1.0);
+    }
+
+    #[test]
+    fn weighted_progress_is_continuous_at_every_phase_boundary() {
+        for &kind in OperationPhaseKind::all() {
+            let mut previous = 0.0;
+            for step in 0..kind.keys().len() {
+                let start = kind.progress_fraction(step, Some(0), false);
+                assert!((start - previous).abs() < 0.00001, "{kind:?}, {step}");
+                previous = kind.progress_fraction(step, Some(100), false);
+                assert!(previous >= start);
+            }
+            assert!((previous - 1.0).abs() < 0.00001, "{kind:?}");
+            assert_eq!(kind.progress_fraction(0, None, true), 1.0);
+        }
+    }
+
+    #[test]
+    fn firmware_write_owns_ninety_percent_of_progress() {
+        for kind in [OperationPhaseKind::Flash, OperationPhaseKind::SimpleFlash] {
+            let total: f32 = (0..kind.keys().len())
+                .filter(|step| kind.is_firmware_progress_step(step + 1))
+                .map(|step| {
+                    kind.progress_fraction(step, Some(100), false)
+                        - kind.progress_fraction(step, Some(0), false)
+                })
+                .sum();
+            assert!((total - 0.9).abs() < 0.00001);
+        }
+    }
+
+    #[test]
+    fn full_flash_overlay_phase_starts_where_rawprogram_finishes() {
+        let kind = OperationPhaseKind::Flash;
+        assert_eq!(
+            kind.progress_fraction(6, Some(100), false),
+            kind.progress_fraction(7, None, false)
+        );
+    }
+
+    #[test]
+    fn transport_hints_follow_worker_owned_usb_transitions() {
+        use OperationTransportHint::{Adb, Current, Disconnected, Edl};
+
+        assert_eq!(OperationPhaseKind::Flash.transport_hint(0), Current);
+        assert_eq!(OperationPhaseKind::Flash.transport_hint(6), Edl);
+        assert_eq!(OperationPhaseKind::Flash.transport_hint(8), Disconnected);
+        assert_eq!(OperationPhaseKind::Root.transport_hint(5), Edl);
+        assert_eq!(OperationPhaseKind::Root.transport_hint(7), Adb);
     }
 }

@@ -145,7 +145,7 @@ impl App {
         // No recents here — the KPM list already competes for vertical space.
         let pick_btn = self.wizard_picker_row(
             None,
-            self.t("btn_browse_kpm").to_string(),
+            PickerPathKind::File,
             Some(Message::Root(RootMsg::RootSelectKpm)),
             None,
         );
@@ -343,6 +343,108 @@ impl App {
         ))
     }
 
+    pub(crate) fn root_release_popup(&self) -> Element<'_, Message> {
+        let header = column![
+            text(self.t("root_release_title"))
+                .size(theme::text_size::TITLE_LARGE)
+                .style(on_surface_style),
+            text(self.t("root_release_subtitle"))
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style),
+        ]
+        .spacing(6)
+        .into();
+        let mut body = column![].spacing(8);
+        if self.root.release_request.is_some() {
+            body = body.push(
+                text(self.t("root_release_loading"))
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .style(muted_style),
+            );
+        } else if let Some(error) = &self.root.release_error {
+            body = body.push(dialog_field_error(format!(
+                "{}\n{error}",
+                self.t("root_release_error")
+            )));
+        } else if self.root.releases.is_empty() {
+            body = body.push(
+                text(self.t("root_release_empty"))
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .style(muted_style),
+            );
+        } else {
+            for (index, release) in self.root.releases.iter().enumerate() {
+                let label = format!(
+                    "{} · {} · {}",
+                    release.tag,
+                    self.t(if release.prerelease {
+                        "root_release_prerelease"
+                    } else {
+                        "root_release_stable"
+                    }),
+                    release
+                        .published_at
+                        .get(..10)
+                        .unwrap_or(&release.published_at)
+                );
+                body = body.push(
+                    iced::widget::radio(label, index, self.root.release_selection, |index| {
+                        Message::Root(RootMsg::RootReleaseSelect(index))
+                    })
+                    .text_size(theme::text_size::BODY_MEDIUM)
+                    .size(18)
+                    .spacing(12)
+                    .style(|t: &Theme, status| {
+                        let p = pal_of(t);
+                        let selected = match status {
+                            iced::widget::radio::Status::Active { is_selected }
+                            | iced::widget::radio::Status::Hovered { is_selected } => is_selected,
+                        };
+                        iced::widget::radio::Style {
+                            background: with_alpha(
+                                p.primary,
+                                if matches!(status, iced::widget::radio::Status::Hovered { .. }) {
+                                    0.08
+                                } else {
+                                    0.0
+                                },
+                            )
+                            .into(),
+                            dot_color: p.primary,
+                            border_width: 2.0,
+                            border_color: if selected {
+                                p.primary
+                            } else {
+                                p.on_surface_variant
+                            },
+                            text_color: Some(p.on_surface),
+                        }
+                    }),
+                );
+            }
+        }
+        let mut confirm = m3_filled_button(self.t("btn_ok").to_string());
+        if self.root.release_request.is_none() && self.root.release_selection.is_some() {
+            confirm = confirm.on_press(Message::Root(RootMsg::RootReleaseConfirm));
+        }
+        let footer = row![
+            Space::new().width(Length::Fill),
+            m3_outlined_button(self.t("btn_cancel").to_string())
+                .on_press(Message::Root(RootMsg::RootReleaseCancel)),
+            confirm,
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into();
+        m3_dialog(dialog_sections(
+            header,
+            body.into(),
+            footer,
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
+    }
+
     pub(crate) fn root_kernel_version_popup(&self) -> Element<'_, Message> {
         let kernel_version = self.root.kernel_version_buffer.trim();
         let input_valid =
@@ -465,10 +567,7 @@ impl App {
             content_width,
             self.t("root_type_title").to_string(),
             cards.into(),
-            Some((
-                self.t("root_type_title").to_string(),
-                vec![self.t("root_type_subtitle").to_string()],
-            )),
+            Some((self.t("root_type_title").to_string(), vec![])),
         )
     }
 
@@ -527,7 +626,7 @@ impl App {
                     "root_provider_title_tmpl",
                     family = self.t(family.label_key())
                 ),
-                vec![self.t("root_provider_subtitle").to_string()],
+                vec![],
             )),
         )
     }
@@ -542,7 +641,7 @@ impl App {
             column![
                 self.wizard_picker_row(
                     self.root.file_path.as_deref(),
-                    self.t("flash_folder_placeholder").to_string(),
+                    PickerPathKind::File,
                     Some(Message::Root(RootMsg::RootSelectFile)),
                     None
                 ),
@@ -639,7 +738,7 @@ impl App {
                         .map(|family| self.t(family.label_key()))
                         .unwrap_or("?")
                 ),
-                vec![self.t("root_mode_subtitle").to_string()],
+                vec![],
             )),
         )
     }
@@ -676,10 +775,7 @@ impl App {
             content_width,
             self.t("root_skroot_flavor_title").to_string(),
             cards.into(),
-            Some((
-                self.t("root_skroot_flavor_title").to_string(),
-                vec![self.t("root_skroot_flavor_subtitle").to_string()],
-            )),
+            Some((self.t("root_skroot_flavor_title").to_string(), vec![])),
         )
     }
 
@@ -732,10 +828,7 @@ impl App {
             content_width,
             self.t("root_version_title").to_string(),
             cards.width(Length::Fill).into(),
-            Some((
-                self.t("root_version_title").to_string(),
-                vec![self.t("root_version_subtitle").to_string()],
-            )),
+            Some((self.t("root_version_title").to_string(), vec![])),
         )
     }
 
@@ -804,10 +897,7 @@ impl App {
             content_width,
             self.t("root_source_title").to_string(),
             cards.into(),
-            Some((
-                self.t("root_source_title").to_string(),
-                vec![self.t("root_source_subtitle").to_string()],
-            )),
+            Some((self.t("root_source_title").to_string(), vec![])),
         )
     }
 
@@ -819,7 +909,7 @@ impl App {
             .map(|f| self.t(f.label_key()).to_string())
             .unwrap_or_else(|| dash.clone());
 
-        let mut grid_rows = vec![info_kv_center(self.t("root_step_type"), &fam)];
+        let mut grid_rows = vec![confirm_definition_row(self.t("root_step_type"), &fam)];
         let mut trailing_rows = Vec::new();
 
         if self.root.is_skroot() {
@@ -828,26 +918,29 @@ impl App {
                 .skroot_flavor
                 .map(|f| self.t(f.label_key()).to_string())
                 .unwrap_or_else(|| dash.clone());
-            grid_rows.push(info_kv_center(self.t("root_step_skroot_flavor"), &flavor));
+            grid_rows.push(confirm_definition_row(
+                self.t("root_step_skroot_flavor"),
+                &flavor,
+            ));
         } else {
             let mode = self
                 .root
                 .mode
                 .map(|m| self.t(m.label_key()).to_string())
                 .unwrap_or_else(|| dash.clone());
-            grid_rows.push(info_kv_center(self.t("root_step_mode"), &mode));
+            grid_rows.push(confirm_definition_row(self.t("root_step_mode"), &mode));
         }
 
         if self.root.is_gki() {
             let path = self.root.file_path.clone().unwrap_or_else(|| dash.clone());
-            trailing_rows.push(info_kv_center(self.t("root_step_kernel"), &path));
+            trailing_rows.push(confirm_definition_row(self.t("root_step_kernel"), &path));
         } else if self.root.is_forks() {
             let path = self.root.file_path.clone().unwrap_or_else(|| dash.clone());
-            grid_rows.push(info_kv_center(
+            grid_rows.push(confirm_definition_row(
                 self.t("root_step_provider"),
                 self.t("provider_magisk_forks"),
             ));
-            trailing_rows.push(info_kv_center(self.t("root_step_apk"), &path));
+            trailing_rows.push(confirm_definition_row(self.t("root_step_apk"), &path));
         } else if !self.root.is_skroot() {
             let prov = self
                 .root
@@ -859,18 +952,18 @@ impl App {
                 .version
                 .map(|v| self.t(v.label_key()).to_string())
                 .unwrap_or_else(|| dash.clone());
-            grid_rows.push(info_kv_center(self.t("root_step_provider"), &prov));
-            grid_rows.push(info_kv_center(self.t("root_step_version"), &ver));
+            grid_rows.push(confirm_definition_row(self.t("root_step_provider"), &prov));
+            grid_rows.push(confirm_definition_row(self.t("root_step_version"), &ver));
             if self.root.is_nightly() {
                 let src = self
                     .root
                     .nightly_source
                     .map(|s| self.t(s.label_key()).to_string())
                     .unwrap_or_else(|| dash.clone());
-                grid_rows.push(info_kv_center(self.t("root_step_source"), &src));
+                grid_rows.push(confirm_definition_row(self.t("root_step_source"), &src));
                 if self.root.nightly_source == Some(NightlySource::ManualInput) {
                     let id = self.root.run_id.clone().unwrap_or_else(|| dash.clone());
-                    grid_rows.push(info_kv_center(self.t("nightly_run_id_label"), &id));
+                    grid_rows.push(confirm_definition_row(self.t("nightly_run_id_label"), &id));
                 }
             }
         }
@@ -885,7 +978,10 @@ impl App {
                     n = self.root.kpm_paths.len().to_string()
                 )
             };
-            grid_rows.push(info_kv_center(self.t("root_step_kpm"), &kpm_summary));
+            grid_rows.push(confirm_definition_row(
+                self.t("root_step_kpm"),
+                &kpm_summary,
+            ));
         }
 
         let folder = self
@@ -893,9 +989,10 @@ impl App {
             .folder_path
             .clone()
             .unwrap_or_else(|| dash.clone());
-        trailing_rows.push(info_kv_center(self.t("edl_loader_label"), &folder));
+        trailing_rows.push(confirm_definition_row(self.t("edl_loader_label"), &folder));
 
-        self.confirm_step_frame(vec![], grid_rows, trailing_rows)
+        grid_rows.extend(trailing_rows);
+        self.confirm_step_frame(vec![], grid_rows, vec![])
     }
 
     pub(crate) fn root_flash_step(&self) -> Element<'_, Message> {

@@ -27,6 +27,9 @@ impl App {
     pub(crate) fn update_root(&mut self, msg: RootMsg) -> Task<Message> {
         match msg {
             RootMsg::RootFamily(f) => {
+                self.root.release_tag = None;
+                self.root.release_request = None;
+                self.root.release_popup_open = false;
                 if !ltbox_core::model::capabilities(&self.device.model).root {
                     return Task::none();
                 }
@@ -43,6 +46,9 @@ impl App {
                 Task::none()
             }
             RootMsg::RootProvider(p) => {
+                self.root.release_tag = None;
+                self.root.release_request = None;
+                self.root.release_popup_open = false;
                 self.root.provider = Some(p);
                 self.root.file_path = None;
                 // ReSukiSU has no Stable channel — if the user had Stable
@@ -86,6 +92,9 @@ impl App {
                 Task::none()
             }
             RootMsg::RootVersion(v) => {
+                self.root.release_tag = None;
+                self.root.release_request = None;
+                self.root.release_popup_open = false;
                 self.root.version = Some(v);
                 self.root.nightly_source = None;
                 self.root.run_id = None;
@@ -136,6 +145,44 @@ impl App {
                 Task::none()
             }
             RootMsg::RootNext => {
+                if self.root.step == 3
+                    && self.root.version == Some(VerChoice::Stable)
+                    && !self.root.is_forks()
+                    && !self.root.is_gki()
+                {
+                    let Some(provider) = self.root.provider else {
+                        return Task::none();
+                    };
+                    use ltbox_patch::root_pipeline::{RootProvider, provider_repo};
+                    let provider = match provider {
+                        Provider::Magisk => RootProvider::Magisk,
+                        Provider::MagiskForks => RootProvider::MagiskFork,
+                        Provider::KernelSU => RootProvider::KernelSU,
+                        Provider::KernelSUNext => RootProvider::KernelSUNext,
+                        Provider::SukiSU => RootProvider::SukiSU,
+                        Provider::ReSukiSU => RootProvider::ReSukiSU,
+                        Provider::APatch => RootProvider::APatch,
+                        Provider::FolkPatch => RootProvider::FolkPatch,
+                    };
+                    let Some(repo) = provider_repo(provider) else {
+                        return Task::none();
+                    };
+                    let request = std::time::Instant::now();
+                    self.root.release_popup_open = true;
+                    self.root.release_request = Some(request);
+                    self.root.releases.clear();
+                    self.root.release_selection = None;
+                    self.root.release_error = None;
+                    return task_heavy(
+                        move || {
+                            ltbox_core::github::GitHubClient::new(repo)
+                                .and_then(|client| client.recent_published_releases())
+                                .map_err(|e| e.to_string())
+                        },
+                        move |result| Message::Root(RootMsg::RootReleasesLoaded(request, result)),
+                        |e| Err(e.to_string()),
+                    );
+                }
                 if self.root.step == 6 {
                     if self.root.needs_ksu_lkm_kernel_version() {
                         // Reserve the global busy op *before* the blocking
@@ -194,7 +241,60 @@ impl App {
                 Task::none()
             }
             RootMsg::RootBack => {
+                self.root.release_request = None;
+                self.root.release_popup_open = false;
                 self.root.back();
+                Task::none()
+            }
+            RootMsg::RootReleasesLoaded(request, result) => {
+                if self.root.release_request != Some(request) || !self.root.release_popup_open {
+                    return Task::none();
+                }
+                self.root.release_request = None;
+                match result {
+                    Ok(releases) => {
+                        self.root.release_selection = (!releases.is_empty()).then_some(0);
+                        self.root.releases = releases;
+                    }
+                    Err(error) => self.root.release_error = Some(error),
+                }
+                Task::none()
+            }
+            RootMsg::RootReleaseSelect(index) => {
+                if self.root.release_popup_open && index < self.root.releases.len() {
+                    self.root.release_selection = Some(index);
+                }
+                Task::none()
+            }
+            RootMsg::RootReleaseCancel => {
+                self.root.release_popup_open = false;
+                self.root.release_request = None;
+                Task::none()
+            }
+            RootMsg::RootReleaseConfirm => {
+                if !self.root.release_popup_open
+                    || self.root.step != 3
+                    || self.root.version != Some(VerChoice::Stable)
+                {
+                    return Task::none();
+                }
+                let Some(release) = self
+                    .root
+                    .release_selection
+                    .and_then(|i| self.root.releases.get(i))
+                else {
+                    return Task::none();
+                };
+                self.root.release_tag = Some(release.tag.clone());
+                self.root.release_popup_open = false;
+                self.root.next();
+                if self.root.step == 5
+                    && self.root.folder_path.is_none()
+                    && let Some(path) = self.resolved_default_loader()
+                {
+                    self.root.folder_path = Some(path);
+                    self.root.next();
+                }
                 Task::none()
             }
             RootMsg::RootSelectKpm => {
@@ -430,6 +530,7 @@ impl App {
                     } else {
                         None
                     };
+                let release_tag = self.root.release_tag.clone();
 
                 self.log_push(format!(
                     "[Root] {}",
@@ -511,6 +612,7 @@ impl App {
                                     kpm_paths,
                                     superkey,
                                     nightly_run_id,
+                                    release_tag,
                                     preinit_device,
                                     ll,
                                     phases,
@@ -539,6 +641,49 @@ impl App {
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    #[test]
+    fn stable_next_requires_a_published_release_and_pins_the_selection() {
+        let mut app = App {
+            root: RootWizard {
+                step: 3,
+                family: Some(Family::Magisk),
+                mode: Some(RootMode::Lkm),
+                provider: Some(Provider::Magisk),
+                version: Some(VerChoice::Stable),
+                ..RootWizard::default()
+            },
+            ..App::default()
+        };
+
+        let _ = app.update_root(RootMsg::RootNext);
+        let request = app.root.release_request.expect("release request");
+        assert!(app.root.release_popup_open);
+        assert_eq!(app.root.step, 3);
+
+        let _ = app.update_root(RootMsg::RootReleasesLoaded(
+            request,
+            Ok(vec![
+                ltbox_core::github::PublishedRelease {
+                    tag: "v2.0.0-rc1".into(),
+                    prerelease: true,
+                    published_at: "2026-09-01T00:00:00Z".into(),
+                },
+                ltbox_core::github::PublishedRelease {
+                    tag: "v1.9.0".into(),
+                    prerelease: false,
+                    published_at: "2026-08-01T00:00:00Z".into(),
+                },
+            ]),
+        ));
+        assert_eq!(app.root.release_selection, Some(0));
+
+        let _ = app.update_root(RootMsg::RootReleaseSelect(1));
+        let _ = app.update_root(RootMsg::RootReleaseConfirm);
+        assert_eq!(app.root.release_tag.as_deref(), Some("v1.9.0"));
+        assert_eq!(app.root.step, 5);
+        assert!(!app.root.release_popup_open);
+    }
 
     #[test]
     fn unsupported_model_messages_cannot_start_operations() {

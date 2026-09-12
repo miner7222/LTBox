@@ -1623,10 +1623,11 @@ fn probe_connection_for_edl() -> Option<ConnectionStatus> {
 /// `spawn_blocking` JoinError collapse to a single error string passed
 /// to `fallback`, so callers no longer hand-write the two-level
 /// `unwrap_or_else` chain.
-fn task_heavy<T, F, G>(f: F, done: fn(T) -> Message, fallback: G) -> Task<Message>
+fn task_heavy<T, F, G, D>(f: F, done: D, fallback: G) -> Task<Message>
 where
     F: FnOnce() -> T + Send + 'static,
     G: FnOnce(String) -> T + Send + 'static,
+    D: FnOnce(T) -> Message + Send + 'static,
     T: Send + 'static,
 {
     Task::perform(
@@ -2446,15 +2447,15 @@ impl App {
         if !self.operation.is_running() {
             return false;
         }
-        let Some(step) = self
-            .operation
-            .phase_kind()
-            .and_then(OperationPhaseKind::firmware_progress_step)
-        else {
+        let Some(kind) = self.operation.phase_kind() else {
             return false;
         };
-        // Overflow-safe: current_op_step is zero-based, step is one-based.
-        self.operation.current_step().checked_add(1) == Some(step)
+        // Overflow-safe: current operation step is zero-based; policies use
+        // the one-based phase numbers printed in the live log.
+        self.operation
+            .current_step()
+            .checked_add(1)
+            .is_some_and(|step| kind.is_firmware_progress_step(step))
     }
 
     fn refresh_flash_progress_snapshot(&mut self) {
@@ -3337,11 +3338,14 @@ impl App {
     }
 
     /// True when `path`'s extension is the EDL loader form the connected device
-    /// needs: TB323FU (Y700 Gen 5) loads the multi-image Sahara manifest
-    /// (`.xml` / `.x`); every other model loads a `.melf` single-blob programmer.
+    /// needs: manifest-route models load `.xml` / `.x`; other connected models
+    /// load `.melf`. With no connected device, either loader form is valid.
     /// Inspects only the picked file's own extension, never the `.mbn` / `.elf`
     /// images a manifest references internally.
     fn loader_fits_model(&self, path: &std::path::Path) -> bool {
+        if self.device.connection == ConnectionStatus::None {
+            return loader_ext_fits_model(false, path) || loader_ext_fits_model(true, path);
+        }
         loader_ext_fits_model(self.model_capabilities().requires_sahara_manifest, path)
     }
 
@@ -3355,10 +3359,6 @@ impl App {
         }
     }
 
-    /// Loader-picker description, resolved live against the connected
-    /// device. TB323FU (Y700 Gen 5) needs the `qsahara_device_programmer.xml`
-    /// manifest, not the `.melf`; with no recognised model the picker hints
-    /// both. Every loader picker routes its subtitle through this.
     /// Which images the unroot folder picker should name.
     ///
     /// What a root backup holds is decided by the root run, not by the wizard
@@ -3394,20 +3394,10 @@ impl App {
         }
     }
 
-    fn loader_picker_desc(&self) -> String {
-        if self.requires_sahara_manifest() {
-            self.t("loader_desc_efisp_gbl").to_string()
-        } else if self.device.model.is_empty() {
-            self.t("loader_desc_unknown").to_string()
-        } else {
-            self.t("loader_desc_standard").to_string()
-        }
-    }
-
     fn loader_picker_exts(&self) -> &'static [&'static str] {
         loader::loader_picker_extensions(
-            !self.device.model.is_empty(),
-            self.requires_sahara_manifest(),
+            self.device.connection != ConnectionStatus::None && !self.device.model.is_empty(),
+            self.device.connection != ConnectionStatus::None && self.requires_sahara_manifest(),
         )
     }
 
@@ -5453,18 +5443,18 @@ mod tests {
     }
 
     #[test]
-    fn firmware_progress_step_maps_only_full_and_simple_flash() {
-        assert_eq!(OperationPhaseKind::Flash.firmware_progress_step(), Some(7));
-        assert_eq!(
-            OperationPhaseKind::SimpleFlash.firmware_progress_step(),
-            Some(3)
-        );
+    fn firmware_progress_steps_map_only_full_and_simple_flash() {
+        assert!(OperationPhaseKind::Flash.is_firmware_progress_step(7));
+        assert!(OperationPhaseKind::Flash.is_firmware_progress_step(8));
+        assert!(OperationPhaseKind::SimpleFlash.is_firmware_progress_step(3));
         for kind in OperationPhaseKind::all() {
             if !matches!(
                 kind,
                 OperationPhaseKind::Flash | OperationPhaseKind::SimpleFlash
             ) {
-                assert_eq!(kind.firmware_progress_step(), None, "{kind:?}");
+                for step in 1..=kind.keys().len() {
+                    assert!(!kind.is_firmware_progress_step(step), "{kind:?}, {step}");
+                }
             }
         }
     }
@@ -5706,6 +5696,40 @@ mod tests {
         assert!(is_loader_file(std::path::Path::new("firehose_loader.MBN")));
         assert!(is_loader_file(std::path::Path::new("prog.elf")));
         assert!(!is_loader_file(std::path::Path::new("xbl_s_devprg_ns.bin")));
+    }
+
+    #[test]
+    fn disconnected_loader_picker_accepts_melf_and_xml() {
+        let mut app = App::default();
+        let melf = std::path::Path::new("xbl_s_devprg_ns.melf");
+        let xml = std::path::Path::new("qsahara_device_programmer.xml");
+
+        assert_eq!(app.loader_picker_exts(), &["melf", "xml"]);
+        assert!(app.loader_fits_model(melf));
+        assert!(app.loader_fits_model(xml));
+        assert_eq!(
+            app.loader_picker_subtitle(),
+            app.t("loader_picker_subtitle_unknown")
+        );
+
+        app.device.connection = ConnectionStatus::Adb;
+        app.device.model = "TB520FU".into();
+        assert_eq!(app.loader_picker_exts(), &["melf"]);
+        assert!(app.loader_fits_model(melf));
+        assert!(!app.loader_fits_model(xml));
+        assert_eq!(
+            app.loader_picker_subtitle(),
+            app.t("loader_picker_subtitle_standard")
+        );
+
+        app.device.model = "TB323FU".into();
+        assert_eq!(app.loader_picker_exts(), &["xml"]);
+        assert!(!app.loader_fits_model(melf));
+        assert!(app.loader_fits_model(xml));
+        assert_eq!(
+            app.loader_picker_subtitle(),
+            app.t("loader_picker_subtitle_manifest")
+        );
     }
 
     #[test]

@@ -106,6 +106,9 @@ impl App {
         if self.root.run_id_popup_open {
             layers.push(self.root_run_id_popup());
         }
+        if self.root.release_popup_open {
+            layers.push(self.root_release_popup());
+        }
         if self.root.kernel_version_popup_open {
             layers.push(self.root_kernel_version_popup());
         }
@@ -117,6 +120,9 @@ impl App {
         }
         if self.device_info_popup.is_some() {
             layers.push(self.device_info_popup_view());
+        }
+        if self.unroot.backup_manifest_dialog.is_some() {
+            layers.push(self.unroot_backup_manifest_popup());
         }
         if self.ota_popup.is_some() {
             layers.push(self.ota_popup_view());
@@ -681,20 +687,16 @@ impl App {
             }
         });
 
-        let body = row![
-            text(msg.to_string())
-                .size(theme::text_size::BODY_SMALL)
-                .style(error_container_text_style)
-                .width(Length::Fill),
-            dismiss,
-        ]
-        .spacing(12)
-        .align_y(iced::Alignment::Start);
-        let card = self.message_banner(
+        let body = text(msg.to_string())
+            .size(theme::text_size::BODY_SMALL)
+            .style(error_container_text_style)
+            .width(Length::Fill);
+        let card = self.message_banner_with_trailing(
             BannerSeverity::Error,
             icon::banner_error(),
             self.t("banner_error_title").to_string(),
             body,
+            Some(dismiss.into()),
         );
 
         // Top/side inset + Fill-height spacer below keeps the overlay
@@ -786,6 +788,17 @@ impl App {
         title: impl Into<String>,
         body: impl Into<Element<'a, Message>>,
     ) -> Element<'a, Message> {
+        self.message_banner_with_trailing(severity, icon_glyph, title, body, None)
+    }
+
+    fn message_banner_with_trailing<'a>(
+        &self,
+        severity: BannerSeverity,
+        icon_glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
+        title: impl Into<String>,
+        body: impl Into<Element<'a, Message>>,
+        trailing: Option<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
         const ICON_SIZE: f32 = 20.0;
         const ACCENT_WIDTH: f32 = 3.0;
         const BORDER_WIDTH: f32 = 1.0;
@@ -812,11 +825,22 @@ impl App {
             .spacing(2)
             .width(Length::Fill)
             .align_x(iced::Alignment::Start);
-        let content = row![icon, copy]
+        // A dismiss target belongs beside the complete title/body block.
+        // Putting it in the body made that line 40px tall below the title,
+        // leaving excess space below short messages and lowering the close icon.
+        let has_trailing = trailing.is_some();
+        let mut content = row![icon, copy]
             .spacing(13)
             .padding([13, 16])
             .width(Length::Fill)
-            .align_y(iced::Alignment::Start);
+            .align_y(if has_trailing {
+                iced::Alignment::Center
+            } else {
+                iced::Alignment::Start
+            });
+        if let Some(trailing) = trailing {
+            content = content.push(trailing);
+        }
 
         // CSS draws this as one rounded box whose left border is simply
         // thicker, so the heavy edge follows the corner curve. iced has no

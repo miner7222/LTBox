@@ -671,32 +671,12 @@ impl App {
                         return container(text("")).into();
                     }
                 };
-                let mut table = column![].spacing(0);
-                for (i, (k, v)) in info.fields.iter().enumerate() {
-                    let display_v = v.clone().unwrap_or_default();
-                    let key_cell = text(k.clone()).size(12).style(muted_style).width(180);
-                    let val_cell = text(display_v).size(12).width(Length::Fill);
-                    let row_inner = iced::widget::row![key_cell, val_cell]
-                        .spacing(12)
-                        .padding([4, 10])
-                        .align_y(iced::Alignment::Center);
-                    let zebra = i % 2 == 1;
-                    let tinted = container(row_inner).width(Length::Fill).style(
-                        move |t: &Theme| -> container::Style {
-                            let p = pal_of(t);
-                            container::Style {
-                                background: if zebra {
-                                    Some(iced::Background::Color(p.surface_container_low))
-                                } else {
-                                    None
-                                },
-                                ..Default::default()
-                            }
-                        },
-                    );
-                    table = table.push(tinted);
-                }
-                scrollable(table)
+                let fields = info
+                    .fields
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
+                    .collect();
+                scrollable(info_key_value_table(fields))
                     .style(m3_scrollable_style)
                     .height(Length::Fixed(420.0))
                     .width(Length::Fill)

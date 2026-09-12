@@ -378,7 +378,7 @@ impl App {
         .into();
         let language_row = settings_row(
             self.t("settings_language").to_string(),
-            self.t("settings_language_desc").to_string(),
+            String::new(),
             language_control,
         );
 
@@ -474,7 +474,7 @@ impl App {
         let default_loader_value = self
             .default_loader_path
             .clone()
-            .unwrap_or_else(|| self.t("settings_default_loader_unset").to_string());
+            .unwrap_or_else(|| self.t("picker_no_file_selected").to_string());
         let default_loader_control = row![
             settings_value_field(default_loader_value),
             settings_icon_action(

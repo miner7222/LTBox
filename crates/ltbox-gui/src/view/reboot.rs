@@ -168,13 +168,10 @@ impl App {
             } else {
                 reboot_disabled_icon(target, icon_size)
             };
-            let mut label_text = text(label)
+            let label_text = text(label)
                 .size(label_size)
                 .style(label_style)
                 .width(Length::Fill);
-            if enabled {
-                label_text = label_text.font(theme::emphasis::medium());
-            }
             let mut card_content = row![icon_tile(icon), label_text,]
                 .spacing(12.0)
                 .align_y(iced::Alignment::Center);
@@ -231,13 +228,17 @@ impl App {
             .padding([20.0, 28.0])
             .width(Length::Fill);
 
-        let body = container(centered_step(
-            list,
-            self.wizard_list_max_width(WIZARD_LIST_MAX_WIDTH),
-        ))
-        .padding(24.0)
-        .width(Length::Fill)
-        .height(Length::Fill);
+        let body: Element<'_, Message> = match self.window_size_class() {
+            WindowSizeClass::Expanded => self.wizard_picker_step(String::new(), list.into()),
+            WindowSizeClass::Compact => container(centered_step(
+                list,
+                self.wizard_list_max_width(WIZARD_LIST_MAX_WIDTH),
+            ))
+            .padding(24.0)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+        };
 
         column![
             large_top_app_bar(self.t("reboot_title").to_string(), None),

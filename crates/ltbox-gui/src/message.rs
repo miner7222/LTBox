@@ -283,6 +283,13 @@ pub(crate) enum RootMsg {
     RootMode(RootMode),
     RootSkrootFlavor(SkrootFlavor),
     RootVersion(VerChoice),
+    RootReleasesLoaded(
+        std::time::Instant,
+        Result<Vec<ltbox_core::github::PublishedRelease>, String>,
+    ),
+    RootReleaseSelect(usize),
+    RootReleaseConfirm,
+    RootReleaseCancel,
     RootNightlySource(NightlySource),
     RootSelectFile,
     /// Open the EDL loader picker for the root pipeline. Named for the
@@ -319,6 +326,9 @@ pub(crate) enum RootMsg {
 pub(crate) enum UnrootMsg {
     SetUnrootType(UnrootType),
     UnrootSelectFolder,
+    UnrootBackupPicked(String),
+    UnrootBackupManifestOpen(String),
+    UnrootBackupManifestClose,
     UnrootSelectLoader,
     UnrootLoaderChosen(Option<String>),
     UnrootNext,

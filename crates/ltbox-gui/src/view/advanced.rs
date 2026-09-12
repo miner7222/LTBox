@@ -116,18 +116,25 @@ impl App {
             .action
             .map(|action| self.t(action.label_key()).to_string())
             .unwrap_or_else(|| self.t("nav_advanced").to_string());
-        let (step_title, _) = self
+        let (step_title, step_subtitle) = self
             .adv_step_copy()
             .unwrap_or_else(|| (flow_title.clone(), None));
         let body = if shared_exec {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if !is_confirm
+                && ((!needs_country && self.adv_wizard.step == 0)
+                    || (needs_country && self.adv_wizard.step == 1))
+            {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
         let app_bar_subtitle = if is_exec {
             self.exec_app_bar_subtitle()
         } else {
-            None
+            step_subtitle
         };
 
         let nav: Element<'_, Message> = if is_exec {
@@ -219,7 +226,7 @@ impl App {
         } else if self.adv_wizard.needs_country() && self.adv_wizard.step == 1 {
             (
                 self.t("edl_loader_title").to_string(),
-                self.loader_picker_desc().to_string(),
+                self.loader_picker_subtitle(),
             )
         } else if self.adv_wizard.needs_region_target() && self.adv_wizard.step == 1 {
             (
@@ -232,10 +239,12 @@ impl App {
                 self.t("adv_arb_inspect_subtitle").to_string(),
             )
         } else {
-            (
-                self.t(action.label_key()).to_string(),
-                self.t(action.desc_key()).to_string(),
-            )
+            let subtitle = if matches!(action, AdvAction::DetectArb | AdvAction::PatchDevinfo) {
+                self.loader_picker_subtitle()
+            } else {
+                self.t(action.source_desc_key()).to_string()
+            };
+            (self.t(action.label_key()).to_string(), subtitle)
         };
 
         Some((title, Some(subtitle)))
@@ -243,7 +252,7 @@ impl App {
 
     /// Step 0 — shared file/folder source picker.
     pub(crate) fn adv_wiz_source_step(&self) -> Element<'_, Message> {
-        let Some(action) = self.adv_wizard.action else {
+        let Some(_) = self.adv_wizard.action else {
             return container(text("")).into();
         };
         let status = if self.adv_wizard.is_image_info() && !self.adv_wizard.file_paths.is_empty() {
@@ -253,11 +262,6 @@ impl App {
             ))
         } else {
             self.adv_wizard.file_path.clone()
-        };
-        let description = if matches!(action, AdvAction::DetectArb | AdvAction::PatchDevinfo) {
-            self.loader_picker_desc()
-        } else {
-            self.t(action.source_desc_key()).to_string()
         };
         let recents = if self.adv_wizard.is_image_info() {
             self.recent_file_chips(
@@ -284,13 +288,14 @@ impl App {
             column![
                 self.wizard_picker_row(
                     status.as_deref(),
-                    self.t("adv_source_placeholder").to_string(),
+                    if self.adv_wizard.is_folder_op() {
+                        PickerPathKind::Folder
+                    } else {
+                        PickerPathKind::File
+                    },
                     Some(Message::Adv(AdvMsg::AdvWizBrowse)),
                     None
                 ),
-                text(description)
-                    .size(theme::text_size::BODY_SMALL)
-                    .style(muted_style),
                 recents,
             ]
             .spacing(6)
@@ -373,17 +378,12 @@ impl App {
     pub(crate) fn adv_wiz_loader_step(&self) -> Element<'_, Message> {
         let error = (self.default_loader_path.is_some() && !self.default_loader_fits_model())
             .then(|| self.t("loader_default_ext_unsupported").to_string());
-        let mut content = column![
-            self.wizard_picker_row(
-                self.adv_wizard.file_path.as_deref(),
-                self.t("edl_loader_placeholder").to_string(),
-                Some(Message::Adv(AdvMsg::AdvWizBrowse)),
-                None
-            ),
-            text(self.loader_picker_desc())
-                .size(theme::text_size::BODY_SMALL)
-                .style(muted_style),
-        ]
+        let mut content = column![self.wizard_picker_row(
+            self.adv_wizard.file_path.as_deref(),
+            PickerPathKind::File,
+            Some(Message::Adv(AdvMsg::AdvWizBrowse)),
+            None
+        ),]
         .spacing(6)
         .width(Length::Fill);
         if let Some(error) = error {
@@ -544,7 +544,7 @@ impl App {
         let mut grid_rows = Vec::new();
         if self.adv_wizard.needs_country() {
             let code = self.adv_wizard.country.clone().unwrap_or(dash.clone());
-            grid_rows.push(info_kv_center(self.t("adv_confirm_country"), &code));
+            grid_rows.push(confirm_definition_row(self.t("adv_confirm_country"), &code));
         }
         if self.adv_wizard.needs_region_target() {
             let label = self
@@ -552,28 +552,35 @@ impl App {
                 .region_target
                 .map(|r| self.t(r.label_key()).to_string())
                 .unwrap_or(dash);
-            grid_rows.push(info_kv_center(self.t("adv_confirm_region_target"), &label));
+            grid_rows.push(confirm_definition_row(
+                self.t("adv_confirm_region_target"),
+                &label,
+            ));
         }
         if matches!(self.adv_wizard.action, Some(AdvAction::PatchArb))
             && let Some(idx) = self.adv_wizard.arb_index_committed
         {
             let utc = format_unix_timestamp_utc(idx);
-            grid_rows.push(info_kv_center(
+            grid_rows.push(confirm_definition_row(
                 self.t("adv_confirm_arb_index"),
                 &format!("{idx}  ({utc})"),
             ));
             if let Some((boot_idx, vbmeta_idx)) = self.adv_wizard.arb_inspect {
-                grid_rows.push(info_kv_center(
+                grid_rows.push(confirm_definition_row(
                     self.t("adv_arb_inspect_boot"),
                     &format!("{boot_idx} → {idx}"),
                 ));
-                grid_rows.push(info_kv_center(
+                grid_rows.push(confirm_definition_row(
                     self.t("adv_arb_inspect_vbmeta"),
                     &format!("{vbmeta_idx} → {idx}"),
                 ));
             }
         }
-        self.confirm_step_frame(vec![], grid_rows, vec![info_kv_center(source_label, &path)])
+        self.confirm_step_frame(
+            vec![],
+            grid_rows,
+            vec![confirm_definition_row(source_label, &path)],
+        )
     }
 
     pub(crate) fn adv_image_info_exec_step(&self) -> Element<'_, Message> {
@@ -706,7 +713,10 @@ impl App {
                 return (title, self.exec_app_bar_subtitle());
             }
         };
-        (self.t(title_key).to_string(), None)
+        (
+            self.t(title_key).to_string(),
+            (self.simple_flash.step == 0).then(|| self.t("flash_folder_desc").to_string()),
+        )
     }
 
     /// Source step — top-aligned firmware-folder picker, matching the other
@@ -716,15 +726,12 @@ impl App {
             column![
                 self.wizard_picker_row(
                     self.simple_flash.firmware_folder.as_deref(),
-                    self.t("flash_folder_placeholder").to_string(),
+                    PickerPathKind::Folder,
                     Some(Message::SimpleFlash(
                         SimpleFlashMsg::SimpleFlashSelectFolder
                     )),
                     None
                 ),
-                text(self.t("flash_folder_desc").to_string())
-                    .size(theme::text_size::BODY_SMALL)
-                    .style(muted_style),
                 self.recent_chips(
                     self.recent_paths
                         .recent(pickers::PickerKind::QfilFirmwareFolder.storage_key()),
@@ -754,21 +761,29 @@ impl App {
             .firmware_folder
             .clone()
             .unwrap_or_else(|| "—".to_string());
-        let warning = text(self.t("simple_flash_confirm_warning").to_string())
-            .size(theme::text_size::BODY_MEDIUM)
-            .style(warning_style)
-            .center()
-            .width(Length::Fill);
+        let warning = self.message_banner(
+            BannerSeverity::Error,
+            icon::banner_error(),
+            self.t("flash_confirm_warning_title").to_string(),
+            text(self.t("simple_flash_confirm_warning").to_string())
+                .size(theme::text_size::BODY_SMALL)
+                .style(error_container_text_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        );
         self.confirm_step_frame(
-            vec![warning.into()],
+            vec![warning],
             vec![
-                info_kv_center(self.t("flash_confirm_region"), &unknown),
-                info_kv_center(self.t("flash_confirm_target"), &unknown),
-                info_kv_center(self.t("flash_confirm_data"), &unknown),
-                info_kv_center(self.t("flash_confirm_region_edit"), &off),
-                info_kv_center(self.t("flash_confirm_rollback"), &off),
+                confirm_definition_row(self.t("flash_confirm_region"), &unknown),
+                confirm_definition_row(self.t("flash_confirm_target"), &unknown),
+                confirm_definition_row(self.t("flash_confirm_data"), &unknown),
+                confirm_definition_row(self.t("flash_confirm_region_edit"), &off),
+                confirm_definition_row(self.t("flash_confirm_rollback"), &off),
             ],
-            vec![info_kv_center(self.t("flash_confirm_folder"), &folder)],
+            vec![confirm_definition_row(
+                self.t("flash_confirm_folder"),
+                &folder,
+            )],
         )
     }
 }

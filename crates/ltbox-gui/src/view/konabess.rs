@@ -26,9 +26,13 @@ impl App {
             2 => "konabess_confirm_title",
             _ => "konabess_apply_title",
         };
-        let app_bar_subtitle = (self.konabess.step >= 3)
-            .then(|| self.exec_app_bar_subtitle())
-            .flatten();
+        let app_bar_subtitle = if self.konabess.step == 0 {
+            Some(self.loader_picker_subtitle())
+        } else {
+            (self.konabess.step >= 3)
+                .then(|| self.exec_app_bar_subtitle())
+                .flatten()
+        };
         let body = match self.konabess.step {
             0 => self.konabess_loader_step(),
             1 => self.konabess_table_step(),
@@ -37,6 +41,8 @@ impl App {
         };
         let body = if is_exec {
             body
+        } else if self.konabess.step == 0 {
+            self.wizard_picker_step(self.t(title_key).to_string(), body)
         } else {
             wizard_step_body(self.t(title_key).to_string(), body)
         };
@@ -229,15 +235,15 @@ impl App {
         self.confirm_step_frame(
             vec![],
             vec![
-                info_kv_center(self.t("konabess_confirm_chip"), chip),
-                info_kv_center(self.t("konabess_table_target"), &target),
-                info_kv_center(self.t("konabess_confirm_device_values"), &stock_shape),
-                info_kv_center(self.t("konabess_confirm_edited_values"), &edited_shape),
-                info_kv_center(self.t("konabess_confirm_changes"), change_state),
+                confirm_definition_row(self.t("konabess_confirm_chip"), chip),
+                confirm_definition_row(self.t("konabess_table_target"), &target),
+                confirm_definition_row(self.t("konabess_confirm_device_values"), &stock_shape),
+                confirm_definition_row(self.t("konabess_confirm_edited_values"), &edited_shape),
+                confirm_definition_row(self.t("konabess_confirm_changes"), change_state),
             ],
             vec![
-                info_kv_center(self.t("edl_loader_label"), loader),
-                info_kv_center(self.t("konabess_confirm_import"), import_path),
+                confirm_definition_row(self.t("edl_loader_label"), loader),
+                confirm_definition_row(self.t("konabess_confirm_import"), import_path),
             ],
         )
     }

@@ -1,6 +1,6 @@
 //! Flash wizard view + steps (region, target, data, folder, confirm, exec). Extracted from `main.rs`.
 
-use super::components::{picker_action_button, picker_path_field};
+use super::components::{elide_path_middle, picker_action_button, picker_path_field};
 use crate::*;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
@@ -9,32 +9,6 @@ use theme::with_alpha;
 
 const FLASH_CONFIRM_LABEL_WIDTH: f32 = 180.0;
 const FLASH_CONFIRM_MAX_WIDTH: f32 = 820.0;
-fn flash_confirm_static_definition_row(label: String, value: String) -> Element<'static, Message> {
-    column![
-        row![
-            container(
-                text(label)
-                    .size(theme::text_size::BODY_SMALL)
-                    .style(muted_style)
-                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            )
-            .width(Length::Fixed(FLASH_CONFIRM_LABEL_WIDTH)),
-            text(value)
-                .size(theme::text_size::BODY_MEDIUM)
-                .font(theme::emphasis::medium())
-                .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-        ]
-        .spacing(16)
-        .align_y(iced::Alignment::Start)
-        .width(Length::Fill)
-        .padding([9, 0]),
-        iced::widget::rule::horizontal(1).style(shell_rule_style),
-    ]
-    .spacing(0)
-    .width(Length::Fill)
-    .into()
-}
 
 /// One interactive row in the flash review definition list. All values stay
 /// left-aligned; destructive outcomes use the error role without turning the
@@ -50,10 +24,28 @@ fn flash_confirm_definition_row(
 ) -> Element<'static, Message> {
     let mut value_column = column![
         text(value)
-            .size(theme::text_size::BODY_MEDIUM)
-            .font(theme::emphasis::medium())
+            .size(
+                if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
+                    theme::text_size::BODY_SMALL
+                } else {
+                    theme::text_size::BODY_MEDIUM
+                }
+            )
+            .font(
+                if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
+                    theme::mono_font()
+                } else {
+                    theme::emphasis::medium()
+                }
+            )
             .width(Length::Fill)
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .wrapping(
+                if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
+                    iced::widget::text::Wrapping::None
+                } else {
+                    iced::widget::text::Wrapping::WordOrGlyph
+                }
+            )
             .style(move |t: &Theme| iced::widget::text::Style {
                 color: Some(if destructive {
                     pal_of(t).error
@@ -178,6 +170,8 @@ impl App {
         );
         let body = if current_step == FlashStep::Flash || is_selection_step {
             body
+        } else if matches!(current_step, FlashStep::Folder | FlashStep::Bootloader) {
+            self.wizard_picker_step(step_title, body)
         } else {
             wizard_step_body(step_title, body)
         };
@@ -222,15 +216,17 @@ impl App {
 
     fn flash_step_copy(&self) -> (String, Option<String>) {
         let (title_key, subtitle_key) = match self.flash.current_step() {
-            FlashStep::Region => ("flash_region_title", None),
-            FlashStep::Target => ("flash_target_title", None),
-            FlashStep::Data => ("flash_data_title", None),
-            FlashStep::Folder => ("flash_folder_title", None),
+            FlashStep::Region => ("flash_region_title", Some("flash_region_subtitle")),
+            FlashStep::Target => ("flash_target_title", Some("flash_target_subtitle")),
+            FlashStep::Data => ("flash_data_title", Some("flash_data_subtitle")),
+            FlashStep::Folder => ("flash_folder_title", Some("flash_folder_desc")),
             FlashStep::Bootloader => (
                 "flash_bootloader_title",
-                self.flash
-                    .uses_gbl()
-                    .then_some("flash_bootloader_efisp_desc"),
+                Some(if self.flash.uses_gbl() {
+                    "flash_bootloader_efisp_desc"
+                } else {
+                    "flash_bootloader_pick_subtitle"
+                }),
             ),
             FlashStep::Confirm => ("flash_confirm_title", None),
             FlashStep::Flash => {
@@ -254,13 +250,17 @@ impl App {
         let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
         let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let prc_icon = lucide_list_primary(icon::region_prc(), icon_size);
-        let auto_card = wizard_list_option_card(
+        let auto_card = wizard_list_option_card_recommended(
             lucide_list_primary(icon::nightly_auto(), icon_size),
             self.t("flash_region_auto"),
-            self.t("flash_region_auto_desc"),
+            self.t("flash_region_auto_pick_desc"),
             self.flash.region_selection == Some(FlashRegionSelection::Auto),
             Some(Message::Flash(FlashMsg::FlashRegionAuto)),
             metrics,
+            (
+                self.t("root_recommended_label"),
+                self.t("flash_region_auto_recommended_tip"),
+            ),
         );
         // TB322FC is a PRC-only SKU. Render ROW as a disabled card with
         // a grayed icon so the constraint is visible — silent skip
@@ -338,8 +338,11 @@ impl App {
             self.t("flash_region_title").to_string(),
             cards.into(),
             Some((
-                self.t("flash_region_title").to_string(),
-                vec![self.t("flash_region_subtitle").to_string()],
+                self.t("flash_region_help_title").to_string(),
+                vec![
+                    self.t("flash_region_help_body").to_string(),
+                    self.t("flash_region_help_hardware").to_string(),
+                ],
             )),
         )
     }
@@ -409,10 +412,7 @@ impl App {
             content_width,
             self.t("flash_target_title").to_string(),
             cards.into(),
-            Some((
-                self.t("flash_target_title").to_string(),
-                vec![self.t("flash_target_subtitle").to_string()],
-            )),
+            Some((String::new(), vec![])),
         )
     }
 
@@ -469,10 +469,7 @@ impl App {
             content_width,
             self.t("flash_data_title").to_string(),
             cards.into(),
-            Some((
-                self.t("flash_data_title").to_string(),
-                vec![self.t("flash_data_subtitle").to_string()],
-            )),
+            Some((String::new(), vec![])),
         )
     }
 
@@ -480,47 +477,34 @@ impl App {
         let selected_path = self.flash.firmware_folder.as_deref();
         let path_row = self.wizard_picker_row(
             selected_path,
-            self.t("flash_folder_placeholder").to_string(),
+            PickerPathKind::Folder,
             Some(Message::Flash(FlashMsg::FlashSelectFolder)),
             selected_path.map(|_| Message::Flash(FlashMsg::FlashClearFolder)),
         );
 
-        let mut content = column![
-            path_row,
-            text(self.t("flash_folder_desc").to_string())
-                .size(theme::text_size::BODY_SMALL)
-                .style(muted_style)
-                .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-        ]
-        .spacing(6)
-        .padding(iced::Padding {
-            top: 18.0,
-            right: 28.0,
-            bottom: 28.0,
-            left: 28.0,
-        })
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Start);
+        let mut content = column![path_row,]
+            .spacing(6)
+            .padding(iced::Padding {
+                top: 18.0,
+                right: 28.0,
+                bottom: 28.0,
+                left: 28.0,
+            })
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Start);
 
         // The picked firmware folder ships no EDL loader — keep the warning
         // and its corrective action together as one shared message banner.
         if selected_path.is_some() && self.flash.loader_required {
-            let has_loader = self.flash.loader_override.is_some();
             let loader_path_row = row![
                 picker_path_field(
                     self.flash.loader_override.as_deref(),
-                    self.t("edl_loader_placeholder").to_string(),
+                    self.t("picker_no_file_selected").to_string(),
                     true,
                     self.picker_text_width(1),
                 ),
                 picker_action_button(
-                    self.t(if has_loader {
-                        "flash_loader_change"
-                    } else {
-                        "flash_loader_browse"
-                    })
-                    .to_string(),
+                    self.t("btn_pick").to_string(),
                     Some(Message::Flash(FlashMsg::FlashSelectLoader)),
                     true,
                 ),
@@ -579,7 +563,7 @@ impl App {
         let analyzing = self.flash.user_abl_analyzing;
         let picker_row = self.wizard_picker_row(
             self.flash.user_abl_path.as_deref(),
-            "abl.elf".to_string(),
+            PickerPathKind::File,
             (!analyzing).then_some(Message::Flash(FlashMsg::FlashSelectBootloader)),
             selected.then_some(Message::Flash(FlashMsg::FlashClearBootloader)),
         );
@@ -619,10 +603,18 @@ impl App {
                 }),
             });
 
-        let mut content = column![picker_row, verdict]
-            .spacing(10.0)
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Start);
+        let mut content = column![
+            picker_row,
+            verdict,
+            self.recent_file_chips(
+                &["elf"],
+                |path| Message::Flash(FlashMsg::FlashBootloaderChosen(Some(path))),
+                "picker_recents"
+            )
+        ]
+        .spacing(10.0)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::Start);
         if self.flash.uses_gbl() && !selected && !self.flash.bootloader_can_next() {
             content = content.push(
                 text(self.t("err_abl_efisp_undetermined").to_string())
@@ -661,10 +653,8 @@ impl App {
         } else {
             self.device.model.as_str()
         };
-        let device_row = flash_confirm_static_definition_row(
-            self.t("dash_device").to_string(),
-            format!("{device_name} · {device_model}"),
-        );
+        let device_value = format!("{device_name} · {device_model}");
+        let device_row = confirm_definition_row(self.t("dash_device"), &device_value);
 
         let region = cfg
             .device_region
@@ -777,8 +767,13 @@ impl App {
             Some(caution.clone()),
             open(ConfirmField::RegionEdit),
         );
+        let rollback_hint_key = if ["TB520FU", "TB321FU"].contains(&self.device.model.as_str()) {
+            "flash_confirm_rb_fastboot_hint"
+        } else {
+            "flash_confirm_rb_edl_hint"
+        };
         let rollback_hint = (cfg.modify_rollback == RollbackSetting::Auto)
-            .then(|| self.t("flash_confirm_rb_bootloader_hint").to_string());
+            .then(|| self.t(rollback_hint_key).to_string());
         let rollback_row = flash_confirm_definition_row(
             self.t("flash_confirm_rollback").to_string(),
             rollback,
@@ -818,7 +813,20 @@ impl App {
             .unwrap_or_else(|| dash.clone());
         let folder_row = flash_confirm_definition_row(
             self.t("flash_confirm_folder").to_string(),
-            folder_owned,
+            elide_path_middle(
+                &folder_owned,
+                ((self.window_size.0
+                    - if self.window_size_class() == WindowSizeClass::Expanded {
+                        SIDEBAR_EXPANDED_WIDTH
+                    } else {
+                        SIDEBAR_RAIL_WIDTH
+                    })
+                .min(FLASH_CONFIRM_MAX_WIDTH)
+                    - 56.0
+                    - FLASH_CONFIRM_LABEL_WIDTH
+                    - 16.0)
+                    .max(60.0),
+            ),
             None,
             false,
             false,

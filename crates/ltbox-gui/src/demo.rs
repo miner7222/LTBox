@@ -649,11 +649,7 @@ fn apply_wizard_scene(app: &mut App, flow: Flow, step: WizardStep) {
 
     if step == WizardStep::Flash {
         let reporter = app.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
-        let _ = reporter.marker(
-            OperationPhaseKind::Flash
-                .firmware_progress_step()
-                .expect("flash operations have a firmware-writing phase"),
-        );
+        let _ = reporter.marker(7);
     }
 }
 

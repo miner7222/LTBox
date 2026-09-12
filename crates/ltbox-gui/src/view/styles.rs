@@ -563,12 +563,13 @@ pub(crate) fn sel_card_style_for(t: &Theme, selected: bool, destructive: bool) -
     container::Style {
         background: None,
         border: iced::Border {
-            // Interactive target edges use `outline`; selected and destructive
-            // targets retain their semantic accent.
+            // Resting rows share the quieter outlined-card edge used by the
+            // rest of the app; selected and destructive targets retain their
+            // semantic accent.
             color: if selected || destructive {
                 accent
             } else {
-                p.outline
+                p.outline_variant
             },
             width: if selected { 2.0 } else { 1.0 },
             radius: theme::shape::MD.into(),

@@ -4,6 +4,19 @@ use crate::*;
 use iced::Task;
 
 impl App {
+    fn refresh_unroot_backups(&mut self) {
+        match backup::root_backup_folders() {
+            Ok(folders) => {
+                self.unroot.backup_folders = folders;
+                self.unroot.backup_scan_error = None;
+            }
+            Err(error) => {
+                self.unroot.backup_folders.clear();
+                self.unroot.backup_scan_error = Some(error);
+            }
+        }
+    }
+
     pub(crate) fn update_unroot(&mut self, msg: UnrootMsg) -> Task<Message> {
         match msg {
             UnrootMsg::SetUnrootType(t) => {
@@ -20,6 +33,23 @@ impl App {
                     &self.recent_paths,
                     Message::FolderSelected,
                 )
+            }
+            UnrootMsg::UnrootBackupPicked(path) => {
+                if std::path::Path::new(&path).is_dir() {
+                    self.unroot.folder_path = Some(path);
+                }
+                Task::none()
+            }
+            UnrootMsg::UnrootBackupManifestOpen(path) => {
+                let folder = std::path::PathBuf::from(path);
+                let result = backup::read_backup_manifest(&folder);
+                self.unroot.backup_manifest_dialog =
+                    Some(backup::BackupManifestDialog { folder, result });
+                Task::none()
+            }
+            UnrootMsg::UnrootBackupManifestClose => {
+                self.unroot.backup_manifest_dialog = None;
+                Task::none()
             }
             UnrootMsg::UnrootSelectLoader => self.pick_loader_with_default(|__v| {
                 Message::Unroot(UnrootMsg::UnrootLoaderChosen(__v))
@@ -48,6 +78,9 @@ impl App {
                 {
                     self.unroot.loader_path = Some(path);
                     self.unroot.next();
+                }
+                if self.unroot.step == 2 {
+                    self.refresh_unroot_backups();
                 }
                 Task::none()
             }

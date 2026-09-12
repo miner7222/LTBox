@@ -3,6 +3,15 @@
 use crate::*;
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Theme};
+
+fn cumulative_flash_percent(snapshot: &ltbox_device::edl::FlashProgress) -> u8 {
+    if snapshot.operation_total_bytes == 0 {
+        return 0;
+    }
+    ((u128::from(snapshot.operation_completed_bytes) * 100
+        / u128::from(snapshot.operation_total_bytes))
+    .min(100)) as u8
+}
 use ltbox_core::tr_args;
 
 /// Height of the rule separating two metric cells.
@@ -64,7 +73,11 @@ impl App {
         let body = if is_exec || self.sysupdate.step == 0 {
             body
         } else {
-            wizard_step_body(step_title, body)
+            if self.sysupdate.is_rescue() && self.sysupdate.step == 1 {
+                self.wizard_picker_step(step_title, body)
+            } else {
+                wizard_step_body(step_title, body)
+            }
         };
         let last_nav_step = steps.len() - 2; // Exec step has no nav row.
         let nav = if self.sysupdate.step <= last_nav_step {
@@ -112,7 +125,10 @@ impl App {
         let rescue = self.sysupdate.is_rescue();
         match (rescue, self.sysupdate.step) {
             (_, 0) => (self.t("sysupdate_action_title").to_string(), None),
-            (true, 1) => (self.t("edl_loader_title").to_string(), None),
+            (true, 1) => (
+                self.t("edl_loader_title").to_string(),
+                Some(self.loader_picker_subtitle()),
+            ),
             (true, 2) | (false, 1) => (self.t("sysupdate_confirm_title").to_string(), None),
             _ => {
                 let (title, _) = self.exec_status_copy();
@@ -188,14 +204,7 @@ impl App {
             content_width,
             self.t("sysupdate_action_title").to_string(),
             cards.into(),
-            Some((
-                self.t("sysupdate_action_title").to_string(),
-                vec![
-                    self.t(SysUpdateAction::Disable.desc_key()).to_string(),
-                    self.t(SysUpdateAction::Enable.desc_key()).to_string(),
-                    rescue_sub,
-                ],
-            )),
+            Some((self.t("sysupdate_action_title").to_string(), vec![])),
         )
     }
 
@@ -206,7 +215,10 @@ impl App {
             .action
             .map(|a| self.t(a.label_key()).to_string())
             .unwrap_or_else(|| dash.clone());
-        let mut grid_rows = vec![info_kv_center(self.t("sysupdate_step_action"), &action)];
+        let mut grid_rows = vec![confirm_definition_row(
+            self.t("sysupdate_step_action"),
+            &action,
+        )];
         let mut trailing_rows = Vec::new();
         // Rescue: echo the chosen firmware folder + region so the user
         // confirms exactly what's about to flash.
@@ -221,8 +233,11 @@ impl App {
                 .rescue_region
                 .map(|r| self.t(r.label_key()).to_string())
                 .unwrap_or_else(|| dash.clone());
-            trailing_rows.push(info_kv_center(self.t("edl_loader_label"), &folder));
-            grid_rows.push(info_kv_center(self.t("rescue_region_label"), &region));
+            trailing_rows.push(confirm_definition_row(self.t("edl_loader_label"), &folder));
+            grid_rows.push(confirm_definition_row(
+                self.t("rescue_region_label"),
+                &region,
+            ));
         }
         self.confirm_step_frame(vec![], grid_rows, trailing_rows)
     }
@@ -283,26 +298,34 @@ impl App {
         let (_, detail) = self.exec_status_copy();
         let is_error = self.operation_error.is_some();
         let is_busy = self.operation.is_running();
+        let phase_kind = self.operation.phase_kind();
+        let current_phase = self.operation.current_step();
         let phase_percent = self
             .firmware_write_progress_phase_active()
-            .then(|| {
-                self.flash_progress
-                    .as_ref()
-                    .map(|progress| progress.percent)
-            })
-            .flatten();
-        let progress = operation_progress_fraction(
-            self.operation.current_step(),
-            self.operation.steps.len(),
-            phase_percent,
-            !is_busy && !is_error,
+            .then(|| self.flash_progress.as_ref().map(cumulative_flash_percent))
+            .flatten()
+            // Full-flash overlays are generated in several batches, so their
+            // final byte denominator is not known at the phase boundary. Keep
+            // that phase at its weighted start rather than letting a growing
+            // denominator move the overall track backwards. The rawprogram
+            // and Simple Flash plans are known up front and remain determinate.
+            .filter(|_| !(phase_kind == Some(OperationPhaseKind::Flash) && current_phase == 7));
+        let progress = phase_kind.map_or_else(
+            || {
+                operation_progress_fraction(
+                    current_phase,
+                    self.operation.steps.len(),
+                    phase_percent,
+                    !is_busy && !is_error,
+                )
+            },
+            |kind| kind.progress_fraction(current_phase, phase_percent, !is_busy && !is_error),
         );
         let progress_pct = (progress * 100.0).round() as u8;
-        let current_step = self.operation.steps.get(
-            self.operation
-                .current_step()
-                .min(self.operation.steps.len().saturating_sub(1)),
-        );
+        let current_step = self
+            .operation
+            .steps
+            .get(current_phase.min(self.operation.steps.len().saturating_sub(1)));
         let phase_label = current_step
             .map(|step| step.label.clone())
             .unwrap_or_else(|| detail.clone());
@@ -315,12 +338,12 @@ impl App {
             .map(|snapshot| snapshot.partition.clone())
             .unwrap_or(phase_label);
         let byte_progress = write_progress
-            .filter(|snapshot| snapshot.total_bytes > 0)
+            .filter(|snapshot| snapshot.operation_total_bytes > 0)
             .map(|snapshot| {
                 format!(
                     "{} / {}",
-                    format_bytes_auto(snapshot.completed_bytes),
-                    format_bytes_auto(snapshot.total_bytes)
+                    format_bytes_auto(snapshot.operation_completed_bytes),
+                    format_bytes_auto(snapshot.operation_total_bytes)
                 )
             });
         let transferred = byte_progress.clone().unwrap_or_else(|| "—".to_string());
@@ -370,28 +393,20 @@ impl App {
         }
 
         let elapsed = self.operation.elapsed();
-        let remaining = if is_busy && progress > 0.0 {
-            let seconds = elapsed.as_secs_f64() * f64::from(1.0 - progress) / f64::from(progress);
-            seconds
-                .is_finite()
-                .then(|| format_exec_duration(std::time::Duration::from_secs_f64(seconds.max(0.0))))
-        } else {
-            None
-        }
-        .unwrap_or_else(|| "—".to_string());
-        let transport = match self.operation.phase_kind() {
-            Some(OperationPhaseKind::SysUpdateDisable | OperationPhaseKind::SysUpdateEnable) => {
-                "ADB"
+        let transport_hint = self
+            .operation
+            .phase_kind()
+            .map(|kind| kind.transport_hint(self.operation.current_step()))
+            .unwrap_or(OperationTransportHint::Current);
+        let transport = match transport_hint {
+            OperationTransportHint::Current if self.device.connection == ConnectionStatus::None => {
+                "—".to_string()
             }
-            Some(OperationPhaseKind::DetectArb) => "Fastboot / EDL",
-            Some(
-                OperationPhaseKind::OfflineConvertXml
-                | OperationPhaseKind::RegionConversion
-                | OperationPhaseKind::PatchArb
-                | OperationPhaseKind::RebuildVbmeta,
-            )
-            | None => "—",
-            Some(_) => "EDL · Firehose",
+            OperationTransportHint::Current => self.t(self.connection_label_key()).to_string(),
+            OperationTransportHint::Adb => self.t("conn_adb").to_string(),
+            OperationTransportHint::Fastboot => self.t("conn_fastboot").to_string(),
+            OperationTransportHint::Edl => self.t("conn_edl").to_string(),
+            OperationTransportHint::Disconnected => "—".to_string(),
         };
         let metric = |label: String, value: String| {
             container(
@@ -409,10 +424,7 @@ impl App {
         };
         let metrics = container(
             row![
-                metric(
-                    self.t("exec_metric_transport").to_string(),
-                    transport.to_string(),
-                ),
+                metric(self.t("exec_metric_transport").to_string(), transport,),
                 metric_divider(),
                 metric(self.t("exec_metric_transferred").to_string(), transferred),
                 metric_divider(),
@@ -420,8 +432,6 @@ impl App {
                     self.t("exec_metric_elapsed").to_string(),
                     format_exec_duration(elapsed),
                 ),
-                metric_divider(),
-                metric(self.t("exec_metric_remaining").to_string(), remaining),
             ]
             .spacing(0)
             .width(Length::Fill),
@@ -670,5 +680,23 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cumulative_flash_percent;
+
+    #[test]
+    fn overall_flash_percent_uses_operation_bytes_not_current_partition() {
+        let snapshot = ltbox_device::edl::FlashProgress {
+            partition: "vendor_boot".into(),
+            percent: 5,
+            completed_bytes: 5,
+            total_bytes: 100,
+            operation_completed_bytes: 700,
+            operation_total_bytes: 1_000,
+        };
+        assert_eq!(cumulative_flash_percent(&snapshot), 70);
     }
 }

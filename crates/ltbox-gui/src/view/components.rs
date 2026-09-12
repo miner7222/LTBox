@@ -616,6 +616,62 @@ pub(crate) fn info_kv_center<'a>(label: &str, value: &str) -> Element<'a, Messag
     .into()
 }
 
+/// Read-only row used by wizard confirmation screens. It shares the
+/// definition-list hierarchy of the editable full-flash review.
+pub(crate) fn confirm_definition_row<'a>(label: &str, value: &str) -> Element<'a, Message> {
+    column![
+        row![
+            container(
+                text(label.to_string())
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            )
+            .width(Length::Fixed(180.0)),
+            text(value.to_string())
+                .size(theme::text_size::BODY_MEDIUM)
+                .font(theme::emphasis::medium())
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(16)
+        .align_y(iced::Alignment::Start)
+        .width(Length::Fill)
+        .padding([9, 0]),
+        widget::rule::horizontal(1).style(shell_rule_style),
+    ]
+    .spacing(0)
+    .width(Length::Fill)
+    .into()
+}
+
+/// Compact two-column information table shared by read-only detail dialogs.
+pub(crate) fn info_key_value_table(fields: Vec<(String, String)>) -> Element<'static, Message> {
+    let mut table = column![].spacing(0);
+    for (index, (key, value)) in fields.into_iter().enumerate() {
+        let key_cell = text(key).size(12).style(muted_style).width(180);
+        let value_cell = text(value)
+            .size(12)
+            .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+        let row_inner = row![key_cell, value_cell]
+            .spacing(12)
+            .padding([4, 10])
+            .align_y(iced::Alignment::Center);
+        let zebra = index % 2 == 1;
+        table = table.push(container(row_inner).width(Length::Fill).style(
+            move |theme: &Theme| -> container::Style {
+                let palette = pal_of(theme);
+                container::Style {
+                    background: zebra.then_some(palette.surface_container_low.into()),
+                    ..Default::default()
+                }
+            },
+        ));
+    }
+    table.into()
+}
+
 pub(crate) fn adv_grid_btn<'a>(item: AdvAction, label: &str) -> Element<'a, Message> {
     // Inner container: border-only via `sel_card_style`. Earlier
     // version used `theme::surface_card_style` which paints an opaque
@@ -762,13 +818,13 @@ pub(crate) fn lucide_icon(
 
 /// Lay out wizard choices as one compact column or as an Expanded two-pane
 /// surface. Help copy is always existing localized copy supplied by the step.
-pub(crate) fn wizard_selection_step(
+pub(crate) fn wizard_selection_step<'a>(
     size_class: WindowSizeClass,
     content_width: f32,
     step_title: String,
-    options: Element<'static, Message>,
+    options: Element<'a, Message>,
     help: Option<(String, Vec<String>)>,
-) -> Element<'static, Message> {
+) -> Element<'a, Message> {
     let heading = text(step_title)
         .size(theme::text_size::TITLE_MEDIUM)
         .font(theme::emphasis::medium())
@@ -937,7 +993,11 @@ enum WizardListOptionRole {
 /// group, and without it nothing on the row says so before you click one.
 /// The ring takes the interactive `outline` tone at rest and the row's own
 /// accent once chosen, so a destructive choice reads red rather than primary.
-fn selection_radio(selected: bool, enabled: bool, destructive: bool) -> Element<'static, Message> {
+pub(crate) fn selection_radio(
+    selected: bool,
+    enabled: bool,
+    destructive: bool,
+) -> Element<'static, Message> {
     const RING: f32 = 18.0;
     const DOT: f32 = 9.0;
     let dot: Element<'static, Message> = if selected {
@@ -1022,16 +1082,17 @@ fn wizard_list_option_card_with_role(
             .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
             .into()
     };
+    let mut label_text = text(label.to_string())
+        .size(metrics.label_size)
+        .style(label_style_fn)
+        .width(Length::Fill);
+    if selected && enabled {
+        label_text = label_text.font(theme::emphasis::medium());
+    }
     let text_block = container(
-        column![
-            text(label.to_string())
-                .size(metrics.label_size)
-                .style(label_style_fn)
-                .width(Length::Fill),
-            desc,
-        ]
-        .spacing(metrics.text_gap)
-        .width(Length::Fill),
+        column![label_text, desc,]
+            .spacing(metrics.text_gap)
+            .width(Length::Fill),
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -1208,8 +1269,8 @@ impl NightlySource {
 
 impl App {
     /// Shared confirm-screen frame below the in-content step heading. Leading
-    /// rows are full-width callouts or lists, short values form a two-column
-    /// grid, and trailing rows hold full-width paths or supporting details.
+    /// rows are full-width callouts or lists; review values use the same
+    /// one-column definition list as the editable full-flash confirmation.
     pub(crate) fn confirm_step_frame<'a>(
         &self,
         leading: Vec<Element<'a, Message>>,
@@ -1229,24 +1290,13 @@ impl App {
         }
 
         if !grid.is_empty() {
-            let mut grid_rows = column![].spacing(8).width(Length::Fill);
-            let mut cells = grid.into_iter();
-            while let Some(left) = cells.next() {
-                grid_rows = if let Some(right) = cells.next() {
-                    grid_rows.push(row![left, right].spacing(12).width(Length::Fill))
-                } else {
-                    // A final unpaired scalar uses the whole line instead of
-                    // leaving an empty half-cell beside it.
-                    grid_rows.push(container(left).width(Length::Fill))
-                };
-            }
-            groups.push(grid_rows.into());
+            groups.push(column(grid).spacing(0).width(Length::Fill).into());
         }
 
         if !trailing.is_empty() {
             groups.push(
                 column(trailing)
-                    .spacing(8)
+                    .spacing(0)
                     .width(Length::Fill)
                     .align_x(iced::Alignment::Center)
                     .into(),
@@ -1294,24 +1344,34 @@ impl App {
         } else {
             SIDEBAR_RAIL_WIDTH
         };
-        (self.window_size.0 - sidebar - 112.0 - actions as f32 * 90.0).max(60.0)
+        let content_width = self.window_size.0 - sidebar;
+        let main_width = if self.window_size_class() == WindowSizeClass::Expanded {
+            let help_width =
+                (content_width * 0.25).clamp(WIZARD_HELP_PANEL_MIN_WIDTH, WIZARD_HELP_PANEL_WIDTH);
+            let block_width = (WIZARD_LIST_MAX_WIDTH + WIZARD_HELP_PANEL_GAP + 1.0 + help_width)
+                .min(content_width - 2.0 * WIZARD_STEP_HORIZONTAL_PADDING);
+            block_width - help_width - 1.0 - 2.0 * WIZARD_HELP_PANEL_GAP
+        } else {
+            content_width.min(WIZARD_LIST_MAX_WIDTH) - 2.0 * WIZARD_STEP_HORIZONTAL_PADDING
+        };
+        (main_width - 80.0 - actions as f32 * 90.0).max(60.0)
     }
 
     pub(crate) fn wizard_picker_row(
         &self,
         path: Option<&str>,
-        placeholder: String,
+        kind: PickerPathKind,
         select: Option<Message>,
         clear: Option<Message>,
     ) -> Element<'static, Message> {
         let mut controls = row![
             picker_path_field(
                 path,
-                placeholder,
+                self.t(kind.placeholder_key()).to_string(),
                 false,
                 self.picker_text_width(if clear.is_some() { 2 } else { 1 })
             ),
-            picker_action_button(self.t("btn_select").to_string(), select, true),
+            picker_action_button(self.t("btn_pick").to_string(), select, true),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center)
@@ -1324,6 +1384,21 @@ impl App {
             ));
         }
         controls.into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerPathKind {
+    File,
+    Folder,
+}
+
+impl PickerPathKind {
+    fn placeholder_key(self) -> &'static str {
+        match self {
+            Self::File => "picker_no_file_selected",
+            Self::Folder => "picker_no_folder_selected",
+        }
     }
 }
 impl App {
@@ -1368,19 +1443,31 @@ impl App {
             } else {
                 Message::NoticeRecentMissing(is_file_picker)
             };
+            let recent_path = path.clone();
+            let path_text = iced::widget::responsive(move |size| {
+                container(
+                    text(elide_path_middle(&recent_path, (size.width - 8.0).max(0.0)))
+                        .font(theme::mono_font())
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(move |t: &Theme| iced::widget::text::Style {
+                            color: Some(foreground(t)),
+                        })
+                        .width(Length::Fill)
+                        .wrapping(iced::widget::text::Wrapping::None),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(iced::Padding {
+                    right: 8.0,
+                    ..Default::default()
+                })
+                .align_y(iced::Alignment::Center)
+                .clip(true)
+                .into()
+            });
             let mut content = row![
                 lucide_icon(icon::fab_open_folder(), 17.0, foreground),
-                text(elide_path_middle(
-                    path,
-                    self.picker_text_width(if exists { 0 } else { 2 })
-                ))
-                .font(theme::mono_font())
-                .size(theme::text_size::BODY_SMALL)
-                .style(move |t: &Theme| iced::widget::text::Style {
-                    color: Some(foreground(t))
-                })
-                .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::None),
+                path_text,
             ]
             .spacing(11)
             .align_y(iced::Alignment::Center)
@@ -1396,25 +1483,30 @@ impl App {
                         .to_string(),
                     )
                     .size(theme::text_size::LABEL_SMALL)
+                    .wrapping(iced::widget::text::Wrapping::None)
                     .style(|t: &Theme| iced::widget::text::Style {
                         color: Some(pal_of(t).error),
                     }),
                 );
             }
             rows = rows.push(
-                button(content)
-                    .on_press(message)
-                    .height(44)
-                    .width(Length::Fill)
-                    .padding([0, 14])
-                    .style(move |t: &Theme, status| button::Style {
-                        background: (exists && theme::state_alpha(status) > 0.0).then_some(
-                            theme::with_alpha(pal_of(t).on_surface, theme::state_alpha(status))
-                                .into(),
-                        ),
-                        text_color: pal_of(t).on_surface,
-                        ..Default::default()
-                    }),
+                button(
+                    container(content)
+                        .height(Length::Fill)
+                        .align_y(iced::Alignment::Center)
+                        .width(Length::Fill),
+                )
+                .on_press(message)
+                .height(44)
+                .width(Length::Fill)
+                .padding([0, 14])
+                .style(move |t: &Theme, status| button::Style {
+                    background: (exists && theme::state_alpha(status) > 0.0).then_some(
+                        theme::with_alpha(pal_of(t).on_surface, theme::state_alpha(status)).into(),
+                    ),
+                    text_color: pal_of(t).on_surface,
+                    ..Default::default()
+                }),
             );
         }
         column![
@@ -1477,6 +1569,13 @@ pub(crate) fn elide_path_middle(path: &str, width: f32) -> String {
         } else {
             1
         }
+    } else {
+        0
+    };
+    // UNC server/share names can themselves exceed the available width.
+    // Preserve a root only when it leaves room for the ellipsis and path tail.
+    let prefix_len = if chars[..prefix_len].iter().map(|c| units(*c)).sum::<usize>() + 1 < budget {
+        prefix_len
     } else {
         0
     };
@@ -1603,5 +1702,63 @@ mod picker_path_tests {
         let result = elide_path_middle("D:/펌웨어/아주긴폴더이름/이미지.img", 100.0);
         assert!(result.starts_with("D:/"));
         assert!(result.ends_with(".img"));
+    }
+
+    #[test]
+    fn oversized_unc_roots_and_tiny_widths_stay_within_the_path_budget() {
+        let path = format!(
+            r"\\{}\{}\image.img",
+            "server".repeat(200),
+            "공유".repeat(200)
+        );
+        for width in [0.0_f32, 1.0, 20.0, 100.0, 240.0] {
+            let shown = elide_path_middle(&path, width);
+            let budget = (width / (crate::theme::text_size::BODY_SMALL * 0.62))
+                .floor()
+                .max(1.0) as usize;
+            let units: usize = shown
+                .chars()
+                .map(|c| {
+                    if c == '…' || (c as u32) < 0x1100 {
+                        1
+                    } else {
+                        2
+                    }
+                })
+                .sum();
+            assert!(units <= budget, "{width}: {shown}");
+        }
+    }
+}
+impl App {
+    /// Name the connected model's required loader; without a device, show
+    /// the standard MELF hint while the picker still accepts XML too.
+    pub(crate) fn loader_picker_subtitle(&self) -> String {
+        let key = if self.device.connection == ConnectionStatus::None {
+            "loader_picker_subtitle_unknown"
+        } else if self.requires_sahara_manifest() {
+            "loader_picker_subtitle_manifest"
+        } else if self.device.model.is_empty() {
+            "loader_picker_subtitle_unknown"
+        } else {
+            "loader_picker_subtitle_standard"
+        };
+        self.t(key).to_string()
+    }
+
+    /// Keep the same supporting pane beside picker and selection steps.
+    pub(crate) fn wizard_picker_step<'a>(
+        &self,
+        title: String,
+        body: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let size = self.window_size_class();
+        let width = self.window_size.0
+            - if size == WindowSizeClass::Expanded {
+                SIDEBAR_EXPANDED_WIDTH
+            } else {
+                SIDEBAR_RAIL_WIDTH
+            };
+        wizard_selection_step(size, width, title, body, Some((String::new(), vec![])))
     }
 }

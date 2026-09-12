@@ -64,6 +64,7 @@ pub(crate) fn root_worker(
     kpm_paths: Vec<std::path::PathBuf>,
     superkey: String,
     nightly_run_id: Option<u64>,
+    release_tag: Option<String>,
     preinit_device: String,
     ll: LiveLabels,
     phases: PhaseReporter,
@@ -249,7 +250,7 @@ pub(crate) fn root_worker(
             None
         },
         nightly_run_id,
-        release_tag: None,
+        release_tag,
     };
     // Phase 2/8 — Resolve and download root files before EDL.
     live!(log, "[Root] {}", phases.marker(2));
@@ -735,6 +736,7 @@ mod tests {
                 None,
                 Vec::new(),
                 String::new(),
+                None,
                 None,
                 String::new(),
                 app.live_labels(),

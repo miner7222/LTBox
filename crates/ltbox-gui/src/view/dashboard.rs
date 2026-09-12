@@ -438,7 +438,6 @@ impl App {
             dashboard_definition_row(label("device_slot"), value(slot.to_string()), true,),
             dashboard_definition_row(rollback_label, rollback_value, true),
             dashboard_definition_row(label("device_firmware"), value(firmware.to_string()), false,),
-            Space::new().height(14.0),
             iced::widget::rule::horizontal(1).style(shell_rule_style),
             Space::new().height(14.0),
             quick_actions,

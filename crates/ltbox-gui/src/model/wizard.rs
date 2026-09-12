@@ -27,6 +27,12 @@ pub(crate) struct RootWizard {
     pub(crate) skroot_flavor: Option<SkrootFlavor>,
     pub(crate) provider: Option<Provider>,
     pub(crate) version: Option<VerChoice>,
+    pub(crate) release_tag: Option<String>,
+    pub(crate) release_popup_open: bool,
+    pub(crate) release_request: Option<std::time::Instant>,
+    pub(crate) releases: Vec<ltbox_core::github::PublishedRelease>,
+    pub(crate) release_selection: Option<usize>,
+    pub(crate) release_error: Option<String>,
     pub(crate) nightly_source: Option<NightlySource>,
     pub(crate) file_path: Option<String>, // GKI zip, MagiskForks APK, or manual nightly
     pub(crate) folder_path: Option<String>, // Firmware folder (loader + optional testkey)
@@ -521,6 +527,10 @@ pub(crate) struct UnrootWizard {
     /// Loader-resolution failure, kept apart from any scan error so a
     /// refused pick does not overwrite why the last scan failed.
     pub(crate) loader_error: Option<String>,
+    /// LTBox-owned root snapshots, refreshed whenever the folder step is entered.
+    pub(crate) backup_folders: Vec<crate::backup::BackupFolderEntry>,
+    pub(crate) backup_scan_error: Option<String>,
+    pub(crate) backup_manifest_dialog: Option<crate::backup::BackupManifestDialog>,
 }
 
 pub(crate) const UNROOT_STEPS: &[&str] = &[
