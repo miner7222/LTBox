@@ -11,7 +11,7 @@ exclude = ["vendor/qdl"]
 resolver = "2"
 
 [workspace.package]
-version = "3.2.9"
+version = "3.3.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
