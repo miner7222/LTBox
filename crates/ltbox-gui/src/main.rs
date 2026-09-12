@@ -18,6 +18,7 @@ mod icon;
 mod arb;
 mod arb_overlay;
 mod backup;
+mod country_flags;
 #[cfg(feature = "demo")]
 mod demo;
 mod device_name;

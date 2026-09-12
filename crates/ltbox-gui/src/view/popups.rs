@@ -28,9 +28,7 @@ fn country_matches_search(entry: &CountryEntry, query: &str) -> bool {
         || entry.name.to_ascii_lowercase().contains(&query)
 }
 
-/// Country-list row with an optional future flag slot. No placeholder is
-/// inserted when `leading` is `None`; when an asset is supplied later, this
-/// wrapper locks it to the mockup's 20x14 / 4px-radius geometry.
+/// Country-list row with a bundled, font-independent flag.
 fn country_popup_row<'a>(
     leading: Option<Element<'a, Message>>,
     code: &'static str,
@@ -352,6 +350,8 @@ impl App {
             ),
             license_entry("Lucide", "ISC"),
             license_entry("qdl", "BSD-3-Clause — Qualcomm"),
+            license_entry("flag-icons 7.3.2", "MIT — © Panayiotis Lipiridis"),
+            text(include_str!("../../assets/flags/LICENSE")).size(theme::text_size::BODY_SMALL),
             license_entry("magiskboot", "GPL-3.0-or-later"),
             license_entry("kptools", "GPL-2.0-or-later"),
             license_entry("avbtool-rs", "Apache-2.0"),
@@ -1406,7 +1406,16 @@ impl App {
             let selected = selected_code == Some(entry.code);
             let disabled = tb322fc && !entry.code.eq_ignore_ascii_case("CN");
             list = list.push(country_popup_row(
-                None, entry.code, entry.name, selected, disabled,
+                country_flags::svg(entry.code).map(|bytes| {
+                    widget::svg(widget::svg::Handle::from_memory(bytes))
+                        .width(COUNTRY_FLAG_WIDTH)
+                        .height(COUNTRY_FLAG_HEIGHT)
+                        .into()
+                }),
+                entry.code,
+                entry.name,
+                selected,
+                disabled,
             ));
             has_row = true;
         }
