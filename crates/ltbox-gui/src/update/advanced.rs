@@ -350,12 +350,6 @@ impl App {
                 Task::none()
             }
             FlashPartsMsg::FlashPartsToggleRow(idx) => {
-                let state = self.flash_parts.rows.get(idx).map(|row| row.state);
-                if state == Some(FlashRowState::Skip) {
-                    return self.update(Message::FlashParts(FlashPartsMsg::FlashPartsPickRowFile(
-                        idx,
-                    )));
-                }
                 if let Some(row) = self.flash_parts.rows.get_mut(idx) {
                     row.advance_action();
                 }
@@ -405,6 +399,16 @@ impl App {
                     && partition_table_leading_action(self.flash_parts.entry_connection)
                         == WizardLeadingAction::Cancel
                 {
+                    return self.update(Message::FlashParts(FlashPartsMsg::FlashPartsClose));
+                }
+                self.flash_parts.back();
+                Task::none()
+            }
+            FlashPartsMsg::FlashPartsClose => {
+                if matches!(self.flash_parts.step, 1 | 2)
+                    && partition_table_leading_action(self.flash_parts.entry_connection)
+                        == WizardLeadingAction::Cancel
+                {
                     let loader =
                         match self.validate_loader_path(&self.flash_parts.loader_path.clone()) {
                             Ok(loader) => loader,
@@ -412,15 +416,8 @@ impl App {
                         };
                     self.advanced_wizard_open = AdvancedWizardOpen::None;
                     self.flash_parts.reset();
-                    return self.start_edl_reboot_with_loader(
-                        RebootTarget::System,
-                        std::path::PathBuf::from(loader),
-                    );
+                    return self.start_edl_reboot_with_loader(RebootTarget::System, loader.into());
                 }
-                self.flash_parts.back();
-                Task::none()
-            }
-            FlashPartsMsg::FlashPartsClose => {
                 self.advanced_wizard_open = AdvancedWizardOpen::None;
                 self.flash_parts.reset();
                 Task::none()
@@ -482,6 +479,9 @@ impl App {
                 Task::none()
             }
             FlashPartsMsg::FlashPartsExecStart => {
+                if self.flash_parts.step != 2 || !self.flash_parts.can_next() {
+                    return Task::none();
+                }
                 self.flash_parts.next(); // advance to Exec screen
                 // Advanced busy view (not Flash) so the busy dialog shows the
                 // partition-write message via `busy_body_override`, not

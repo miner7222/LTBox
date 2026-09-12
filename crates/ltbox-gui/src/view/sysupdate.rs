@@ -13,6 +13,10 @@ fn cumulative_flash_percent(snapshot: &ltbox_device::edl::FlashProgress) -> u8 {
         / u128::from(snapshot.operation_total_bytes))
     .min(100)) as u8
 }
+
+fn current_partition_size(snapshot: &ltbox_device::edl::FlashProgress) -> Option<String> {
+    (snapshot.total_bytes > 0).then(|| format_bytes_auto(snapshot.total_bytes))
+}
 use ltbox_core::tr_args;
 
 /// Height of the rule separating two metric cells.
@@ -372,7 +376,7 @@ impl App {
                 .style(muted_style),
             );
         }
-        if let Some(bytes) = byte_progress {
+        if let Some(bytes) = write_progress.and_then(current_partition_size) {
             now_copy = now_copy.push(
                 text(bytes)
                     .size(theme::text_size::BODY_SMALL)
@@ -686,7 +690,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::cumulative_flash_percent;
+    use super::{cumulative_flash_percent, current_partition_size};
 
     #[test]
     fn overall_flash_percent_uses_operation_bytes_not_current_partition() {
@@ -699,5 +703,10 @@ mod tests {
             operation_total_bytes: 1_000,
         };
         assert_eq!(cumulative_flash_percent(&snapshot), 70);
+        assert_eq!(
+            current_partition_size(&snapshot),
+            Some(crate::format_bytes_auto(100))
+        );
+        assert_eq!(current_partition_size(&Default::default()), None);
     }
 }

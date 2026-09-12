@@ -19,6 +19,9 @@ pub(super) fn defers_message(app: &App, message: &Message) -> bool {
         }
         Message::FlashParts(FlashPartsMsg::FlashPartsNext) => app.flash_parts.step != 1,
         Message::FlashParts(FlashPartsMsg::FlashPartsBack) => app.flash_parts.step == 1,
+        Message::FlashParts(FlashPartsMsg::FlashPartsClose) => {
+            matches!(app.flash_parts.step, 1 | 2)
+        }
         Message::DumpParts(DumpPartsMsg::DumpPartsNext) => app.dump_parts.step == 0,
         Message::DumpParts(DumpPartsMsg::DumpPartsBack) => app.dump_parts.step == 1,
         Message::FlashPhys(FlashPhysMsg::FlashPhysNext) => app.flash_phys.step == 2,

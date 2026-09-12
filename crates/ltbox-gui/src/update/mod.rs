@@ -461,6 +461,15 @@ impl App {
                     .chain(Task::done(Message::PollDevice));
             }
             Message::StartOver => {
+                // The shared footer calls StartOver for Cancel. A partition
+                // scan may have moved the device into EDL; release that session
+                // through the same entry-mode-aware path as the table's Cancel.
+                if self.current_view == View::Advanced
+                    && self.advanced_wizard_open == AdvancedWizardOpen::FlashParts
+                    && matches!(self.flash_parts.step, 1 | 2)
+                {
+                    return self.update(Message::FlashParts(FlashPartsMsg::FlashPartsClose));
+                }
                 match self.current_view {
                     View::Root => self.root.reset(),
                     View::Flash => self.flash.reset(),

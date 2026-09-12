@@ -1068,7 +1068,7 @@ impl Wizard for SysUpdateWizard {
 
 /// The only three actions a partition row can represent.
 ///
-/// `Write` always owns a selected file, while `Skip` and `Erase` never do.
+/// `Write` may await a file, while `Skip` and `Erase` never own one.
 /// Keeping that invariant in [`FlashPartRow`] prevents stale images from being
 /// written after a user changes a row to erase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1092,7 +1092,7 @@ pub(crate) struct FlashPartRow {
 }
 
 impl FlashPartRow {
-    /// Assigning an image is the sole transition into `Write`.
+    /// Assigning an image selects `Write` directly.
     pub(crate) fn assign_file(&mut self, path: String) {
         self.file_path = Some(path);
         self.state = FlashRowState::Write;
@@ -1104,10 +1104,10 @@ impl FlashPartRow {
         self.state = FlashRowState::Skip;
     }
 
-    /// Advance an already-actionable row. Entering erase always drops its file.
+    /// Cycle independently of the picker. Entering erase always drops its file.
     pub(crate) fn advance_action(&mut self) {
         match self.state {
-            FlashRowState::Skip => {}
+            FlashRowState::Skip => self.state = FlashRowState::Write,
             FlashRowState::Write => {
                 self.file_path = None;
                 self.state = FlashRowState::Erase;
@@ -1159,6 +1159,20 @@ mod flash_part_row_tests {
         row.clear_file();
         assert_eq!(row.state, FlashRowState::Skip);
         assert_eq!(row.file_path, None);
+    }
+
+    #[test]
+    fn checkbox_can_select_erase_without_an_image() {
+        let mut row = row();
+        for state in [
+            FlashRowState::Write,
+            FlashRowState::Erase,
+            FlashRowState::Skip,
+        ] {
+            row.advance_action();
+            assert_eq!(row.state, state);
+            assert_eq!(row.file_path, None);
+        }
     }
 }
 
@@ -1270,12 +1284,16 @@ impl Wizard for FlashPartsWizard {
     fn can_next(&self) -> bool {
         match self.step {
             0 => self.loader_path.is_some() && self.loader_error.is_none() && !self.scanning,
-            1 => self.rows.iter().any(|r| match r.state {
-                FlashRowState::Write => r.file_path.is_some(),
-                FlashRowState::Erase => true,
-                FlashRowState::Skip => false,
-            }),
-            2 => true,
+            1 | 2 => {
+                self.rows
+                    .iter()
+                    .all(|r| r.state != FlashRowState::Write || r.file_path.is_some())
+                    && self.rows.iter().any(|r| match r.state {
+                        FlashRowState::Write => r.file_path.is_some(),
+                        FlashRowState::Erase => true,
+                        FlashRowState::Skip => false,
+                    })
+            }
             _ => false,
         }
     }

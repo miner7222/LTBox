@@ -4945,6 +4945,69 @@ mod tests {
     }
 
     #[test]
+    fn partition_checkbox_cycles_without_picker_and_blocks_incomplete_writes() {
+        let mut app = App::default();
+        app.flash_parts.step = 1;
+        app.flash_parts.rows.push(FlashPartRow {
+            lun: 0,
+            label: "userdata".into(),
+            start_sector: 0,
+            num_sectors: 1,
+            size_bytes: 512,
+            file_path: None,
+            state: FlashRowState::Skip,
+        });
+        let task = app.update(Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(0)));
+        assert_eq!(task.units(), 0);
+        assert_eq!(app.flash_parts.rows[0].state, FlashRowState::Write);
+        assert!(!app.flash_parts.can_next());
+        let task = app.update(Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(0)));
+        assert_eq!(task.units(), 0);
+        assert_eq!(app.flash_parts.rows[0].state, FlashRowState::Erase);
+        assert!(app.flash_parts.can_next());
+        let mut incomplete = app.flash_parts.rows[0].clone();
+        incomplete.state = FlashRowState::Write;
+        app.flash_parts.rows.push(incomplete);
+        for step in [1, 2] {
+            app.flash_parts.step = step;
+            assert!(!app.flash_parts.can_next());
+        }
+        assert_eq!(
+            app.update(Message::FlashParts(FlashPartsMsg::FlashPartsExecStart))
+                .units(),
+            0
+        );
+        assert!(!app.operation.is_running());
+    }
+
+    #[test]
+    fn partition_confirmation_cancel_restores_only_transitional_entry_modes() {
+        let loader = tempfile::Builder::new().suffix(".melf").tempfile().unwrap();
+        for entry in [
+            ConnectionStatus::Adb,
+            ConnectionStatus::Fastboot,
+            ConnectionStatus::Edl,
+        ] {
+            let mut app = App {
+                current_view: View::Advanced,
+                advanced_wizard_open: AdvancedWizardOpen::FlashParts,
+                flash_parts: FlashPartsWizard {
+                    step: 2,
+                    loader_path: Some(loader.path().to_string_lossy().into_owned()),
+                    entry_connection: Some(entry),
+                    ..Default::default()
+                },
+                ..App::default()
+            };
+            // Dropping the task proves scheduling without touching any device.
+            let _task = app.update(Message::StartOver);
+            assert_eq!(app.advanced_wizard_open, AdvancedWizardOpen::None);
+            assert_eq!(app.operation.is_running(), entry != ConnectionStatus::Edl);
+            assert_eq!(app.flash_parts.entry_connection, None);
+        }
+    }
+
+    #[test]
     fn advanced_partition_tables_started_in_edl_keep_back_without_rebooting() {
         assert_eq!(
             partition_table_leading_action(Some(ConnectionStatus::Edl)),
