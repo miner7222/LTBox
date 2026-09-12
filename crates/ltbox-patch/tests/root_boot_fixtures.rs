@@ -170,6 +170,7 @@ fn build_fixture_output(
         superkey: String::new(),
         magisk_forks_apk: None,
         nightly_run_id: None,
+        release_tag: None,
     };
     let mut log = Vec::new();
     let artifacts = build_patched_artifacts(&config, false, &mut log).unwrap();

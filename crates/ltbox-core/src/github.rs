@@ -36,6 +36,34 @@ struct Release {
     draft: bool,
     #[serde(default)]
     html_url: String,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    id: u64,
+}
+
+/// Published release shown in the root version picker, newest first.
+#[derive(Debug, Clone)]
+pub struct PublishedRelease {
+    pub tag: String,
+    pub prerelease: bool,
+    pub published_at: String,
+}
+
+fn recent_releases(mut releases: Vec<Release>) -> Vec<PublishedRelease> {
+    releases.retain(|r| !r.draft && r.published_at.is_some());
+    // GitHub timestamps are UTC ISO-8601. IDs break equal-date ties without
+    // relying on API response order or assuming tags are semantic versions.
+    releases.sort_by(|a, b| b.published_at.cmp(&a.published_at).then(b.id.cmp(&a.id)));
+    releases
+        .into_iter()
+        .take(5)
+        .map(|r| PublishedRelease {
+            tag: r.tag_name,
+            prerelease: r.prerelease,
+            published_at: r.published_at.unwrap_or_default(),
+        })
+        .collect()
 }
 
 /// Slim public payload for the in-app update banner — see
@@ -195,6 +223,34 @@ impl GitHubClient {
         Ok((tag, assets))
     }
 
+    /// Latest five published releases, including prereleases, by publication date.
+    pub fn recent_published_releases(&self) -> Result<Vec<PublishedRelease>> {
+        let mut releases = Vec::new();
+        let mut page = 1;
+        loop {
+            let batch: Vec<Release> =
+                self.get_json(&format!("/releases?per_page=100&page={page}"))?;
+            let finished = batch.len() < 100;
+            releases.extend(batch);
+            if finished {
+                break;
+            }
+            page += 1;
+        }
+        Ok(recent_releases(releases))
+    }
+
+    /// Resolve an explicitly selected release, falling back only when unselected.
+    pub fn selected_release_assets(
+        &self,
+        tag: Option<&str>,
+    ) -> Result<(String, Vec<(String, String)>)> {
+        match tag {
+            Some(tag) => Ok((tag.to_owned(), self.release_by_tag(tag)?)),
+            None => self.latest_release_assets(),
+        }
+    }
+
     /// First latest-release asset whose name matches `predicate` → `(name, url)`.
     pub fn latest_release_asset_where(
         &self,
@@ -213,7 +269,17 @@ impl GitHubClient {
     }
 
     pub fn release_by_tag(&self, tag: &str) -> Result<Vec<(String, String)>> {
-        let release: Release = self.get_json(&format!("/releases/tags/{tag}"))?;
+        let encoded: String = tag
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    char::from(b).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let release: Release = self.get_json(&format!("/releases/tags/{encoded}"))?;
         Ok(release
             .assets
             .into_iter()
@@ -291,4 +357,34 @@ fn normalize_workflow_path(path: &str) -> String {
     path.trim_start_matches(".github/workflows/")
         .trim_start_matches(".github/workflows\\")
         .to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_release_picker_excludes_drafts_and_keeps_latest_five_by_publish_time() {
+        let json = r#"[
+            {"id": 1, "tag_name": "v1", "assets": [], "published_at": "2026-01-01T00:00:00Z"},
+            {"id": 2, "tag_name": "v2-rc", "assets": [], "prerelease": true, "published_at": "2026-02-01T00:00:00Z"},
+            {"id": 3, "tag_name": "draft", "assets": [], "draft": true, "published_at": "2026-09-01T00:00:00Z"},
+            {"id": 4, "tag_name": "v4", "assets": [], "published_at": "2026-04-01T00:00:00Z"},
+            {"id": 5, "tag_name": "v5", "assets": [], "published_at": "2026-05-01T00:00:00Z"},
+            {"id": 6, "tag_name": "v6", "assets": [], "published_at": "2026-06-01T00:00:00Z"},
+            {"id": 7, "tag_name": "v7", "assets": [], "published_at": "2026-07-01T00:00:00Z"},
+            {"id": 8, "tag_name": "unpublished", "assets": []}
+        ]"#;
+        let releases: Vec<Release> = serde_json::from_str(json).unwrap();
+        let recent = recent_releases(releases);
+
+        assert_eq!(
+            recent
+                .iter()
+                .map(|release| release.tag.as_str())
+                .collect::<Vec<_>>(),
+            ["v7", "v6", "v5", "v4", "v2-rc"]
+        );
+        assert!(recent.last().is_some_and(|release| release.prerelease));
+    }
 }

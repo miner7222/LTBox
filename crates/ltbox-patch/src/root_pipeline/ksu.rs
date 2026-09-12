@@ -15,21 +15,22 @@ use ltbox_core::github::{GitHubClient, WorkflowArtifact};
 use ltbox_core::i18n::tr;
 use ltbox_core::{LtboxError, Result, tr_args};
 
-use super::apatch::{download_apatch_payload, download_apatch_payload_nightly};
+use super::apatch::{download_apatch_payload_nightly, download_apatch_release_payload};
 use super::apk::{
     copy_apk_to, extract_first_apk_from_zip, ksu_manager_nightly_preferences,
     ksu_manager_stable_preferences, select_manager_asset, stage_manager_from_downloaded_asset,
 };
 use super::magisk::{
-    download_latest_magisk_apk, download_magisk_apk_nightly, fetch_nightly_apk_outer_zip,
+    download_magisk_apk_nightly, download_magisk_release_apk, fetch_nightly_apk_outer_zip,
 };
 use super::{
     RootFamily, RootPipelineConfig, RootProvider, RootVersion, nightly_artifact_url, provider_repo,
     resolve_nightly_run,
 };
 
-fn download_ksu_manager_apk_stable(
+fn download_ksu_manager_apk_release(
     provider: RootProvider,
+    release_tag: Option<&str>,
     work_dir: &Path,
     manager_apk: &Path,
     log: &mut Vec<String>,
@@ -40,7 +41,7 @@ fn download_ksu_manager_apk_stable(
         ))
     })?;
     let client = GitHubClient::new(repo)?;
-    let (tag, assets) = client.latest_release_assets()?;
+    let (tag, assets) = client.selected_release_assets(release_tag)?;
     let (name, url) = select_manager_asset(&assets, ksu_manager_stable_preferences(provider))
         .ok_or_else(|| LtboxError::Download(format!("No manager APK artifact on latest {repo}")))?;
     ltbox_core::live!(
@@ -164,7 +165,12 @@ pub fn stage_root_manager_apk(
                 );
             }
             (_, RootVersion::Stable) => {
-                download_latest_magisk_apk(cfg.provider, &manager_apk, log)?;
+                download_magisk_release_apk(
+                    cfg.provider,
+                    cfg.release_tag.as_deref(),
+                    &manager_apk,
+                    log,
+                )?;
             }
             (_, RootVersion::Nightly) => {
                 download_magisk_apk_nightly(
@@ -178,7 +184,13 @@ pub fn stage_root_manager_apk(
         },
         RootFamily::KernelSU => match cfg.version {
             RootVersion::Stable => {
-                download_ksu_manager_apk_stable(cfg.provider, &cfg.work_dir, &manager_apk, log)?;
+                download_ksu_manager_apk_release(
+                    cfg.provider,
+                    cfg.release_tag.as_deref(),
+                    &cfg.work_dir,
+                    &manager_apk,
+                    log,
+                )?;
             }
             RootVersion::Nightly => {
                 download_ksu_manager_apk_nightly(
@@ -194,7 +206,12 @@ pub fn stage_root_manager_apk(
             let apk_path = cfg.work_dir.join("apatch.apk");
             match cfg.version {
                 RootVersion::Stable => {
-                    download_apatch_payload(cfg.provider, &cfg.work_dir, log)?;
+                    download_apatch_release_payload(
+                        cfg.provider,
+                        cfg.release_tag.as_deref(),
+                        &cfg.work_dir,
+                        log,
+                    )?;
                 }
                 RootVersion::Nightly => {
                     download_apatch_payload_nightly(
@@ -526,10 +543,28 @@ pub fn download_ksu_payload(
     staging_dir: &Path,
     log: &mut Vec<String>,
 ) -> Result<()> {
+    download_ksu_release_payload(
+        provider,
+        None,
+        kernel_version,
+        device_branch,
+        staging_dir,
+        log,
+    )
+}
+
+pub(super) fn download_ksu_release_payload(
+    provider: RootProvider,
+    release_tag: Option<&str>,
+    kernel_version: Option<&str>,
+    device_branch: Option<&str>,
+    staging_dir: &Path,
+    log: &mut Vec<String>,
+) -> Result<()> {
     let repo = provider_repo(provider)
         .ok_or_else(|| LtboxError::Patch(format!("Unknown KSU provider: {provider:?}")))?;
     let client = GitHubClient::new(repo)?;
-    let (tag, assets) = client.latest_release_assets()?;
+    let (tag, assets) = client.selected_release_assets(release_tag)?;
     ltbox_core::live!(
         log,
         "[KSU] {}",
@@ -776,7 +811,7 @@ pub fn download_ksu_payload_nightly(
 mod tests {
     use super::{
         ArtifactDigestMismatch, ArtifactDigestStatus, RootProvider, compare_artifact_digest,
-        download_ksu_manager_apk_nightly, download_ksu_manager_apk_stable, download_ksu_payload,
+        download_ksu_manager_apk_nightly, download_ksu_manager_apk_release, download_ksu_payload,
         download_ksu_payload_nightly, ksu_gki_branch, ksu_ko_kver_matches,
         normalize_ksu_kernel_version, select_ksu_nightly_ko_artifact, select_ksu_release_ko_asset,
         select_ksuinit_artifact, select_skroot_manager_asset, stable_lkm_sources_exhausted,
@@ -1141,8 +1176,13 @@ mod tests {
                 let tmp = tempfile::tempdir().expect("tempdir");
                 let manager_apk = tmp.path().join("manager.apk");
                 let mut log = Vec::new();
-                let result =
-                    download_ksu_manager_apk_stable(provider, tmp.path(), &manager_apk, &mut log);
+                let result = download_ksu_manager_apk_release(
+                    provider,
+                    None,
+                    tmp.path(),
+                    &manager_apk,
+                    &mut log,
+                );
                 let outcome = match result {
                     Ok(tag) => match (
                         manager_apk.exists(),

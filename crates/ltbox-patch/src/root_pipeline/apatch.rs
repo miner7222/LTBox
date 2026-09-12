@@ -51,13 +51,22 @@ pub fn download_apatch_payload(
     work_dir: &Path,
     log: &mut Vec<String>,
 ) -> Result<String> {
+    download_apatch_release_payload(provider, None, work_dir, log)
+}
+
+pub(super) fn download_apatch_release_payload(
+    provider: RootProvider,
+    release_tag: Option<&str>,
+    work_dir: &Path,
+    log: &mut Vec<String>,
+) -> Result<String> {
     let repo = provider_repo(provider).ok_or_else(|| {
         LtboxError::Patch(format!(
             "download_apatch_payload: unsupported provider {provider:?}"
         ))
     })?;
     let client = GitHubClient::new(repo)?;
-    let (tag, assets) = client.latest_release_assets()?;
+    let (tag, assets) = client.selected_release_assets(release_tag)?;
     let (name, url) = assets
         .into_iter()
         .find(|(n, _)| n.to_lowercase().ends_with(".apk"))

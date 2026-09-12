@@ -204,6 +204,8 @@ pub struct RootPipelineConfig {
     pub magisk_forks_apk: Option<PathBuf>,
     /// Nightly: manual workflow run ID. `None` → auto-detect latest.
     pub nightly_run_id: Option<u64>,
+    /// Stable-channel release selected in the GUI. None preserves latest behavior.
+    pub release_tag: Option<String>,
 }
 
 /// Per-provider `(workflow_file, default_branch)` for nightly runs.
@@ -366,7 +368,12 @@ pub fn stage_root_payload(cfg: &RootPipelineConfig, log: &mut Vec<String>) -> Re
                 } else {
                     match cfg.version {
                         RootVersion::Stable => {
-                            download_latest_magisk_apk(cfg.provider, &apk_path, log)?;
+                            magisk::download_magisk_release_apk(
+                                cfg.provider,
+                                cfg.release_tag.as_deref(),
+                                &apk_path,
+                                log,
+                            )?;
                         }
                         RootVersion::Nightly => {
                             download_magisk_apk_nightly(
@@ -393,8 +400,9 @@ pub fn stage_root_payload(cfg: &RootPipelineConfig, log: &mut Vec<String>) -> Re
             match cfg.version {
                 RootVersion::Stable => {
                     ltbox_core::live!(log, "[KSU] {}", tr("log_ksu_fetching_stable"));
-                    download_ksu_payload(
+                    ksu::download_ksu_release_payload(
                         cfg.provider,
+                        cfg.release_tag.as_deref(),
                         cfg.kernel_version.as_deref(),
                         cfg.kernel_gki_branch.as_deref(),
                         &cfg.work_dir,

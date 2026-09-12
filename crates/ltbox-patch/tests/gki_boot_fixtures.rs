@@ -52,6 +52,7 @@ fn gbl_gki_pipeline_matches_reference_image() {
         superkey: String::new(),
         magisk_forks_apk: None,
         nightly_run_id: None,
+        release_tag: None,
     };
     let artifacts = build_patched_artifacts(&config, true, &mut Vec::new()).unwrap();
     assert_eq!(artifacts.root_partition, "boot_b");
@@ -96,6 +97,7 @@ fn skip_avb_rejects_missing_empty_and_unrecognized_abl_before_patching() {
             superkey: String::new(),
             magisk_forks_apk: None,
             nightly_run_id: None,
+            release_tag: None,
         };
         let error = match build_patched_artifacts(&config, true, &mut Vec::new()) {
             Ok(_) => panic!("unverified ABL accepted"),

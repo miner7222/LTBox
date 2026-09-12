@@ -21,10 +21,19 @@ pub fn download_latest_magisk_apk(
     dst_path: &Path,
     log: &mut Vec<String>,
 ) -> Result<String> {
+    download_magisk_release_apk(provider, None, dst_path, log)
+}
+
+pub(super) fn download_magisk_release_apk(
+    provider: RootProvider,
+    release_tag: Option<&str>,
+    dst_path: &Path,
+    log: &mut Vec<String>,
+) -> Result<String> {
     let repo = provider_repo(provider)
         .ok_or_else(|| LtboxError::Patch("Magisk forks need a local APK for patching".into()))?;
     let client = GitHubClient::new(repo)?;
-    let (tag, assets) = client.latest_release_assets()?;
+    let (tag, assets) = client.selected_release_assets(release_tag)?;
     let (name, url) = assets
         .into_iter()
         .find(|(n, _)| {

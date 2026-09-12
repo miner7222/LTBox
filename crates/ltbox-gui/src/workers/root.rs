@@ -249,6 +249,7 @@ pub(crate) fn root_worker(
             None
         },
         nightly_run_id,
+        release_tag: None,
     };
     // Phase 2/8 — Resolve and download root files before EDL.
     live!(log, "[Root] {}", phases.marker(2));
