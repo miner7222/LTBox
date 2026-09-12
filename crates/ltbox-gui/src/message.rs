@@ -45,7 +45,6 @@ pub(crate) enum Message {
     FolderSelected(Option<String>),
     RecentFilePicked(PickerTarget, String),
     RecentFolderPicked(PickerTarget, String),
-    NoticeRecentMissing(bool),
     OperationError(String),
     DismissError,
     StartOver,

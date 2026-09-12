@@ -233,7 +233,7 @@ impl App {
                 .rescue_region
                 .map(|r| self.t(r.label_key()).to_string())
                 .unwrap_or_else(|| dash.clone());
-            trailing_rows.push(confirm_definition_row(self.t("edl_loader_label"), &folder));
+            trailing_rows.push(confirm_path_row(self.t("edl_loader_label"), &folder));
             grid_rows.push(confirm_definition_row(
                 self.t("rescue_region_label"),
                 &region,

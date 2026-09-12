@@ -318,7 +318,7 @@ fn action_outlined_style(t: &Theme, status: button::Status) -> button::Style {
             border: iced::Border {
                 color: with_alpha(p.on_surface, 0.12),
                 width: 1.0,
-                radius: theme::shape::SM.into(),
+                radius: theme::button_radius(status).into(),
             },
             ..Default::default()
         };
@@ -330,7 +330,7 @@ fn action_outlined_style(t: &Theme, status: button::Status) -> button::Style {
         border: iced::Border {
             color: p.outline,
             width: 1.0,
-            radius: theme::shape::SM.into(),
+            radius: theme::button_radius(status).into(),
         },
         ..Default::default()
     }
@@ -343,7 +343,7 @@ fn action_error_filled_style(t: &Theme, status: button::Status) -> button::Style
             background: Some(with_alpha(p.on_surface, 0.12).into()),
             text_color: with_alpha(p.on_surface, 0.38),
             border: iced::Border {
-                radius: theme::shape::SM.into(),
+                radius: theme::button_radius(status).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -354,7 +354,7 @@ fn action_error_filled_style(t: &Theme, status: button::Status) -> button::Style
         background: Some(theme::mix_color(p.error, p.on_error, theme::state_alpha(status)).into()),
         text_color: p.on_error,
         border: iced::Border {
-            radius: theme::shape::SM.into(),
+            radius: theme::button_radius(status).into(),
             ..Default::default()
         },
         ..Default::default()
@@ -369,14 +369,12 @@ fn fab_tooltip<'a>(inner: Element<'a, Message>, label: String) -> Element<'a, Me
             .style(|t: &Theme| {
                 let p = pal_of(t);
                 container::Style {
-                    background: Some(p.surface_container_high.into()),
-                    text_color: Some(p.on_surface),
+                    background: Some(p.inverse_surface.into()),
+                    text_color: Some(p.inverse_on_surface),
                     border: iced::Border {
-                        color: p.outline_variant,
-                        width: 1.0,
-                        radius: 8.0.into(),
+                        radius: theme::shape::XS.into(),
+                        ..Default::default()
                     },
-                    shadow: theme::elevation(2, theme::is_dark(t)),
                     ..Default::default()
                 }
             }),
@@ -491,13 +489,9 @@ pub(crate) fn empty_wizard_nav<'a>() -> Element<'a, Message> {
     Space::new().height(0).into()
 }
 
-/// M3 common-button height. Dialog and popup actions were built ad hoc
-/// from `padding([6, 18])` at `size(12)`, which lands around 28 px —
-/// well under the 40 dp M3 gives a labeled button, and small enough to
-/// be a real pointing chore on the copy/download chips. Every action
-/// button now goes through [`m3_filled_button`] / [`m3_text_button`] so
-/// the size lives in one place.
-pub(crate) const M3_BUTTON_HEIGHT: f32 = 40.0;
+/// Shared action target. Iced paints the whole hit box, so the visible
+/// container also occupies the 48 dp accessible target.
+pub(crate) const M3_BUTTON_HEIGHT: f32 = 48.0;
 
 /// Interior padding for text fields and pick lists. At the default the
 /// dropdown options came out around 27 px tall; this puts a 13 px option
@@ -511,6 +505,8 @@ fn m3_button<'a>(
         container(
             text(label)
                 .size(theme::text_size::BODY_MEDIUM)
+                .font(theme::emphasis::medium())
+                .line_height(20.0 / 14.0)
                 // A localized label must never shred into a per-glyph
                 // column when the parent row is tight; let it overflow.
                 .wrapping(iced::widget::text::Wrapping::None),
@@ -953,7 +949,8 @@ pub(crate) fn device_portrait(model: &str) -> DevicePortrait {
     }
 }
 
-/// The sole content-width breakpoint for adaptive layout decisions.
+/// Product-specific content-width threshold for the two-pane wizard.
+/// This is measured after navigation, not an M3 window-size breakpoint.
 const EXPANDED_CONTENT_WIDTH: f32 = 1000.0;
 
 #[derive(Debug, Clone, Copy)]

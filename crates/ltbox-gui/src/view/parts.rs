@@ -124,8 +124,8 @@ fn partition_file_button(
                 } else {
                     with_alpha(p.outline, 0.34)
                 },
-                width: 1.0,
-                radius: theme::shape::SM.into(),
+                width: 0.0,
+                radius: theme::shape::FULL.into(),
             },
             ..Default::default()
         }

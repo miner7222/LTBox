@@ -405,18 +405,6 @@ impl App {
                     _ => {}
                 }
             }
-            Message::NoticeRecentMissing(is_file) => {
-                // Surface as the existing error banner — it already
-                // overlays every view and has a dismiss button. Keep
-                // out of the main log so the user's run history isn't
-                // littered with picker UI noise.
-                let key = if is_file {
-                    "recent_missing_file"
-                } else {
-                    "recent_missing_folder"
-                };
-                self.error_msg = Some(self.t(key).to_string());
-            }
             Message::OperationError(e) => {
                 // Errors raised deep in the pipeline cannot name the operation,
                 // so they leave `{work}` in the message. This is the one place

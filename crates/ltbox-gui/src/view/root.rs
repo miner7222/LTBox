@@ -557,7 +557,7 @@ impl App {
             }
         };
 
-        let mut cards = column![].spacing(8.0).width(Length::Fill);
+        let mut cards = column![].spacing(2.0).width(Length::Fill);
         for f in families {
             cards = cards.push(mk(f));
         }
@@ -609,7 +609,7 @@ impl App {
             }
         };
 
-        let mut cards = column![].spacing(8.0).width(Length::Fill);
+        let mut cards = column![].spacing(2.0).width(Length::Fill);
         for &p in providers {
             cards = cards.push(card(p, self.root.provider == Some(p)));
         }
@@ -716,7 +716,7 @@ impl App {
                 metrics,
             )
         };
-        let cards = column![lkm_card, gki_card].spacing(8.0).width(Length::Fill);
+        let cards = column![lkm_card, gki_card].spacing(2.0).width(Length::Fill);
         wizard_selection_step(
             size_class,
             content_width,
@@ -769,7 +769,7 @@ impl App {
             metrics,
         );
 
-        let cards = column![lite, pro].spacing(8.0).width(Length::Fill);
+        let cards = column![lite, pro].spacing(2.0).width(Length::Fill);
         wizard_selection_step(
             size_class,
             content_width,
@@ -818,9 +818,9 @@ impl App {
         // can't pick a channel that has no release assets. Other providers
         // keep both.
         let cards = if self.root.provider == Some(Provider::ReSukiSU) {
-            column![mk(VerChoice::Nightly)].spacing(8.0)
+            column![mk(VerChoice::Nightly)].spacing(2.0)
         } else {
-            column![mk(VerChoice::Stable), mk(VerChoice::Nightly)].spacing(8.0)
+            column![mk(VerChoice::Stable), mk(VerChoice::Nightly)].spacing(2.0)
         };
 
         wizard_selection_step(
@@ -885,8 +885,11 @@ impl App {
             };
 
         let cards = column![
-            mk(NightlySource::AutoDetect),
-            mk(NightlySource::ManualInput),
+            column![
+                mk(NightlySource::AutoDetect),
+                mk(NightlySource::ManualInput)
+            ]
+            .spacing(2.0),
             chip,
         ]
         .spacing(14.0)
@@ -933,14 +936,14 @@ impl App {
 
         if self.root.is_gki() {
             let path = self.root.file_path.clone().unwrap_or_else(|| dash.clone());
-            trailing_rows.push(confirm_definition_row(self.t("root_step_kernel"), &path));
+            trailing_rows.push(confirm_path_row(self.t("root_step_kernel"), &path));
         } else if self.root.is_forks() {
             let path = self.root.file_path.clone().unwrap_or_else(|| dash.clone());
             grid_rows.push(confirm_definition_row(
                 self.t("root_step_provider"),
                 self.t("provider_magisk_forks"),
             ));
-            trailing_rows.push(confirm_definition_row(self.t("root_step_apk"), &path));
+            trailing_rows.push(confirm_path_row(self.t("root_step_apk"), &path));
         } else if !self.root.is_skroot() {
             let prov = self
                 .root
@@ -989,7 +992,7 @@ impl App {
             .folder_path
             .clone()
             .unwrap_or_else(|| dash.clone());
-        trailing_rows.push(confirm_definition_row(self.t("edl_loader_label"), &folder));
+        trailing_rows.push(confirm_path_row(self.t("edl_loader_label"), &folder));
 
         grid_rows.extend(trailing_rows);
         self.confirm_step_frame(vec![], grid_rows, vec![])

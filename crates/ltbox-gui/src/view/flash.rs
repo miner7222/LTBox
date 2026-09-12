@@ -115,7 +115,6 @@ fn flash_confirm_definition_row(
                 container(
                     text(caution)
                         .size(theme::text_size::BODY_SMALL)
-                        .style(warning_style)
                         .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
                 )
                 .padding([6, 10])
@@ -300,7 +299,7 @@ impl App {
             ),
             row_card,
         ]
-        .spacing(8.0)
+        .spacing(2.0)
         .width(Length::Fill);
         if self.queries.region_pending.is_some() {
             cards = cards.push(
@@ -405,7 +404,7 @@ impl App {
                 metrics,
             ),
         ]
-        .spacing(8.0)
+        .spacing(2.0)
         .width(Length::Fill);
         wizard_selection_step(
             size_class,
@@ -430,7 +429,7 @@ impl App {
         // on this step, so it carries the error role rather than looking
         // like the sibling it is not.
         let wipe = lucide_error(icon::tile_wipe(), icon_size);
-        let mut cards = column![].spacing(8.0).width(Length::Fill);
+        let mut cards = column![].spacing(2.0).width(Length::Fill);
         cards = cards
             .push(wizard_list_option_card(
                 shield,

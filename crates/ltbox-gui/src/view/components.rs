@@ -166,7 +166,7 @@ fn m3_dialog_layers(inner: Element<'_, Message>) -> Element<'_, Message> {
     let card = container(inner).style(move |t: &Theme| {
         let p = pal_of(t);
         container::Style {
-            background: Some(p.surface_container.into()),
+            background: Some(p.surface_container_high.into()),
             border: iced::Border {
                 color: p.outline_variant,
                 width: 1.0,
@@ -429,7 +429,7 @@ pub(crate) fn large_top_app_bar<'a>(
         text(title)
             .size(theme::text_size::TITLE_LARGE)
             .font(theme::emphasis::medium())
-            .line_height(1.0)
+            .line_height(28.0 / 22.0)
             .style(on_surface_style)
             .wrapping(iced::widget::text::Wrapping::None)
     ]
@@ -441,7 +441,7 @@ pub(crate) fn large_top_app_bar<'a>(
         content = content.push(
             text(subtitle)
                 .size(theme::text_size::BODY_SMALL)
-                .line_height(1.0)
+                .line_height(16.0 / 12.0)
                 .style(muted_style)
                 .width(Length::Fill)
                 .wrapping(iced::widget::text::Wrapping::None),
@@ -619,6 +619,55 @@ pub(crate) fn info_kv_center<'a>(label: &str, value: &str) -> Element<'a, Messag
 /// Read-only row used by wizard confirmation screens. It shares the
 /// definition-list hierarchy of the editable full-flash review.
 pub(crate) fn confirm_definition_row<'a>(label: &str, value: &str) -> Element<'a, Message> {
+    confirm_definition_content(
+        label,
+        text(value.to_string())
+            .size(theme::text_size::BODY_MEDIUM)
+            .font(theme::emphasis::medium())
+            .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .into(),
+    )
+}
+
+/// Measure against the value column, not the window, and retain the full path in a tooltip.
+pub(crate) fn confirm_path_row<'a>(label: &str, value: &str) -> Element<'a, Message> {
+    let path = value.to_string();
+    let full_path = path.clone();
+    let value = widget::responsive(move |size| {
+        container(
+            text(elide_path_middle(&path, size.width))
+                .font(theme::mono_font())
+                .size(theme::text_size::BODY_SMALL)
+                .wrapping(iced::widget::text::Wrapping::None),
+        )
+        .width(Length::Fill)
+        .height(20)
+        .clip(true)
+        .into()
+    });
+    confirm_definition_content(
+        label,
+        widget::tooltip(
+            container(value).width(Length::Fill).height(20),
+            container(
+                text(full_path)
+                    .size(theme::text_size::BODY_SMALL)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            )
+            .padding([8, 12])
+            .max_width(480)
+            .style(|t| theme::tooltip_style(t, theme::shape::SM)),
+            widget::tooltip::Position::Top,
+        )
+        .into(),
+    )
+}
+
+fn confirm_definition_content<'a>(
+    label: &str,
+    value: Element<'a, Message>,
+) -> Element<'a, Message> {
     column![
         row![
             container(
@@ -628,11 +677,7 @@ pub(crate) fn confirm_definition_row<'a>(label: &str, value: &str) -> Element<'a
                     .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             )
             .width(Length::Fixed(180.0)),
-            text(value.to_string())
-                .size(theme::text_size::BODY_MEDIUM)
-                .font(theme::emphasis::medium())
-                .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            value,
         ]
         .spacing(16)
         .align_y(iced::Alignment::Start)
@@ -998,8 +1043,8 @@ pub(crate) fn selection_radio(
     enabled: bool,
     destructive: bool,
 ) -> Element<'static, Message> {
-    const RING: f32 = 18.0;
-    const DOT: f32 = 9.0;
+    const RING: f32 = 20.0;
+    const DOT: f32 = 10.0;
     let dot: Element<'static, Message> = if selected {
         container(Space::new())
             .width(Length::Fixed(DOT))
@@ -1067,36 +1112,49 @@ fn wizard_list_option_card_with_role(
         WizardListOptionRole::Recommended { label, tip } => (false, Some((label, tip))),
     };
     let enabled = msg.is_some();
-    let label_style_fn = if enabled {
-        on_surface_style
-    } else {
-        muted_style
-    };
-    let desc: Element<'static, Message> = if sub.is_empty() {
-        text(" ").size(metrics.desc_size).width(Length::Fill).into()
-    } else {
-        text(sub.to_string())
-            .size(metrics.desc_size)
-            .style(muted_style)
-            .width(Length::Fill)
-            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-            .into()
+    let selected = selected && enabled;
+    let foreground = move |t: &Theme| {
+        let p = pal_of(t);
+        iced::widget::text::Style {
+            color: Some(if selected && destructive {
+                p.on_error_container
+            } else if selected {
+                p.on_primary_container
+            } else if enabled {
+                p.on_surface
+            } else {
+                p.on_surface_variant
+            }),
+        }
     };
     let mut label_text = text(label.to_string())
         .size(metrics.label_size)
-        .style(label_style_fn)
+        .line_height(20.0 / 14.0)
+        .style(foreground)
         .width(Length::Fill);
     if selected && enabled {
         label_text = label_text.font(theme::emphasis::medium());
     }
-    let text_block = container(
-        column![label_text, desc,]
-            .spacing(metrics.text_gap)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_y(Length::Fill);
+    let mut copy = column![label_text]
+        .spacing(metrics.text_gap)
+        .width(Length::Fill);
+    if !sub.is_empty() {
+        copy = copy.push(
+            text(sub.to_string())
+                .size(metrics.desc_size)
+                .line_height(16.0 / 12.0)
+                .style(move |t: &Theme| {
+                    if selected {
+                        foreground(t)
+                    } else {
+                        muted_style(t)
+                    }
+                })
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+        );
+    }
+    let text_block = container(copy).width(Length::Fill);
     let mut body = row![
         selection_radio(selected && enabled, enabled, destructive && enabled),
         icon_tile(icon),
@@ -1150,21 +1208,22 @@ fn wizard_list_option_card_with_role(
         body = body.push(pill_with_tip);
     }
 
-    let inner = container(body)
-        .padding(metrics.padding)
-        .width(Length::Fill)
-        .height(Length::Fixed(metrics.height))
-        .center_y(Length::Fixed(metrics.height))
-        .style(move |t: &Theme| sel_card_style_for(t, selected && enabled, destructive && enabled));
-    let btn = button(inner)
-        .padding(0)
-        .width(Length::Fill)
-        .height(Length::Fixed(metrics.height));
+    let min_height = if sub.is_empty() { metrics.height } else { 72.0 };
+    let inner = container(iced::widget::stack![
+        Space::new()
+            .width(Length::Fill)
+            .height(min_height - metrics.padding.top - metrics.padding.bottom),
+        container(body).center_y(Length::Fill).width(Length::Fill),
+    ])
+    .padding(metrics.padding)
+    .width(Length::Fill)
+    .align_y(iced::Alignment::Center);
+    let btn = button(inner).padding(0).width(Length::Fill);
     match msg {
         Some(m) => btn
             .on_press(m)
             .style(move |t: &Theme, status| {
-                sel_card_btn_style_for(t, status, selected, destructive)
+                expressive_choice_style(t, status, selected, destructive)
             })
             .into(),
         None => btn
@@ -1174,9 +1233,8 @@ fn wizard_list_option_card_with_role(
                     background: Some(with_alpha(p.surface_container_low, 0.5).into()),
                     text_color: with_alpha(p.on_surface, 0.38),
                     border: iced::Border {
-                        color: with_alpha(p.outline, 0.6),
-                        width: 1.0,
-                        radius: theme::shape::MD.into(),
+                        radius: 4.0.into(),
+                        ..Default::default()
                     },
                     ..Default::default()
                 }
@@ -1432,17 +1490,8 @@ impl App {
             } else {
                 std::path::Path::new(path).is_dir()
             };
-            let foreground = move |t: &Theme| {
-                theme::with_alpha(
-                    pal_of(t).on_surface_variant,
-                    if exists { 1.0 } else { 0.45 },
-                )
-            };
-            let message = if exists {
-                on_pick(path.clone())
-            } else {
-                Message::NoticeRecentMissing(is_file_picker)
-            };
+            let foreground = |t: &Theme| pal_of(t).on_surface_variant;
+            let message = exists.then(|| on_pick(path.clone()));
             let recent_path = path.clone();
             let path_text = iced::widget::responsive(move |size| {
                 container(
@@ -1496,7 +1545,7 @@ impl App {
                         .align_y(iced::Alignment::Center)
                         .width(Length::Fill),
                 )
-                .on_press(message)
+                .on_press_maybe(message)
                 .height(44)
                 .width(Length::Fill)
                 .padding([0, 14])
@@ -1668,7 +1717,7 @@ pub(crate) fn picker_action_button(
                     iced::Color::TRANSPARENT
                 },
                 width: if outlined { 1.0 } else { 0.0 },
-                radius: theme::shape::SM.into(),
+                radius: theme::button_radius(status).into(),
             },
             ..Default::default()
         }

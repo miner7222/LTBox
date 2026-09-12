@@ -35,15 +35,6 @@ pub(crate) fn success_style(t: &Theme) -> iced::widget::text::Style {
     }
 }
 
-/// `warning` — destructive-action callouts (e.g. full-flash confirm
-/// step). Kept distinct from `error_style` so it reads as "heads up, not
-/// a failure".
-pub(crate) fn warning_style(t: &Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(pal_of(t).warning),
-    }
-}
-
 pub(crate) fn warning_container_text_style(t: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
         color: Some(pal_of(t).on_warning_container),
@@ -92,7 +83,7 @@ pub(crate) fn m3_text_input_style(t: &Theme, status: text_input::Status) -> text
                 border_color
             },
             width: if focused { 2.0 } else { 1.0 },
-            radius: theme::shape::SM.into(),
+            radius: theme::shape::XS.into(),
         },
         icon: if disabled {
             with_alpha(p.on_surface, 0.38)
@@ -186,7 +177,7 @@ pub(crate) fn m3_pick_list_menu_style(t: &Theme) -> iced::widget::overlay::menu:
         border: iced::Border {
             color: iced::Color::TRANSPARENT,
             width: 0.0,
-            radius: theme::shape::SM.into(),
+            radius: theme::shape::XS.into(),
         },
         text_color: p.on_surface,
         selected_text_color: p.on_surface,
@@ -288,8 +279,8 @@ pub(crate) fn m3_checkbox_style(t: &Theme, status: checkbox::Status) -> checkbox
             icon_color: with_alpha(p.on_surface, 0.38),
             border: iced::Border {
                 color: with_alpha(p.on_surface, 0.38),
-                width: 1.0,
-                radius: theme::shape::XS.into(),
+                width: 2.0,
+                radius: 2.0.into(),
             },
             text_color: Some(with_alpha(p.on_surface, 0.38)),
         };
@@ -319,7 +310,7 @@ pub(crate) fn m3_checkbox_style(t: &Theme, status: checkbox::Status) -> checkbox
                 p.outline
             },
             width: 2.0,
-            radius: theme::shape::XS.into(),
+            radius: 2.0.into(),
         },
         text_color: Some(p.on_surface),
     }
@@ -420,7 +411,7 @@ pub(crate) fn md_filled_btn_style(t: &Theme, status: button::Status) -> button::
             background: Some(with_alpha(p.on_surface, 0.12).into()),
             text_color: with_alpha(p.on_surface, 0.38),
             border: iced::Border {
-                radius: theme::shape::SM.into(),
+                radius: theme::button_radius(status).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -431,7 +422,7 @@ pub(crate) fn md_filled_btn_style(t: &Theme, status: button::Status) -> button::
         background: Some(bg.into()),
         text_color: p.on_primary,
         border: iced::Border {
-            radius: theme::shape::SM.into(),
+            radius: theme::button_radius(status).into(),
             ..Default::default()
         },
         ..Default::default()
@@ -448,9 +439,13 @@ pub(crate) fn md_text_btn_style(t: &Theme, status: button::Status) -> button::St
         } else {
             None
         },
-        text_color: p.primary,
+        text_color: if matches!(status, button::Status::Disabled) {
+            with_alpha(p.on_surface, 0.38)
+        } else {
+            p.primary
+        },
         border: iced::Border {
-            radius: theme::shape::SM.into(),
+            radius: theme::button_radius(status).into(),
             ..Default::default()
         },
         ..Default::default()
@@ -597,9 +592,32 @@ pub(crate) fn sel_card_btn_style(
     sel_card_btn_style_for(t, status, selected, false)
 }
 
-/// [`sel_card_btn_style`] with the same accent switch as
-/// [`sel_card_style_for`]. A selected destructive option fills with
-/// `error_container` rather than `secondary_container`.
+/// Filled expressive wizard row. Selection changes shape and color;
+/// the radio remains the non-color selection cue.
+pub(crate) fn expressive_choice_style(
+    t: &Theme,
+    status: button::Status,
+    selected: bool,
+    destructive: bool,
+) -> button::Style {
+    let p = pal_of(t);
+    let (base, foreground) = match (selected, destructive) {
+        (true, true) => (p.error_container, p.on_error_container),
+        (true, false) => (p.primary_container, p.on_primary_container),
+        (false, _) => (p.surface_container_low, p.on_surface),
+    };
+    button::Style {
+        background: Some(theme::mix_color(base, foreground, theme::state_alpha(status)).into()),
+        text_color: foreground,
+        border: iced::Border {
+            radius: if selected { 16.0 } else { 4.0 }.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Selected card variant with an optional destructive color role.
 pub(crate) fn sel_card_btn_style_for(
     t: &Theme,
     status: button::Status,

@@ -1160,14 +1160,12 @@ impl App {
         let Some(msg) = self.toast_msg.clone() else {
             return container(text("")).into();
         };
-        // Background = `on_surface` (near-black in light, near-white
-        // in dark); text needs the inverse to stay readable in both
-        // modes — `surface` is exactly that role pair.
+        // Snackbars use the inverse surface role pair in both schemes.
         let pill = container(
             text(msg)
                 .size(12)
                 .style(|t: &Theme| iced::widget::text::Style {
-                    color: Some(pal_of(t).surface),
+                    color: Some(pal_of(t).inverse_on_surface),
                 }),
         )
         .padding([0, 16])
@@ -1176,7 +1174,7 @@ impl App {
         .style(|t: &Theme| -> container::Style {
             let p = pal_of(t);
             container::Style {
-                background: Some(p.on_surface.into()),
+                background: Some(p.inverse_surface.into()),
                 border: iced::Border {
                     // M3 snackbars sit at the extra-small step and carry a
                     // shadow; the pill radius this used to draw belongs to

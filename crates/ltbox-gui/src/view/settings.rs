@@ -7,7 +7,7 @@ use ltbox_core::tr_args;
 use theme::with_alpha;
 
 const SETTINGS_ROW_HEIGHT: f32 = 56.0;
-const SETTINGS_CONTROL_HEIGHT: f32 = 36.0;
+const SETTINGS_CONTROL_HEIGHT: f32 = 40.0;
 
 fn settings_row(
     label: String,
@@ -26,7 +26,7 @@ fn settings_row_with_help(
     let mut title = row![
         text(label)
             .size(theme::text_size::BODY_MEDIUM)
-            .line_height(1.0),
+            .line_height(20.0 / 14.0),
     ]
     .spacing(6.0)
     .align_y(iced::Alignment::Center);
@@ -54,10 +54,10 @@ fn settings_row_with_help(
     container(iced::widget::stack![
         Space::new()
             .width(Length::Fill)
-            .height(Length::Fixed(SETTINGS_ROW_HEIGHT - 16.0)),
+            .height(Length::Fixed(SETTINGS_ROW_HEIGHT - 8.0)),
         contents,
     ])
-    .padding([8.0, 18.0])
+    .padding([4.0, 18.0])
     .width(Length::Fill)
     .align_y(iced::alignment::Vertical::Center)
     .into()
@@ -118,7 +118,7 @@ fn settings_segmented_control(
     let height = SETTINGS_CONTROL_HEIGHT;
     let border_width = 1.0;
     let segment_height = Length::Fixed(height - 2.0 * border_width);
-    let inner_radius = theme::shape::SM - border_width;
+    let inner_radius = height / 2.0 - border_width;
     let segment_count = options.len();
     let mut segments = row![].height(segment_height);
     for (index, (label, selected, message)) in options.into_iter().enumerate() {
@@ -142,12 +142,10 @@ fn settings_segmented_control(
                     .style(move |theme: &Theme| segment_divider_style(theme, enabled)),
             );
         }
-        let mut label = text(label)
+        let label = text(label)
             .size(SETTINGS_SEGMENT_TEXT_SIZE)
+            .font(theme::emphasis::medium())
             .wrapping(iced::widget::text::Wrapping::None);
-        if selected {
-            label = label.font(theme::emphasis::medium());
-        }
         let cell = container(label)
             .height(segment_height)
             .padding([0.0, SETTINGS_SEGMENT_HORIZONTAL_PADDING])
@@ -175,7 +173,7 @@ fn settings_segmented_control(
                     with_alpha(pal_of(t).on_surface, 0.12)
                 },
                 width: border_width,
-                radius: theme::shape::SM.into(),
+                radius: theme::shape::FULL.into(),
             },
             ..Default::default()
         })
@@ -223,7 +221,7 @@ fn settings_action_style(
             border: iced::Border {
                 color: with_alpha(p.on_surface, 0.12),
                 width: 1.0,
-                radius: theme::shape::SM.into(),
+                radius: theme::button_radius(status).into(),
             },
             ..Default::default()
         };
@@ -243,7 +241,7 @@ fn settings_action_style(
                 p.outline
             },
             width: 1.0,
-            radius: theme::shape::SM.into(),
+            radius: theme::button_radius(status).into(),
         },
         ..Default::default()
     }
@@ -277,7 +275,13 @@ fn settings_icon_action(
     .padding(0)
     .width(side)
     .height(side)
-    .style(move |t: &Theme, status| settings_action_style(t, status, enabled, error_role));
+    .style(move |t: &Theme, status| {
+        let mut style = settings_action_style(t, status, enabled, error_role);
+        // Compact supplementary actions use standard icon buttons, not outlines.
+        style.border.width = 0.0;
+        style.border.radius = theme::shape::FULL.into();
+        style
+    });
     if let Some(message) = message {
         action = action.on_press(message);
     }
@@ -297,6 +301,7 @@ fn settings_text_action(label: String, message: Option<Message>) -> Element<'sta
     let content = container(
         text(label)
             .size(theme::text_size::BODY_MEDIUM)
+            .font(theme::emphasis::medium())
             .wrapping(iced::widget::text::Wrapping::None),
     )
     .height(Length::Fixed(SETTINGS_CONTROL_HEIGHT))

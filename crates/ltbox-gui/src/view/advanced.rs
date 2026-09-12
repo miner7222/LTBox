@@ -579,7 +579,7 @@ impl App {
         self.confirm_step_frame(
             vec![],
             grid_rows,
-            vec![confirm_definition_row(source_label, &path)],
+            vec![confirm_path_row(source_label, &path)],
         )
     }
 

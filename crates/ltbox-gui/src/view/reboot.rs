@@ -150,7 +150,7 @@ impl App {
         .spacing(8.0)
         .align_y(iced::Alignment::Center);
 
-        let mut cards = column![].spacing(8.0).width(Length::Fill);
+        let mut cards = column![].spacing(2.0).width(Length::Fill);
         for &target in RebootTarget::all().iter() {
             let available = target.available_from(conn);
             let current = target.is_current_from(conn, self.device.fastboot_userspace);
@@ -187,21 +187,20 @@ impl App {
                 card_content = card_content.push(reboot_status_pill(reason));
             }
             let card_inner = container(card_content)
-                .padding([10.0, 14.0])
+                .padding([6.0, 16.0])
                 .width(Length::Fill)
                 .height(Length::Fixed(row_height))
                 .center_y(Length::Fixed(row_height))
                 .style(move |t: &Theme| {
                     let p = pal_of(t);
                     if enabled {
-                        sel_card_style(t, false)
+                        container::Style::default()
                     } else {
                         container::Style {
-                            background: Some(with_alpha(p.on_surface, 0.04).into()),
+                            background: Some(with_alpha(p.surface_container_low, 0.5).into()),
                             border: iced::Border {
-                                color: p.outline_variant,
-                                width: 1.0,
-                                radius: theme::shape::MD.into(),
+                                radius: theme::shape::XS.into(),
+                                ..Default::default()
                             },
                             ..Default::default()
                         }
@@ -212,7 +211,7 @@ impl App {
                     .on_press(Message::Reboot(RebootMsg::RebootRequest(target)))
                     .padding(0)
                     .width(Length::Fill)
-                    .style(|t: &Theme, status| sel_card_btn_style(t, status, false))
+                    .style(|t: &Theme, status| expressive_choice_style(t, status, false, false))
                     .into()
             } else {
                 card_inner.into()
@@ -234,7 +233,6 @@ impl App {
                 list,
                 self.wizard_list_max_width(WIZARD_LIST_MAX_WIDTH),
             ))
-            .padding(24.0)
             .width(Length::Fill)
             .height(Length::Fill)
             .into(),

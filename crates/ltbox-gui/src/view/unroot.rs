@@ -223,13 +223,21 @@ impl App {
                     let tooltip_copy = self.t("unroot_backup_details_tooltip").to_string();
                     let detail = iced::widget::tooltip(
                         button(
-                            container(text("?").size(16.0).font(theme::emphasis::medium()))
-                                .width(Length::Fixed(48.0))
-                                .height(Length::Fixed(48.0))
+                            container(text("?").size(14.0).font(theme::emphasis::medium()))
+                                .width(Length::Fixed(24.0))
+                                .height(Length::Fixed(24.0))
                                 .align_x(iced::Alignment::Center)
-                                .align_y(iced::Alignment::Center),
+                                .align_y(iced::Alignment::Center)
+                                .style(|t: &Theme| container::Style {
+                                    border: iced::Border {
+                                        color: pal_of(t).outline,
+                                        width: 1.0,
+                                        radius: 12.0.into(),
+                                    },
+                                    ..Default::default()
+                                }),
                         )
-                        .padding(0)
+                        .padding(12)
                         .width(Length::Fixed(48.0))
                         .height(Length::Fixed(48.0))
                         .on_press(Message::Unroot(UnrootMsg::UnrootBackupManifestOpen(path)))
@@ -241,7 +249,7 @@ impl App {
                                 text_color: palette.primary,
                                 border: iced::Border {
                                     color: palette.outline,
-                                    width: 1.0,
+                                    width: 0.0,
                                     radius: theme::shape::FULL.into(),
                                 },
                                 ..Default::default()
@@ -355,8 +363,8 @@ impl App {
                 &method,
             )],
             vec![
-                confirm_definition_row(self.t("edl_loader_label"), &loader),
-                confirm_definition_row(self.t("unroot_folder_title"), &folder),
+                confirm_path_row(self.t("edl_loader_label"), &loader),
+                confirm_path_row(self.t("unroot_folder_title"), &folder),
             ],
         )
     }

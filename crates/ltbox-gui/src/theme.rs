@@ -28,6 +28,7 @@ pub struct Palette {
 
     /// Success — M3 doesn't ship this; tonal family of tertiary green.
     pub success: Color,
+    pub on_success: Color,
     pub warning: Color,
     pub warning_container: Color,
     pub on_warning_container: Color,
@@ -35,6 +36,12 @@ pub struct Palette {
     pub background: Color,
 
     pub surface: Color,
+    pub surface_bright: Color,
+    pub inverse_surface: Color,
+    pub inverse_on_surface: Color,
+    #[allow(dead_code)] // Reserved semantic role for actions on inverse surfaces.
+    pub inverse_primary: Color,
+    #[allow(dead_code)] // Full surface ramp, even when no current region uses it.
     pub surface_container_lowest: Color,
     pub surface_container_low: Color,
     pub surface_container: Color,
@@ -70,6 +77,7 @@ pub const LIGHT: Palette = Palette {
     on_error_container: color!(0x410002),
 
     success: color!(0x216C2A),
+    on_success: color!(0xFFFFFF),
     warning: color!(0x735B00),
     warning_container: color!(0xFFF0C2),
     on_warning_container: color!(0x241A00),
@@ -77,6 +85,10 @@ pub const LIGHT: Palette = Palette {
     background: color!(0xFBF8FD),
 
     surface: color!(0xFBF8FD),
+    surface_bright: color!(0xFBF8FD),
+    inverse_surface: color!(0x303036),
+    inverse_on_surface: color!(0xF2EFF6),
+    inverse_primary: color!(0xB5C4FF),
     surface_container_lowest: color!(0xFFFFFF),
     surface_container_low: color!(0xF5F2F7),
     surface_container: color!(0xEFECF1),
@@ -112,6 +124,7 @@ pub const DARK: Palette = Palette {
     on_error_container: color!(0xFFDAD6),
 
     success: color!(0x8ADA95),
+    on_success: color!(0x00390C),
     warning: color!(0xF5BE4B),
     warning_container: color!(0x5A4300),
     on_warning_container: color!(0xFFDFA3),
@@ -119,6 +132,10 @@ pub const DARK: Palette = Palette {
     background: color!(0x131318),
 
     surface: color!(0x131318),
+    surface_bright: color!(0x39383F),
+    inverse_surface: color!(0xE4E1E9),
+    inverse_on_surface: color!(0x303036),
+    inverse_primary: color!(0x465AAA),
     surface_container_lowest: color!(0x0E0E13),
     surface_container_low: color!(0x1B1B21),
     surface_container: color!(0x201F26),
@@ -154,6 +171,7 @@ pub const TEAL_LIGHT: Palette = Palette {
     on_error_container: LIGHT.on_error_container,
 
     success: LIGHT.success,
+    on_success: LIGHT.on_success,
     warning: LIGHT.warning,
     warning_container: LIGHT.warning_container,
     on_warning_container: LIGHT.on_warning_container,
@@ -161,6 +179,10 @@ pub const TEAL_LIGHT: Palette = Palette {
     background: color!(0xF7FAF9),
 
     surface: color!(0xF7FAF9),
+    surface_bright: color!(0xF7FAF9),
+    inverse_surface: color!(0x2E3131),
+    inverse_on_surface: color!(0xEFF2F1),
+    inverse_primary: color!(0x80D5D3),
     surface_container_lowest: color!(0xFFFFFF),
     surface_container_low: color!(0xF0F4F3),
     surface_container: color!(0xEAEEED),
@@ -195,6 +217,7 @@ pub const TEAL_DARK: Palette = Palette {
     on_error_container: DARK.on_error_container,
 
     success: DARK.success,
+    on_success: DARK.on_success,
     warning: DARK.warning,
     warning_container: DARK.warning_container,
     on_warning_container: DARK.on_warning_container,
@@ -202,6 +225,10 @@ pub const TEAL_DARK: Palette = Palette {
     background: color!(0x111414),
 
     surface: color!(0x111414),
+    surface_bright: color!(0x363A39),
+    inverse_surface: color!(0xDEE2E1),
+    inverse_on_surface: color!(0x2E3131),
+    inverse_primary: color!(0x006A6A),
     surface_container_lowest: color!(0x0C0F0F),
     surface_container_low: color!(0x191C1C),
     surface_container: color!(0x1D2020),
@@ -237,6 +264,7 @@ pub const ROSE_LIGHT: Palette = Palette {
     on_error_container: LIGHT.on_error_container,
 
     success: LIGHT.success,
+    on_success: LIGHT.on_success,
     warning: LIGHT.warning,
     warning_container: LIGHT.warning_container,
     on_warning_container: LIGHT.on_warning_container,
@@ -244,6 +272,10 @@ pub const ROSE_LIGHT: Palette = Palette {
     background: color!(0xFFFBFF),
 
     surface: color!(0xFFFBFF),
+    surface_bright: color!(0xFFFBFF),
+    inverse_surface: color!(0x352F33),
+    inverse_on_surface: color!(0xFCEFF4),
+    inverse_primary: color!(0xFFB1C8),
     surface_container_lowest: color!(0xFFFFFF),
     surface_container_low: color!(0xFCF0F4),
     surface_container: color!(0xF6EAEE),
@@ -278,6 +310,7 @@ pub const ROSE_DARK: Palette = Palette {
     on_error_container: DARK.on_error_container,
 
     success: DARK.success,
+    on_success: DARK.on_success,
     warning: DARK.warning,
     warning_container: DARK.warning_container,
     on_warning_container: DARK.on_warning_container,
@@ -285,6 +318,10 @@ pub const ROSE_DARK: Palette = Palette {
     background: color!(0x171216),
 
     surface: color!(0x171216),
+    surface_bright: color!(0x3F373C),
+    inverse_surface: color!(0xEADFE3),
+    inverse_on_surface: color!(0x352F33),
+    inverse_primary: color!(0x984061),
     surface_container_lowest: color!(0x120D10),
     surface_container_low: color!(0x211A1E),
     surface_container: color!(0x261E23),
@@ -468,23 +505,26 @@ pub fn state_layer_bg(status: iced::widget::button::Status, layer_color: Color) 
     }
 }
 
-/// Standard M3 tooltip container style — `surface_container_high`
-/// background, `outline_variant` 1 px border, level-2 elevation.
-/// `radius` lets the caller pick `shape::XS` / `shape::SM` to match
-/// the surrounding component scale.
-pub fn tooltip_style(t: &iced::Theme, radius: f32) -> iced::widget::container::Style {
-    let dark = is_dark(t);
+/// Plain tooltip: inverse surface, extra-small shape, no elevation.
+pub fn tooltip_style(t: &iced::Theme, _radius: f32) -> iced::widget::container::Style {
     let p = active_palette_for(t);
     iced::widget::container::Style {
-        background: Some(p.surface_container_high.into()),
-        text_color: Some(p.on_surface),
+        background: Some(p.inverse_surface.into()),
+        text_color: Some(p.inverse_on_surface),
         border: iced::Border {
-            color: p.outline_variant,
-            width: 1.0,
-            radius: radius.into(),
+            radius: shape::XS.into(),
+            ..Default::default()
         },
-        shadow: elevation(2, dark),
         ..Default::default()
+    }
+}
+
+/// Small expressive square buttons morph to the small shape while pressed.
+pub fn button_radius(status: iced::widget::button::Status) -> f32 {
+    if matches!(status, iced::widget::button::Status::Pressed) {
+        shape::SM
+    } else {
+        shape::MD
     }
 }
 
@@ -625,26 +665,15 @@ pub(crate) use crate::layout_constraints::{
 pub enum SurfaceLevel {
     /// `surface_container` — default card surface.
     Default,
-    /// The brightest container for the current mode, which M3 reserves
-    /// for "the most important content, tasks, or actions".
-    ///
-    /// It has to flip by mode: brightness runs opposite ways on the two
-    /// tonal ramps, so the brightest container is the *lowest* one on
-    /// light (white) and the *highest* one on dark.
+    /// `surface_bright` — a consistently bright region in either theme.
     Brightest,
 }
 
 impl SurfaceLevel {
-    fn bg(self, p: &Palette, dark: bool) -> iced::Color {
+    fn bg(self, p: &Palette) -> iced::Color {
         match self {
             Self::Default => p.surface_container,
-            Self::Brightest => {
-                if dark {
-                    p.surface_container_highest
-                } else {
-                    p.surface_container_lowest
-                }
-            }
+            Self::Brightest => p.surface_bright,
         }
     }
 }
@@ -657,10 +686,9 @@ pub fn surface_card_style(
     radius: f32,
 ) -> iced::widget::container::Style {
     use iced::widget::container;
-    let dark = is_dark(t);
     let p = active_palette_for(t);
     container::Style {
-        background: Some(level.bg(&p, dark).into()),
+        background: Some(level.bg(&p).into()),
         border: iced::Border {
             color: p.outline_variant,
             width: 1.0,

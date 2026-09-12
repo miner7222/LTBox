@@ -701,11 +701,8 @@ const DRIVER_OPTIONS: &[CopySource] = &[
     key("settings_qcom_driver_mode_userspace"),
     key("settings_qcom_driver_mode_kernel"),
 ];
-const DIRECT_UPDATE_READY_ACTIONS: &[CopySource] = &[
-    key("btn_close"),
-    key("update_dialog_release_page"),
-    key("update_dialog_install"),
-];
+const DIRECT_UPDATE_READY_ACTIONS: &[CopySource] =
+    &[key("btn_close"), key("update_dialog_install")];
 
 // Keep each constrained widget as one row. Adding the next guard is a single
 // row plus its copy-key list; the measurement and diagnostics stay shared.

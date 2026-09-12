@@ -145,11 +145,6 @@ impl App {
         ) {
             content = content.push(gpu_summary_view(table, stock, chip, self));
         }
-        content = content.push(
-            text(self.t("konabess_table_value_note").to_string())
-                .size(11.0)
-                .style(muted_style),
-        );
         if let Some(error) = self.konabess.import_error.as_deref() {
             content = content.push(
                 text(format!("⚠ {error}"))
@@ -186,7 +181,9 @@ impl App {
         content = content.push(
             text(self.t("konabess_attribution").to_string())
                 .size(theme::text_size::LABEL_SMALL)
-                .wrapping(iced::widget::text::Wrapping::None)
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
                 .style(muted_style),
         );
 
@@ -242,8 +239,8 @@ impl App {
                 confirm_definition_row(self.t("konabess_confirm_changes"), change_state),
             ],
             vec![
-                confirm_definition_row(self.t("edl_loader_label"), loader),
-                confirm_definition_row(self.t("konabess_confirm_import"), import_path),
+                confirm_path_row(self.t("edl_loader_label"), loader),
+                confirm_path_row(self.t("konabess_confirm_import"), import_path),
             ],
         )
     }
@@ -814,14 +811,18 @@ fn gpu_table_view<'a>(
         .spacing(0)
         .width(Length::Fixed(table_width))
         .height(vertical);
-    scrollable(fixed_header_table)
-        .direction(widget::scrollable::Direction::Horizontal(
-            widget::scrollable::Scrollbar::default(),
-        ))
-        .style(m3_scrollable_style)
-        .width(Length::Fill)
-        .height(vertical)
-        .into()
+    container(
+        scrollable(fixed_header_table)
+            .direction(widget::scrollable::Direction::Horizontal(
+                widget::scrollable::Scrollbar::default(),
+            ))
+            .style(m3_scrollable_style)
+            .width(Length::Fixed(table_width))
+            .height(vertical),
+    )
+    .center_x(Length::Fill)
+    .height(vertical)
+    .into()
 }
 
 fn gpu_table_header<'a>(
@@ -855,7 +856,7 @@ fn gpu_table_header<'a>(
                         .collect::<Vec<_>>()
                         .join(" / "),
                 )
-                .size(9.0)
+                .size(theme::text_size::LABEL_SMALL)
                 .font(theme::mono_font())
                 .style(muted_style),
             ]
@@ -893,7 +894,7 @@ fn group_property_chip(property: &ltbox_patch::konabess::GpuProperty) -> Element
     container(
         row![
             text(property_label(&property.name))
-                .size(10.0)
+                .size(theme::text_size::LABEL_SMALL)
                 .style(muted_style),
             text(
                 property
@@ -903,7 +904,7 @@ fn group_property_chip(property: &ltbox_patch::konabess::GpuProperty) -> Element
                     .collect::<Vec<_>>()
                     .join(" "),
             )
-            .size(10.0)
+            .size(theme::text_size::LABEL_SMALL)
             .font(theme::mono_font()),
         ]
         .spacing(5.0)
@@ -1068,7 +1069,7 @@ fn level_cell<'a>(
 fn level_badge(value: &str, initial: bool) -> Element<'static, Message> {
     container(
         text(value.to_string())
-            .size(10.0)
+            .size(theme::text_size::LABEL_SMALL)
             .font(theme::emphasis::medium()),
     )
     .height(Length::Fixed(18.0))
@@ -1113,7 +1114,7 @@ fn frequency_property_cell<'a>(
                 "konabess_stock_hint",
                 value = format_frequency_mhz(stock)
             ))
-            .size(9.0)
+            .size(theme::text_size::LABEL_SMALL)
             .font(theme::mono_font())
             .style(muted_style),
         );
@@ -1199,7 +1200,7 @@ fn delta_cell<'a>(delta: Option<VoltageDelta>, width: f32, app: &'a App) -> Elem
         };
         container(
             text(label)
-                .size(10.0)
+                .size(theme::text_size::LABEL_SMALL)
                 .font(theme::emphasis::medium())
                 .wrapping(iced::widget::text::Wrapping::None),
         )

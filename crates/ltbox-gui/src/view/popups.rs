@@ -165,7 +165,7 @@ impl App {
                     let p = pal_of(t);
                     container::Style {
                         background: Some((if success { p.success } else { p.error }).into()),
-                        text_color: Some(iced::Color::WHITE),
+                        text_color: Some(if success { p.on_success } else { p.on_error }),
                         border: iced::Border {
                             radius: theme::shape::FULL.into(),
                             ..Default::default()
@@ -302,9 +302,7 @@ impl App {
         };
         let content = popup_sections(
             column![
-                text(self.t("dual_usb_help_title").to_string())
-                    .size(theme::text_size::TITLE_LARGE)
-                    .font(theme::emphasis::bold()),
+                text(self.t("dual_usb_help_title").to_string()).size(theme::text_size::TITLE_LARGE),
                 text(subtitle)
                     .size(theme::text_size::BODY_SMALL)
                     .style(muted_style),
@@ -388,9 +386,7 @@ impl App {
             row![Space::new().width(Length::Fill), close].align_y(iced::Alignment::Center);
 
         let content = popup_sections(
-            text(self.t("about_licenses_title").to_string())
-                .size(theme::text_size::TITLE_LARGE)
-                .font(theme::emphasis::bold()),
+            text(self.t("about_licenses_title").to_string()).size(theme::text_size::TITLE_LARGE),
             scrollable(body)
                 .style(m3_scrollable_style)
                 .height(Length::Fixed(420.0))
@@ -416,9 +412,8 @@ impl App {
         }
 
         let upgrade = package_upgrade_command(source);
-        let title = text(self.t("update_dialog_title").to_string())
-            .size(theme::text_size::TITLE_LARGE)
-            .font(theme::emphasis::bold());
+        let title =
+            text(self.t("update_dialog_title").to_string()).size(theme::text_size::TITLE_LARGE);
         let version = text(
             // Tags carry a leading `v`; the string already says "version",
             // so trim it rather than rendering "Version v3.3.0".
@@ -483,9 +478,8 @@ impl App {
         &self,
         release: &ltbox_core::github::StableRelease,
     ) -> Element<'_, Message> {
-        let title = text(self.t("update_dialog_title").to_string())
-            .size(theme::text_size::TITLE_LARGE)
-            .font(theme::emphasis::bold());
+        let title =
+            text(self.t("update_dialog_title").to_string()).size(theme::text_size::TITLE_LARGE);
         let version = text(
             self.t("update_dialog_version")
                 .replace("{version}", release.tag.trim_start_matches('v')),
@@ -493,12 +487,7 @@ impl App {
         .size(theme::text_size::TITLE_MEDIUM);
 
         let state_body: Element<'_, Message> = match &self.operation.direct_update {
-            DirectUpdateState::Ready => text(self.t("update_dialog_direct_body").to_string())
-                .size(theme::text_size::BODY_MEDIUM)
-                .style(muted_style)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                .width(Length::Fill)
-                .into(),
+            DirectUpdateState::Ready => Space::new().into(),
             DirectUpdateState::Updating => row![
                 material_circular_progress(MaterialProgressSize::Standard),
                 text(self.t("update_dialog_downloading").to_string())
@@ -561,10 +550,6 @@ impl App {
                 m3_outlined_button(self.t("btn_close").to_string())
                     .on_press(Message::UpdateDialogClose),
             );
-            actions = actions.push(
-                m3_text_button(self.t("update_dialog_release_page").to_string())
-                    .on_press(Message::OpenUpdateReleasePage),
-            );
             let install_label = if matches!(&self.operation.direct_update, DirectUpdateState::Ready)
             {
                 self.t("update_dialog_install")
@@ -579,7 +564,10 @@ impl App {
             );
         }
 
-        let mut content = column![version, state_body].spacing(14);
+        let mut content = column![version].spacing(14);
+        if !matches!(self.operation.direct_update, DirectUpdateState::Ready) {
+            content = content.push(state_body);
+        }
         if let Some(reason) = self.self_update_blocked_reason() {
             content = content.push(
                 text(reason)
@@ -587,6 +575,17 @@ impl App {
                     .style(muted_style)
                     .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
                     .width(Length::Fill),
+            );
+        }
+        // Browsing release notes is supplementary, not a third dialog decision.
+        // Keep the dismiss/confirm pair adjacent in both ready and failed states.
+        if matches!(
+            &self.operation.direct_update,
+            DirectUpdateState::Ready | DirectUpdateState::Failed(_)
+        ) {
+            content = content.push(
+                m3_text_button(self.t("update_dialog_release_page").to_string())
+                    .on_press(Message::OpenUpdateReleasePage),
             );
         }
         let content = popup_sections(title, content, actions, DIRECT_UPDATE_DIALOG_WIDTH, false);
@@ -883,7 +882,7 @@ impl App {
                 let pw_row = row![
                     info_kv(self.t("qfil_popup_password"), &pw),
                     Space::new().width(Length::Fill),
-                    m3_filled_button(self.t("qfil_popup_copy").to_string())
+                    m3_text_button(self.t("qfil_popup_copy").to_string())
                         .on_press(Message::CopyToClipboard(pw.clone())),
                 ]
                 .align_y(iced::Alignment::Center);
@@ -1023,9 +1022,8 @@ impl App {
         };
         let slot = active_slot_suffix(Some(&self.device.slot));
 
-        let title = text(self.t("rollback_popup_title").to_string())
-            .size(theme::text_size::TITLE_LARGE)
-            .font(theme::emphasis::bold());
+        let title =
+            text(self.t("rollback_popup_title").to_string()).size(theme::text_size::TITLE_LARGE);
         let desc = text(self.t("rollback_popup_desc").to_string())
             .size(theme::text_size::BODY_MEDIUM)
             .style(muted_style)
@@ -1078,9 +1076,8 @@ impl App {
             return container(text("")).into();
         };
 
-        let title = text(self.t("rollback_popup_title").to_string())
-            .size(theme::text_size::TITLE_LARGE)
-            .font(theme::emphasis::bold());
+        let title =
+            text(self.t("rollback_popup_title").to_string()).size(theme::text_size::TITLE_LARGE);
         let desc = text(self.t("rollback_manual_desc").to_string())
             .size(theme::text_size::BODY_MEDIUM)
             .style(muted_style)
@@ -1638,39 +1635,23 @@ impl App {
 
         let mut list = column![].spacing(2);
         for (label, is_selected, on_press, disabled) in opts {
-            let mut btn = button(text(label).size(theme::text_size::BODY_MEDIUM))
-                .padding([6, 14])
-                .width(Length::Fill)
-                .style(move |t: &Theme, status| {
-                    let p = pal_of(t);
-                    if disabled {
-                        return button::Style {
-                            background: Some(iced::Color::TRANSPARENT.into()),
-                            text_color: with_alpha(p.on_surface, 0.38),
-                            ..Default::default()
-                        };
-                    }
-                    button::Style {
-                        background: if is_selected {
-                            Some(
-                                theme::mix_color(
-                                    p.primary,
-                                    p.on_primary,
-                                    theme::state_alpha(status),
-                                )
-                                .into(),
-                            )
-                        } else {
-                            theme::state_layer_bg(status, p.on_surface).map(Into::into)
-                        },
-                        text_color: if is_selected {
-                            p.on_primary
-                        } else {
-                            p.on_surface
-                        },
-                        ..Default::default()
-                    }
-                });
+            let mut btn = button(
+                row![
+                    selection_radio(is_selected, !disabled, false),
+                    text(label).size(theme::text_size::BODY_MEDIUM),
+                ]
+                .spacing(16)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding([12, 16])
+            .width(Length::Fill)
+            .style(move |t: &Theme, status| {
+                let mut style = expressive_choice_style(t, status, is_selected, false);
+                if disabled {
+                    style.text_color = with_alpha(pal_of(t).on_surface, 0.38);
+                }
+                style
+            });
             if !disabled {
                 btn = btn.on_press(on_press);
             }
@@ -1678,7 +1659,8 @@ impl App {
         }
 
         let popup_content = popup_sections(
-            text(self.t("flash_confirm_edit_title").to_string()).size(16),
+            text(self.t("flash_confirm_edit_title").to_string())
+                .size(theme::text_size::TITLE_LARGE),
             list,
             row![
                 Space::new().width(Length::Fill),
