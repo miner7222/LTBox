@@ -1,7 +1,8 @@
 //! Unroot wizard view + steps. Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 

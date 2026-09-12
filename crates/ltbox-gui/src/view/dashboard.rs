@@ -1,7 +1,8 @@
 //! Dashboard view (device status, action tiles). Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 fn dashboard_definition_row<'a>(
@@ -271,7 +272,11 @@ impl App {
             content = content.push(banner);
         }
 
-        let mut identity = row![].spacing(16.0).align_y(iced::Alignment::Center);
+        // Reserve the portrait's height even before a model is known.
+        let mut identity = row![]
+            .height(64.0)
+            .spacing(16.0)
+            .align_y(iced::Alignment::Center);
         if !self.device.model.is_empty() {
             let portrait: Element<'_, Message> = match device_portrait(&self.device.model) {
                 DevicePortrait::Png(handle) => iced::widget::image(handle)
@@ -394,7 +399,7 @@ impl App {
             )
             .into()
         } else {
-            value(arb.to_string())
+            container(value(arb.to_string())).padding([4, 0]).into()
         };
         let actions = dashboard_action_availability(
             &self.device.serial,
@@ -476,7 +481,8 @@ impl App {
         // the dashboard.
         let dash_log = iced::widget::scrollable(
             text(self.log_lines.join("\n"))
-                .size(11.0)
+                .size(theme::text_size::BODY_SMALL)
+                .line_height(16.0 / 12.0)
                 .width(Length::Fill)
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
         )

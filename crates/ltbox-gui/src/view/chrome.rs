@@ -1,7 +1,8 @@
 //! App shell: root view dispatcher, titlebar, sidebar, content frame, banners, toast, dialogs. Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, scrollable, text};
+use iced::widget::{self, Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 
 /// M3 single-line snackbar height.
@@ -72,6 +73,7 @@ impl App {
             layers.push(self.error_banner(err));
         }
         let dialog_layer_start = layers.len();
+        let mut modeless_layers = Vec::new();
         if self.software_fix.confirm_open {
             layers.push(self.software_fix_confirm_dialog());
         }
@@ -101,6 +103,7 @@ impl App {
             && self.operation.is_running()
             && self.operation.view() == Some(View::Reboot)
         {
+            modeless_layers.push(layers.len());
             layers.push(self.reboot_wait_popup());
         }
         if self.root.run_id_popup_open {
@@ -116,6 +119,7 @@ impl App {
             layers.push(self.root_superkey_popup());
         }
         if self.should_show_busy_progress_dialog() {
+            modeless_layers.push(layers.len());
             layers.push(self.busy_progress_dialog());
         }
         if self.device_info_popup.is_some() {
@@ -156,6 +160,22 @@ impl App {
             layers.push(self.startup_disclaimer_dialog());
         }
         let any_dialog_open = layers.len() > dialog_layer_start + toast_layer_count;
+        let top_dialog = if any_dialog_open {
+            Some(if self.startup_disclaimer_open {
+                layers.len() - 1
+            } else {
+                layers.len() - 1 - toast_layer_count
+            })
+        } else {
+            None
+        }
+        .filter(|index| !modeless_layers.contains(index));
+        // Keep the wrapper mounted so opening a dialog preserves underlying
+        // scroll positions and text-input state while removing keyboard access.
+        for (index, layer) in layers.iter_mut().enumerate() {
+            let previous = std::mem::replace(layer, Space::new().into());
+            *layer = focus_button::scope(previous, top_dialog.is_none_or(|top| index == top));
+        }
 
         // Resize handles last so the edge/corner hit areas at the window
         // edges and corners sit above every popup/toast — the user can
@@ -178,13 +198,18 @@ impl App {
     }
 
     pub(crate) fn startup_disclaimer_dialog(&self) -> Element<'_, Message> {
-        let acknowledgement = widget::checkbox(self.startup_disclaimer_checked)
-            .label(self.t("startup_disclaimer_accept").to_string())
-            .on_toggle(Message::StartupDisclaimerToggled)
-            .size(20.0)
-            .spacing(12.0)
-            .text_size(theme::text_size::BODY_MEDIUM)
-            .style(m3_checkbox_style);
+        let acknowledgement = focus_button::actionable(
+            widget::checkbox(self.startup_disclaimer_checked)
+                .label(self.t("startup_disclaimer_accept").to_string())
+                .on_toggle(Message::StartupDisclaimerToggled)
+                .size(20.0)
+                .spacing(12.0)
+                .text_size(theme::text_size::BODY_MEDIUM)
+                .style(m3_checkbox_style),
+            Some(Message::StartupDisclaimerToggled(
+                !self.startup_disclaimer_checked,
+            )),
+        );
 
         let mut continue_button =
             m3_filled_button(self.t("startup_disclaimer_continue").to_string());
@@ -472,19 +497,13 @@ impl App {
     }
 
     pub(crate) fn sidebar(&self) -> Element<'_, Message> {
-        // Compact label opacity mounts at 40% width so there's room for
-        // glyphs to land, then rides the width spring to its settle point.
-        // Expanded bypasses the tween and keeps labels fully visible.
+        // Opacity uses its own non-overshooting effects spring.
+        // Expanded navigation keeps labels fully visible.
         let size_class = self.window_size_class();
-        let visual_progress = self.sidebar_visual_progress();
-        let label_t = ((visual_progress - 0.4) / 0.5).clamp(0.0, 1.0);
-        let label_alpha = ease_out_cubic(label_t);
+        let label_alpha = self.sidebar_visual_progress();
         let collapsed = size_class == WindowSizeClass::Compact && !self.sidebar_expanded;
-        // CSS lets a 56px compact item overflow the nav list's 48px content
-        // box after its 8px side padding. Iced clamps fixed children to that
-        // content box instead, so use the equivalent rendered 4px rail inset
-        // in the collapsed form to preserve the required 56px geometry.
-        let list_padding = if collapsed { [12, 4] } else { [12, 8] };
+        // Center the 56px indicator inside the 80px rail.
+        let list_padding = if collapsed { [12, 12] } else { [12, 8] };
         let mut col = column![]
             .spacing(1)
             .padding(list_padding)
@@ -522,10 +541,7 @@ impl App {
         ));
 
         // M3: when the destination list is longer than the drawer, it scrolls
-        // inside the drawer. Ten items at 56 come to ~633px, which leaves ~20px
-        // of slack in the minimum window — a shorter one, or a locale with
-        // taller rows, would otherwise clip the last destination with nothing
-        // to say so.
+        // inside the drawer, including when keyboard focus reveals a destination.
         let body: Element<'_, Message> = widget::scrollable(col)
             .style(m3_scrollable_style)
             .width(Length::Fill)
@@ -725,18 +741,21 @@ impl App {
         } else {
             &self.device.model
         };
-        let mut status_row = row![
+        let mut connection = row![
             text(format!("●  {status_label}"))
                 .size(12)
                 .color(status_color),
         ]
-        .spacing(12)
+        .spacing(6)
         .align_y(iced::Alignment::Center);
         if !model_text.is_empty() {
-            status_row =
-                status_row.push(text(format!("· {model_text}")).size(12).style(muted_style));
+            connection = connection
+                .push(text("-").size(12).style(muted_style))
+                .push(text(model_text).size(12).style(muted_style));
         }
-        status_row = status_row.push(Space::new().width(Length::Fill));
+        let mut status_row = row![connection]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
         if self.operation.is_running() {
             status_row = status_row.push(
                 text(self.t("status_working").to_string())
@@ -744,6 +763,7 @@ impl App {
                     .style(accent_style),
             );
         }
+        status_row = status_row.push(Space::new().width(Length::Fill));
         // Debug builds show "debug" instead of the version so a dev build is
         // never mistaken for a released one in screenshots/bug reports.
         let version = if cfg!(debug_assertions) {
@@ -754,8 +774,8 @@ impl App {
         if self.update_available.is_some() {
             status_row = status_row.push(
                 row![
-                    text(version).size(12).style(muted_style),
                     self.status_update_available_button(),
+                    text(version).size(12).style(muted_style),
                 ]
                 .spacing(6)
                 .align_y(iced::Alignment::Center),
@@ -771,7 +791,10 @@ impl App {
         // guidance: one divider per shared edge).
         column![
             widget::rule::horizontal(1).style(shell_rule_style),
-            container(status_row.padding([8, 20]))
+            container(status_row)
+                .height(32)
+                .padding([4, 20])
+                .align_y(iced::Alignment::Center)
                 .width(Length::Fill)
                 .style(|t: &Theme| panel_bg(t)),
         ]

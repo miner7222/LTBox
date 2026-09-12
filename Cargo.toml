@@ -106,7 +106,7 @@ dark-light = "3"
 sys-locale = "0.3"
 semver = "1"
 open = "5"
-windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_Threading"] }
 winresource = "0.1"
 tokio = { version = "1", features = ["rt"] }
 gptman = "3"

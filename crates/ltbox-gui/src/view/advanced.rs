@@ -1,7 +1,8 @@
 //! Advanced menu + generic adv wizard views + steps + image-info exec. Extracted from `main.rs`.
 
+use crate::focus_button::button;
 use crate::*;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 
 impl App {

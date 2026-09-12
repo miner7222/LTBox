@@ -1,7 +1,8 @@
 //! Reusable view components (dialogs, cards, step bar, icon tiles, lucide helpers). Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, text};
+use iced::widget::{self, Space, column, container, row, text};
 use iced::{Element, Length, Theme};
 use theme::with_alpha;
 

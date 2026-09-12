@@ -1,7 +1,8 @@
 //! Reboot view + confirm popup. Extracted from `main.rs`.
 
+use crate::focus_button::button;
 use crate::*;
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, column, container, row, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 use theme::with_alpha;

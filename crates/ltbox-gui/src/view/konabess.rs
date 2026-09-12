@@ -1,7 +1,8 @@
 //! KonaBess wizard and DTB target-selection dialog.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, scrollable, text};
+use iced::widget::{self, Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 
@@ -1143,6 +1144,7 @@ fn voltage_property_cell<'a>(
             && let Some(options) = regulator_vote_choices(chip, committed)
         {
             let selected = RegulatorVoteChoice::new(chip, committed);
+            let keyboard_options = options.clone();
             let picker = widget::pick_list(options, Some(selected.clone()), move |choice| {
                 Message::KonaBess(KonaBessMsg::KonaBessCellChanged(
                     key,
@@ -1157,7 +1159,18 @@ fn voltage_property_cell<'a>(
             })
             .menu_style(m3_pick_list_menu_style)
             .width(Length::Fixed(158.0));
-            controls = controls.push(picker);
+            controls = controls.push(focus_button::cycle(
+                picker,
+                format!("gpu-vote-{key:?}"),
+                &keyboard_options,
+                &selected,
+                |choice| {
+                    Message::KonaBess(KonaBessMsg::KonaBessCellChanged(
+                        key,
+                        choice.vote.to_string(),
+                    ))
+                },
+            ));
             if selected.name.is_some() {
                 controls = controls.push(
                     text(committed.to_string())
@@ -1370,7 +1383,8 @@ fn property_inputs<'a>(
             && let Some(options) = regulator_vote_choices(chip, committed)
         {
             let selected = RegulatorVoteChoice::new(chip, committed);
-            let picker = widget::pick_list(options, Some(selected), move |choice| {
+            let keyboard_options = options.clone();
+            let picker = widget::pick_list(options, Some(selected.clone()), move |choice| {
                 Message::KonaBess(KonaBessMsg::KonaBessCellChanged(
                     key,
                     choice.vote.to_string(),
@@ -1383,7 +1397,18 @@ fn property_inputs<'a>(
             })
             .menu_style(m3_pick_list_menu_style)
             .width(Length::Fixed(field_width));
-            inputs = inputs.push(picker);
+            inputs = inputs.push(focus_button::cycle(
+                picker,
+                format!("gpu-vote-{key:?}"),
+                &keyboard_options,
+                &selected,
+                |choice| {
+                    Message::KonaBess(KonaBessMsg::KonaBessCellChanged(
+                        key,
+                        choice.vote.to_string(),
+                    ))
+                },
+            ));
             continue;
         }
         inputs = inputs.push(gpu_text_input(value, key, field_width, hard_error, warning));

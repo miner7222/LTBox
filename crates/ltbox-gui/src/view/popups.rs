@@ -1,7 +1,8 @@
 //! Modal popup views (device info, OTA, ARB index, country, region, rescue region, log). Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{self, Space, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Theme};
 use theme::with_alpha;
 
@@ -349,9 +350,9 @@ impl App {
                 "SIL Open Font License 1.1 — © 2014-2021 Adobe",
             ),
             license_entry("Lucide", "ISC"),
-            license_entry("qdl", "BSD-3-Clause — Qualcomm"),
             license_entry("flag-icons 7.3.2", "MIT — © Panayiotis Lipiridis"),
             text(include_str!("../../assets/flags/LICENSE")).size(theme::text_size::BODY_SMALL),
+            license_entry("qdl", "BSD-3-Clause — Qualcomm"),
             license_entry("magiskboot", "GPL-3.0-or-later"),
             license_entry("kptools", "GPL-2.0-or-later"),
             license_entry("avbtool-rs", "Apache-2.0"),

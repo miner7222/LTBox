@@ -1,8 +1,9 @@
 //! Wizard navigation bars and small view widgets/helpers (nav buttons,
 //! color blend/easing, device portrait, layout consts). Extracted from main.rs.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{Space, button, canvas, column, container, row, text};
+use iced::widget::{Space, canvas, column, container, row, text};
 use iced::{Element, Length, Point, Radians, Rectangle, Renderer, Theme, mouse, window};
 use ltbox_core::model::TB324ZC_MODEL;
 
@@ -673,21 +674,9 @@ pub(crate) fn wizard_nav<'a>(
 // Reusable widgets
 // =========================================================================
 
-/// Cubic ease-out curve `f(t) = 1 - (1 - t)^3`, mapped to `[0, 1]`.
-/// Used by the sidebar tween so labels fade in faster early and
-/// settle smoothly near the spring's resting point.
-pub(crate) fn ease_out_cubic(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    1.0 - (1.0 - t).powi(3)
-}
-
 /// Navigation-drawer item and compact-rail geometry.
 pub(crate) const NAV_BTN_HEIGHT: f32 = 56.0;
-/// Collapsed items keep the expanded height so opening the drawer changes only
-/// its width. M3 publishes no collapsed-rail item height, and its two rail
-/// variants are described as transforming into each other; a height change
-/// there slides every row vertically, which reads as the contents jumping
-/// rather than the panel widening.
+/// Keep the same item height during drawer expansion to avoid vertical jumps.
 pub(crate) const NAV_BTN_COLLAPSED_HEIGHT: f32 = NAV_BTN_HEIGHT;
 pub(crate) const NAV_BTN_COLLAPSED_WIDTH: f32 = 56.0;
 pub(crate) const NAV_INDICATOR_COLLAPSED_HEIGHT: f32 = 32.0;
@@ -695,7 +684,7 @@ pub(crate) const NAV_INDICATOR_COLLAPSED_HEIGHT: f32 = 32.0;
 /// Collapsed sidebar rail width (icon-only). This is also the fixed baseline
 /// used for window-size classification: using the adaptive rendered width
 /// here would make the class oscillate in the rail-width feedback band.
-pub(crate) const SIDEBAR_RAIL_WIDTH: f32 = 64.0;
+pub(crate) const SIDEBAR_RAIL_WIDTH: f32 = 80.0;
 pub(crate) const SIDEBAR_EXPANDED_WIDTH: f32 = 232.0;
 
 pub(crate) fn nav_btn<'a>(
@@ -706,32 +695,25 @@ pub(crate) fn nav_btn<'a>(
     label_alpha: f32,
     collapsed: bool,
 ) -> Element<'a, Message> {
-    // The icon font has a fixed outline, so the selected glyph receives a
-    // one-pixel optical size increase to carry the mockup's heavier stroke.
-    let icon = lucide_icon(
-        view.nav_icon(),
-        if active { 20.0 } else { 19.0 },
-        move |t: &Theme| {
-            let p = pal_of(t);
-            if !enabled {
-                with_alpha(p.on_surface, 0.38)
-            } else if active {
-                p.on_surface
-            } else {
-                p.on_surface_variant
-            }
-        },
-    );
+    // Selection changes the indicator rather than resizing the glyph.
+    let icon = lucide_icon(view.nav_icon(), 24.0, move |t: &Theme| {
+        let p = pal_of(t);
+        if !enabled {
+            with_alpha(p.on_surface, 0.38)
+        } else if active {
+            p.on_surface
+        } else {
+            p.on_surface_variant
+        }
+    });
     let icon_slot: Element<'a, Message> = container(icon)
-        .width(Length::Fixed(20.0))
-        .height(Length::Fixed(20.0))
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0))
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
         .into();
 
-    // Both forms keep the icon center 32px from the rail's left edge:
-    // compact = 4px list inset + 18px button inset + 10px half-icon;
-    // expanded = 8px list inset + 14px button inset + 10px half-icon.
+    // Both forms keep the icon center 40px from the rail's left edge.
     let mut inner = iced::widget::row![icon_slot]
         .spacing(12)
         .align_y(iced::Alignment::Center);
@@ -826,7 +808,7 @@ pub(crate) fn nav_btn<'a>(
         .into();
 
     let btn = button(content)
-        .padding([0, if collapsed { 18 } else { 14 }])
+        .padding([0, if collapsed { 16 } else { 20 }])
         .width(item_width)
         .height(Length::Fixed(item_height))
         .style(move |t: &Theme, status| {
@@ -1261,8 +1243,8 @@ mod tests {
     fn window_size_class_accounts_for_the_sidebar_rail() {
         let mut app = App::default();
         for (window_width, content_width, class) in [
-            (820.0, 756.0, WindowSizeClass::Compact),
-            (1320.0, 1256.0, WindowSizeClass::Expanded),
+            (820.0, 740.0, WindowSizeClass::Compact),
+            (1320.0, 1240.0, WindowSizeClass::Expanded),
         ] {
             app.window_size.0 = window_width;
             assert_eq!(window_width - crate::SIDEBAR_RAIL_WIDTH, content_width);
@@ -1273,7 +1255,7 @@ mod tests {
     #[test]
     fn window_size_class_stays_expanded_in_the_rail_width_feedback_band() {
         let mut app = App::default();
-        for window_width in [1064.0, 1100.0, 1200.0, 1231.0] {
+        for window_width in [1080.0, 1100.0, 1200.0, 1231.0] {
             app.window_size.0 = window_width;
 
             assert_eq!(

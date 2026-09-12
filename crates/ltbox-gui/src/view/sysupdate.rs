@@ -1,7 +1,8 @@
 //! System-update wizard view + steps + the shared exec-step view. Extracted from `main.rs`.
 
+use crate::focus_button::button;
 use crate::*;
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{column, container, row, text};
 use iced::{Element, Length, Theme};
 
 fn cumulative_flash_percent(snapshot: &ltbox_device::edl::FlashProgress) -> u8 {

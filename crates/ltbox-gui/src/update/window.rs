@@ -12,7 +12,9 @@ impl App {
     pub(crate) fn update_window(&mut self, msg: WindowMsg) -> Task<Message> {
         match msg {
             WindowMsg::WindowIdReceived(id) => {
-                self.window_id = id;
+                // A startup query can finish before the native window opens.
+                // Do not let that empty reply erase the Opened event's ID.
+                self.window_id = id.or(self.window_id);
                 self.window_id
                     .map(|id| iced::window::is_maximized(id).map(Message::WindowMaximized))
                     .unwrap_or_else(Task::none)
@@ -97,6 +99,23 @@ impl App {
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    #[test]
+    fn late_empty_startup_query_preserves_window_controls_during_work() {
+        let id = iced::window::Id::unique();
+        let mut app = App {
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
+            ..App::default()
+        };
+        let _ = app.update(Message::Window(WindowMsg::WindowIdReceived(Some(id))));
+        let _ = app.update(Message::Window(WindowMsg::WindowIdReceived(None)));
+        assert_eq!(app.window_id, Some(id));
+        assert_eq!(
+            app.update(Message::Window(WindowMsg::WindowDrag)).units(),
+            1
+        );
+        assert!(app.operation.is_running());
+    }
 
     #[test]
     fn window_close_refuses_while_busy() {

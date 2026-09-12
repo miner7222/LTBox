@@ -1,8 +1,9 @@
 //! Flash wizard view + steps (region, target, data, folder, confirm, exec). Extracted from `main.rs`.
 
 use super::components::{elide_path_middle, picker_action_button, picker_path_field};
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 use theme::with_alpha;

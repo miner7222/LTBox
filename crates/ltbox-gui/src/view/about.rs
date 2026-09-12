@@ -1,7 +1,8 @@
 //! About panel: app icon, version, project links, and license.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, button, column, container, row, text};
+use iced::widget::{self, column, container, row, text};
 use iced::{Element, Length, Theme};
 use theme::mix_color;
 

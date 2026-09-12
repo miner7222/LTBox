@@ -25,6 +25,7 @@ mod device_name;
 mod device_queries;
 mod device_snapshot;
 mod file_hash;
+mod focus_button;
 mod layout_constraints;
 mod loader;
 #[cfg(test)]
@@ -85,7 +86,8 @@ pub(crate) use workers::unroot::*;
 
 use ltbox_core::{live, tr_args};
 
-use iced::widget::{Space, button, column, row, text};
+use crate::focus_button::{self as button, button};
+use iced::widget::{Space, column, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use theme::{Palette, ThemeSeed, palette_for, with_alpha};
@@ -1872,6 +1874,8 @@ struct App {
     /// displacement to target AND the velocity to be near zero so we
     /// don't stop the subscription mid-overshoot.
     sidebar_velocity: f32,
+    sidebar_label_alpha: f32,
+    sidebar_label_velocity: f32,
     /// Current logical window size. Tracks `Event::Window(Resized)`
     /// so the user's preferred geometry survives restarts via
     /// `PersistedSettings::window_size`. A simple `Instant` debounce
@@ -2078,6 +2082,8 @@ impl Default for App {
             sidebar_expanded: false,
             sidebar_anim: 0.0,
             sidebar_velocity: 0.0,
+            sidebar_label_alpha: 0.0,
+            sidebar_label_velocity: 0.0,
             // Use the persisted size if present, otherwise the default
             // initial window dimensions (kept in lockstep with the
             // values passed to `iced::window::Settings::size` in `main`).
@@ -3173,6 +3179,8 @@ impl App {
             self.window_size_class() == WindowSizeClass::Compact || !self.sidebar_expanded;
         let sidebar_settled = (self.sidebar_anim - sidebar_target).abs() < 0.001
             && self.sidebar_velocity.abs() < 0.05
+            && (self.sidebar_label_alpha - f32::from(self.sidebar_expanded)).abs() < 0.001
+            && self.sidebar_label_velocity.abs() < 0.05
             && sidebar_hover_settled;
         if !sidebar_settled {
             subs.push(
@@ -3184,15 +3192,27 @@ impl App {
         // geometry survives a restart. `event::listen_with` filters at
         // the source so non-window events don't bubble back as
         // `Message::Noop`.
-        subs.push(iced::event::listen_with(|event, _, _| match event {
-            iced::Event::Window(iced::window::Event::Resized(size)) => {
-                Some(Message::WindowResized(size.width, size.height))
-            }
-            iced::Event::Window(iced::window::Event::CloseRequested) => {
-                Some(Message::Window(WindowMsg::WindowClose))
-            }
-            _ => None,
-        }));
+        subs.push(iced::event::listen_with(
+            |event, status, window_id| match event {
+                iced::Event::Window(iced::window::Event::Opened { .. }) => Some(Message::Window(
+                    WindowMsg::WindowIdReceived(Some(window_id)),
+                )),
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                    modifiers,
+                    ..
+                }) if status == iced::event::Status::Ignored => {
+                    Some(Message::FocusMove(modifiers.shift()))
+                }
+                iced::Event::Window(iced::window::Event::Resized(size)) => {
+                    Some(Message::WindowResized(size.width, size.height))
+                }
+                iced::Event::Window(iced::window::Event::CloseRequested) => {
+                    Some(Message::Window(WindowMsg::WindowClose))
+                }
+                _ => None,
+            },
+        ));
         // Debounced window-size persistence tick: only fires while a
         // pending size update hasn't been flushed yet.
         if self.window_size_dirty {
@@ -3250,7 +3270,7 @@ impl App {
     /// Expanded labels are always fully visible; Compact follows the spring.
     fn sidebar_visual_progress(&self) -> f32 {
         match self.window_size_class() {
-            WindowSizeClass::Compact => self.sidebar_anim,
+            WindowSizeClass::Compact => self.sidebar_label_alpha,
             WindowSizeClass::Expanded => 1.0,
         }
     }
@@ -3510,7 +3530,7 @@ impl App {
         .align_y(iced::Alignment::Center);
         button(content)
             .on_press(Message::OpenUpdate)
-            .padding([0, 6])
+            .padding([6, 8])
             .style(|t: &Theme, status| {
                 let p = pal_of(t);
                 button::Style {
@@ -4103,6 +4123,25 @@ mod tests {
         assert_eq!(NAV_MAIN.get(unroot + 1), Some(&View::KonaBess));
         assert_eq!(NAV_MAIN.get(unroot + 2), Some(&View::Reboot));
         assert!(!NAV_TOOLS.contains(&View::KonaBess));
+    }
+
+    #[test]
+    fn sidebar_motion_settles_after_reversing_direction() {
+        let mut app = App::default();
+        app.window_size.0 = 900.0;
+        let _ = app.update(Message::SidebarHoverEnter);
+        for _ in 0..4 {
+            let _ = app.update(Message::SidebarAnimTick);
+        }
+        let _ = app.update(Message::SidebarHoverExit);
+        for _ in 0..300 {
+            let _ = app.update(Message::SidebarAnimTick);
+            assert!((0.0..=1.0).contains(&app.sidebar_label_alpha));
+        }
+        assert_eq!(app.sidebar_anim, 0.0);
+        assert_eq!(app.sidebar_velocity, 0.0);
+        assert_eq!(app.sidebar_label_alpha, 0.0);
+        assert_eq!(app.sidebar_label_velocity, 0.0);
     }
 
     #[test]

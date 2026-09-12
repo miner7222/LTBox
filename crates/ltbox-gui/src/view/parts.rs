@@ -1,7 +1,8 @@
 //! Partition + physical-storage dump/flash wizard views + steps. Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, scrollable, text};
+use iced::widget::{self, Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 
@@ -85,7 +86,7 @@ fn partition_file_button(
     glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
     on_press: Option<Message>,
     clear: bool,
-) -> iced::widget::Button<'static, Message> {
+) -> button::Button<'static, Message> {
     let enabled = on_press.is_some();
     let mut action = button(
         container(glyph.size(15))
@@ -394,14 +395,15 @@ impl App {
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
         for (idx, r) in self.flash_parts.rows.iter().enumerate() {
             let marker_cell: Element<'_, Message> = match r.state {
-                FlashRowState::Skip | FlashRowState::Write => container(
+                FlashRowState::Skip | FlashRowState::Write => container(focus_button::actionable(
                     iced::widget::checkbox(r.state == FlashRowState::Write)
                         .size(FLASH_PARTS_MARKER_SIZE)
                         .on_toggle(move |_| {
                             Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx))
                         })
                         .style(m3_checkbox_style),
-                )
+                    Some(Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx))),
+                ))
                 // `center_x(Fill)` would overwrite the fixed width set above
                 // and let this cell take slack, pushing every data column out
                 // of line with its header. Align inside the width instead.
@@ -789,9 +791,12 @@ impl App {
         // unchecked, else clear.
         let all_checked =
             !self.dump_parts.rows.is_empty() && self.dump_parts.rows.iter().all(|r| r.selected);
-        let header_cb = iced::widget::checkbox(all_checked)
-            .style(m3_checkbox_style)
-            .on_toggle(|_| Message::DumpParts(DumpPartsMsg::DumpPartsToggleAll));
+        let header_cb = focus_button::actionable(
+            iced::widget::checkbox(all_checked)
+                .style(m3_checkbox_style)
+                .on_toggle(|_| Message::DumpParts(DumpPartsMsg::DumpPartsToggleAll)),
+            Some(Message::DumpParts(DumpPartsMsg::DumpPartsToggleAll)),
+        );
         let header = row![
             container(header_cb).width(Length::Fixed(32.0)),
             parts_sort_header(
@@ -829,9 +834,12 @@ impl App {
 
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
         for (idx, row) in self.dump_parts.rows.iter().enumerate() {
-            let cb = iced::widget::checkbox(row.selected)
-                .style(m3_checkbox_style)
-                .on_toggle(move |_| Message::DumpParts(DumpPartsMsg::DumpPartsToggleRow(idx)));
+            let cb = focus_button::actionable(
+                iced::widget::checkbox(row.selected)
+                    .style(m3_checkbox_style)
+                    .on_toggle(move |_| Message::DumpParts(DumpPartsMsg::DumpPartsToggleRow(idx))),
+                Some(Message::DumpParts(DumpPartsMsg::DumpPartsToggleRow(idx))),
+            );
             let data_row = iced::widget::row![
                 container(cb).width(Length::Fixed(32.0)),
                 text(row.lun.to_string())
@@ -985,9 +993,12 @@ impl App {
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
         for idx in 0..PHYS_LUN_COUNT {
             let checked = self.dump_phys.selected[idx];
-            let cb = iced::widget::checkbox(checked)
-                .style(m3_checkbox_style)
-                .on_toggle(move |_| Message::DumpPhys(DumpPhysMsg::DumpPhysToggleRow(idx)));
+            let cb = focus_button::actionable(
+                iced::widget::checkbox(checked)
+                    .style(m3_checkbox_style)
+                    .on_toggle(move |_| Message::DumpPhys(DumpPhysMsg::DumpPhysToggleRow(idx))),
+                Some(Message::DumpPhys(DumpPhysMsg::DumpPhysToggleRow(idx))),
+            );
             let data_row = iced::widget::row![
                 container(cb).width(Length::Fixed(32.0)),
                 text(format!("LUN {idx}")).size(12.0).width(Length::Fill),
@@ -1120,9 +1131,12 @@ impl App {
         let mut list = column![header, widget::rule::horizontal(1)].spacing(0);
         for idx in 0..PHYS_LUN_COUNT {
             let checked = self.flash_phys.selected[idx];
-            let cb = iced::widget::checkbox(checked)
-                .style(m3_checkbox_style)
-                .on_toggle(move |_| Message::FlashPhys(FlashPhysMsg::FlashPhysToggleRow(idx)));
+            let cb = focus_button::actionable(
+                iced::widget::checkbox(checked)
+                    .style(m3_checkbox_style)
+                    .on_toggle(move |_| Message::FlashPhys(FlashPhysMsg::FlashPhysToggleRow(idx))),
+                Some(Message::FlashPhys(FlashPhysMsg::FlashPhysToggleRow(idx))),
+            );
 
             let file_disp = self.flash_phys.file_paths[idx]
                 .as_ref()

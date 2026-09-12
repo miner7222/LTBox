@@ -1,7 +1,8 @@
 //! Root wizard view + steps + superkey/run-id/kernel-version popups. Extracted from `main.rs`.
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 use theme::with_alpha;
@@ -387,12 +388,12 @@ impl App {
                         .get(..10)
                         .unwrap_or(&release.published_at)
                 );
-                body = body.push(
+                body = body.push(focus_button::actionable(
                     iced::widget::radio(label, index, self.root.release_selection, |index| {
                         Message::Root(RootMsg::RootReleaseSelect(index))
                     })
                     .text_size(theme::text_size::BODY_MEDIUM)
-                    .size(18)
+                    .size(20)
                     .spacing(12)
                     .style(|t: &Theme, status| {
                         let p = pal_of(t);
@@ -420,7 +421,8 @@ impl App {
                             text_color: Some(p.on_surface),
                         }
                     }),
-                );
+                    Some(Message::Root(RootMsg::RootReleaseSelect(index))),
+                ));
             }
         }
         let mut confirm = m3_filled_button(self.t("btn_ok").to_string());

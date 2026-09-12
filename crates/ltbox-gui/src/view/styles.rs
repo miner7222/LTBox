@@ -1,10 +1,9 @@
 //! Shared widget style functions (text/button/container/rule styles). Extracted from `main.rs`.
 
+use crate::focus_button as button;
 use crate::*;
 use iced::Theme;
-use iced::widget::{
-    button, checkbox, container, pick_list, scrollable, text_editor, text_input, toggler,
-};
+use iced::widget::{checkbox, container, pick_list, scrollable, text_editor, text_input, toggler};
 use theme::{is_dark, mix_color, with_alpha};
 
 /// `on_surface_variant` — secondary labels / descriptions.

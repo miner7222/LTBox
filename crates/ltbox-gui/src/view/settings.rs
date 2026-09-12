@@ -1,13 +1,77 @@
 //! Settings view (appearance, device connection, and files).
 
+use crate::focus_button::{self as button, button};
 use crate::*;
-use iced::widget::{self, Space, button, column, container, row, text};
+use iced::widget::{self, Space, column, container, row, text};
 use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 use theme::with_alpha;
 
 const SETTINGS_ROW_HEIGHT: f32 = 56.0;
 const SETTINGS_CONTROL_HEIGHT: f32 = 40.0;
+
+fn settings_switch(selected: bool) -> Element<'static, Message> {
+    let thumb_size = if selected { 24.0 } else { 16.0 };
+    let thumb = container(Space::new())
+        .width(thumb_size)
+        .height(thumb_size)
+        .style(move |t: &Theme| container::Style {
+            background: Some(
+                if selected {
+                    pal_of(t).on_primary
+                } else {
+                    pal_of(t).outline
+                }
+                .into(),
+            ),
+            border: iced::Border {
+                radius: theme::shape::FULL.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    let track = container(thumb)
+        .width(52.0)
+        .height(32.0)
+        .padding(if selected { 4.0 } else { 8.0 })
+        .align_x(if selected {
+            iced::alignment::Horizontal::Right
+        } else {
+            iced::alignment::Horizontal::Left
+        })
+        .center_y(32.0)
+        .style(move |t: &Theme| {
+            let style = m3_settings_switch_style(
+                t,
+                widget::toggler::Status::Active {
+                    is_toggled: selected,
+                },
+            );
+            container::Style {
+                background: Some(style.background),
+                border: iced::Border {
+                    color: style.background_border_color,
+                    width: 2.0,
+                    radius: theme::shape::FULL.into(),
+                },
+                ..Default::default()
+            }
+        });
+    button(track)
+        .padding(8)
+        .height(48.0)
+        .width(68.0)
+        .on_press(Message::Settings(SettingsMsg::SetUseSystemFont(!selected)))
+        .style(|t: &Theme, status| button::Style {
+            background: theme::state_layer_bg(status, pal_of(t).on_surface).map(Into::into),
+            border: iced::Border {
+                radius: theme::shape::FULL.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
 
 fn settings_row(
     label: String,
@@ -360,7 +424,7 @@ impl App {
         let field_padding = M3_FIELD_PADDING;
         let grid_max_width = SETTINGS_GRID_MAX_WIDTH.max(SETTINGS_PANEL_MAX_WIDTH);
 
-        let language_control: Element<'static, Message> = widget::pick_list(
+        let language_picker = widget::pick_list(
             LANGUAGES
                 .iter()
                 .map(|language| language.label())
@@ -379,8 +443,14 @@ impl App {
         .padding(field_padding)
         .style(m3_pick_list_style)
         .menu_style(m3_pick_list_menu_style)
-        .width(Length::Fixed(SETTINGS_PICK_LIST_WIDTH))
-        .into();
+        .width(Length::Fixed(SETTINGS_PICK_LIST_WIDTH));
+        let language_control = focus_button::cycle(
+            language_picker,
+            "settings-language".into(),
+            LANGUAGES,
+            &s.language,
+            |language| Message::Settings(SettingsMsg::SetLanguage(language)),
+        );
         let language_row = settings_row(
             self.t("settings_language").to_string(),
             String::new(),
@@ -425,11 +495,7 @@ impl App {
             seed_control,
         );
 
-        let font_control: Element<'static, Message> = widget::toggler(self.use_system_font)
-            .on_toggle(|enabled| Message::Settings(SettingsMsg::SetUseSystemFont(enabled)))
-            .size(24.0)
-            .style(m3_settings_switch_style)
-            .into();
+        let font_control = settings_switch(self.use_system_font);
         let font_row = settings_row(
             self.t("settings_system_font").to_string(),
             self.t("settings_system_font_desc").to_string(),

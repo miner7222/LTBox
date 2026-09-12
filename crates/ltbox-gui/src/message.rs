@@ -16,6 +16,7 @@ pub(crate) enum Message {
     OperationEvent(crate::operation_execution::OperationId, Box<Message>),
     /// No-op for click-blocker mouse_area widgets.
     Noop,
+    FocusMove(bool),
     /// Hide only the modeless EDL wait dialog; the worker keeps running.
     RebootWaitDismiss,
     StartupDisclaimerToggled(bool),
@@ -120,7 +121,7 @@ pub(crate) enum Message {
     /// Periodic system-theme probe while "Follow system" is active.
     RefreshSystemTheme,
     /// 16 ms tick from the sidebar tween subscription. Steps
-    /// `sidebar_anim` toward its target via exponential decay.
+    /// Spatial and effects springs toward their respective targets.
     /// Subscription auto-stops once the value has settled.
     SidebarAnimTick,
     /// Dashboard rollback cell → open the `boot` / `vbmeta_system`

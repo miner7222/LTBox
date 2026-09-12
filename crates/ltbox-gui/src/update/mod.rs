@@ -131,6 +131,14 @@ impl App {
             return Task::none();
         }
         match msg {
+            Message::FocusMove(backward) => {
+                return (if backward {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                })
+                .chain(focus_button::reveal_focus());
+            }
             Message::DeviceLookupEvent(..) => unreachable!("lookup envelopes are handled at entry"),
             Message::OperationEvent(..) => unreachable!("operation envelopes are handled at entry"),
             Message::StartupDisclaimerToggled(checked) => {
@@ -1011,17 +1019,36 @@ impl App {
                 if self.window_size_class() == WindowSizeClass::Expanded {
                     self.sidebar_expanded = false;
                 }
-                // M3 Expressive Spatial spring: critically damped enough
-                // that navigation doesn't oscillate, with a touch of
-                // overshoot at hover-exit so the rail "snaps" closed.
-                // stiffness=180, damping_ratio≈0.85 → damping ≈ 22.8.
-                const STIFFNESS: f32 = 180.0;
-                const DAMPING: f32 = 22.8;
+                // M3 Expressive default spatial: stiffness 380, ratio 0.8.
+                const STIFFNESS: f32 = 380.0;
+                let damping = 2.0 * 0.8 * STIFFNESS.sqrt();
                 const DT: f32 = 0.016;
                 let target = self.sidebar_anim_target();
+                let label_target = f32::from(self.sidebar_expanded);
+                if theme_detect::reduced_motion() {
+                    self.sidebar_anim = target;
+                    self.sidebar_velocity = 0.0;
+                    self.sidebar_label_alpha = label_target;
+                    self.sidebar_label_velocity = 0.0;
+                    return Task::none();
+                }
+                // Closed-form critically damped default effects spring (1600/1).
+                // Unlike spatial motion, opacity cannot overshoot.
+                let offset = self.sidebar_label_alpha - label_target;
+                let c = self.sidebar_label_velocity + 40.0 * offset;
+                let decay = (-40.0 * DT).exp();
+                self.sidebar_label_alpha =
+                    (label_target + (offset + c * DT) * decay).clamp(0.0, 1.0);
+                self.sidebar_label_velocity = (self.sidebar_label_velocity - 40.0 * c * DT) * decay;
+                if (self.sidebar_label_alpha - label_target).abs() < 0.001
+                    && self.sidebar_label_velocity.abs() < 0.05
+                {
+                    self.sidebar_label_alpha = label_target;
+                    self.sidebar_label_velocity = 0.0;
+                }
                 let displacement = target - self.sidebar_anim;
                 let force = displacement * STIFFNESS;
-                let damp = -self.sidebar_velocity * DAMPING;
+                let damp = -self.sidebar_velocity * damping;
                 self.sidebar_velocity += (force + damp) * DT;
                 let next = self.sidebar_anim + self.sidebar_velocity * DT;
                 // Settle: both displacement AND velocity near zero.
