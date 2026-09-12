@@ -125,7 +125,7 @@ impl App {
         if (self.queries.poll_in_flight.is_some()
             || self.adb_server_kill_in_flight
             || self.software_fix.closing)
-            && device_poll_gate::defers_message(&msg)
+            && device_poll_gate::defers_message(self, &msg)
         {
             self.queries.poll_deferred.push_back(msg);
             return Task::none();

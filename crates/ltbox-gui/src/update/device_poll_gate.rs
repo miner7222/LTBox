@@ -1,14 +1,66 @@
-//! Serialize background USB polling with workflow input.
+//! Serialize background USB polling only with actions that can acquire the
+//! same device. Navigation, selection, and ordinary wizard transitions stay
+//! synchronous so a periodic poll never makes the GUI feel unresponsive.
 use crate::*;
 use iced::Task;
 
-pub(super) fn defers_message(message: &Message) -> bool {
-    !matches!(message, Message::PollDevice)
-        && (super::self_update_gate::blocks_message(message)
-            || matches!(
-                message,
-                Message::InstallSelfUpdate | Message::FileSelected(_) | Message::FolderSelected(_)
-            ))
+pub(super) fn defers_message(app: &App, message: &Message) -> bool {
+    match message {
+        Message::Flash(FlashMsg::FlashNext) => app.flash.current_step() == FlashStep::Confirm,
+        Message::Root(RootMsg::RootNext) => app.root.step == 6,
+        Message::Unroot(UnrootMsg::UnrootNext) => app.unroot.step == 3,
+        Message::Sys(SysMsg::SysNext) => {
+            app.sysupdate.step
+                == if app.sysupdate.action == Some(SysUpdateAction::Rescue) {
+                    2
+                } else {
+                    1
+                }
+        }
+        Message::FlashParts(FlashPartsMsg::FlashPartsNext) => app.flash_parts.step != 1,
+        Message::FlashParts(FlashPartsMsg::FlashPartsBack) => app.flash_parts.step == 1,
+        Message::DumpParts(DumpPartsMsg::DumpPartsNext) => app.dump_parts.step == 0,
+        Message::DumpParts(DumpPartsMsg::DumpPartsBack) => app.dump_parts.step == 1,
+        Message::FlashPhys(FlashPhysMsg::FlashPhysNext) => app.flash_phys.step == 2,
+        Message::SimpleFlash(SimpleFlashMsg::SimpleFlashNext) => app.simple_flash.step == 1,
+        Message::KonaBess(KonaBessMsg::KonaBessNext) => app.konabess.step != 1,
+        Message::KonaBess(KonaBessMsg::KonaBessBack) => {
+            app.konabess.step == 1 && app.konabess.prepared.is_some()
+        }
+        Message::Adv(AdvMsg::AdvWizNext) => {
+            matches!(app.adv_wizard.action, Some(AdvAction::DetectArb))
+                || (matches!(app.adv_wizard.action, Some(AdvAction::PatchDevinfo))
+                    && app.adv_wizard.is_confirm_step())
+        }
+        _ => matches!(
+            message,
+            Message::InstallSelfUpdate
+                | Message::KillAdbServer
+                | Message::InstallDrivers
+                | Message::ConfirmCloseSoftwareFix
+                | Message::ForceCloseSoftwareFix
+                | Message::Flash(FlashMsg::FlashExecStart)
+                | Message::Root(RootMsg::RootExecStart)
+                | Message::Unroot(UnrootMsg::UnrootExecStart)
+                | Message::Sys(SysMsg::SysExecStart)
+                | Message::Adv(AdvMsg::AdvDetectArbExecStart)
+                | Message::FlashParts(
+                    FlashPartsMsg::FlashPartsScanStart | FlashPartsMsg::FlashPartsExecStart
+                )
+                | Message::DumpParts(
+                    DumpPartsMsg::DumpPartsScanStart | DumpPartsMsg::DumpPartsFolderChosen(Some(_))
+                )
+                | Message::DumpPhys(DumpPhysMsg::DumpPhysFolderChosen(Some(_)))
+                | Message::FlashPhys(FlashPhysMsg::FlashPhysExecStart)
+                | Message::SimpleFlash(SimpleFlashMsg::SimpleFlashExecStart)
+                | Message::Reboot(
+                    RebootMsg::RebootConfirm
+                        | RebootMsg::RebootTo(_)
+                        | RebootMsg::RebootEdlWithLoader(..)
+                )
+                | Message::Settings(SettingsMsg::SetQcomDriverMode(_))
+        ),
+    }
 }
 
 impl App {

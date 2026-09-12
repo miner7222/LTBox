@@ -92,7 +92,7 @@ fn workflow_blockers_prevent_a_new_poll() {
 }
 
 #[test]
-fn queued_navigation_and_start_over_wait_for_finish_and_discard_stale_result() {
+fn navigation_and_ui_only_selection_apply_without_waiting_for_poll() {
     let mut app = App {
         current_view: View::Dashboard,
         root: crate::RootWizard {
@@ -104,10 +104,15 @@ fn queued_navigation_and_start_over_wait_for_finish_and_discard_stale_result() {
     };
     let _ = app.update(Message::PollDevice);
     let _ = app.update(Message::Navigate(View::Root));
+    let _ = app.update(Message::Root(crate::RootMsg::RootFamily(
+        crate::Family::Magisk,
+    )));
     let _ = app.update(Message::StartOver);
 
-    assert_eq!(app.current_view, View::Dashboard);
-    assert_eq!(app.queries.poll_deferred.len(), 2);
+    assert_eq!(app.current_view, View::Root);
+    assert!(app.queries.poll_deferred.is_empty());
+    assert_eq!(app.root.step, 0);
+    assert!(app.root.family.is_none());
     assert_eq!(app.device.serial, "");
 
     let task = app.update(Message::DevicePollFinished(
@@ -116,11 +121,38 @@ fn queued_navigation_and_start_over_wait_for_finish_and_discard_stale_result() {
     ));
     assert_eq!(task.units(), 0);
     assert_eq!(app.current_view, View::Root);
-    assert_eq!(app.device.serial, "");
-    assert_eq!(app.device.model, "");
-    assert_eq!(app.queries.poll_deferred.len(), 0);
+    assert_eq!(app.device.serial, "stale");
+    assert_eq!(app.device.model, "stale-model");
+    assert!(app.queries.poll_deferred.is_empty());
     assert_eq!(app.root.step, 0);
     assert!(app.root.family.is_none());
+}
+
+#[test]
+fn device_work_start_still_waits_for_poll_completion() {
+    let mut app = App::default();
+    let _ = app.update(Message::PollDevice);
+
+    let task = app.update(Message::Unroot(crate::UnrootMsg::UnrootExecStart));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.queries.poll_deferred.len(), 1);
+}
+
+#[test]
+fn ordinary_wizard_next_is_immediate_but_final_next_waits_for_poll() {
+    let mut app = App::default();
+    let _ = app.update(Message::PollDevice);
+
+    let _ = app.update(Message::Unroot(crate::UnrootMsg::UnrootNext));
+    assert_eq!(app.unroot.step, 1);
+    assert!(app.queries.poll_deferred.is_empty());
+
+    app.unroot.step = 3;
+    let task = app.update(Message::Unroot(crate::UnrootMsg::UnrootNext));
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.unroot.step, 3);
+    assert_eq!(app.queries.poll_deferred.len(), 1);
 }
 
 #[test]
@@ -147,15 +179,15 @@ fn old_completion_cannot_release_or_apply_after_a_new_poll_starts() {
 }
 
 #[test]
-fn queued_kill_server_resumes_before_navigation_after_poll_finish() {
+fn queued_kill_server_does_not_delay_navigation() {
     let mut app = App::default();
     let _ = app.update(Message::PollDevice);
     let _ = app.update(Message::KillAdbServer);
     let _ = app.update(Message::Navigate(View::Settings));
 
-    assert_eq!(app.queries.poll_deferred.len(), 2);
+    assert_eq!(app.queries.poll_deferred.len(), 1);
     assert!(!app.adb_server_kill_in_flight);
-    assert_eq!(app.current_view, View::Dashboard);
+    assert_eq!(app.current_view, View::Settings);
 
     let task = app.update(Message::DevicePollFinished(
         1,
@@ -163,8 +195,8 @@ fn queued_kill_server_resumes_before_navigation_after_poll_finish() {
     ));
     assert!(task.units() > 0);
     assert!(app.adb_server_kill_in_flight);
-    assert_eq!(app.queries.poll_deferred.len(), 1);
-    assert_eq!(app.current_view, View::Dashboard);
+    assert_eq!(app.queries.poll_deferred.len(), 0);
+    assert_eq!(app.current_view, View::Settings);
     assert_eq!(app.device.serial, "");
 
     let task = app.update(Message::AdbServerKillFinished(Ok(())));

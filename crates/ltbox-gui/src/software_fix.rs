@@ -152,12 +152,13 @@ mod tests {
         assert!(!app.can_close_software_fix());
     }
     #[test]
-    fn closing_software_fix_defers_workflow_input_until_completion() {
+    fn closing_software_fix_allows_navigation_but_defers_device_work() {
         let mut app = App::default();
         app.software_fix.running = true;
         app.software_fix.closing = true;
         let _ = app.update(Message::Navigate(View::Root));
-        assert_eq!(app.current_view, View::Dashboard);
+        let _ = app.update(Message::Root(RootMsg::RootExecStart));
+        assert_eq!(app.current_view, View::Root);
         assert_eq!(app.queries.poll_deferred.len(), 1);
         assert_eq!(app.update(Message::PollDevice).units(), 0);
         let _ = app.update(Message::SoftwareFixClosed(Err(CloseError::Cancelled)));
