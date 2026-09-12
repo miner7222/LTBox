@@ -91,6 +91,9 @@ impl App {
 
         let detect_arb_step0 = matches!(self.adv_wizard.action, Some(AdvAction::DetectArb))
             && self.adv_wizard.step == 0;
+        let detect_arb_loader = detect_arb_step0
+            && !self.device.model.eq_ignore_ascii_case("TB322FC")
+            && self.rollback_query_needs_loader();
         let body: Element<'_, Message> = if is_exec && self.adv_wizard.is_image_info() {
             self.adv_image_info_exec_step()
         } else if is_exec {
@@ -105,10 +108,6 @@ impl App {
             self.adv_wiz_loader_step()
         } else if needs_region_target && self.adv_wizard.step == 1 {
             self.adv_wiz_region_target_step()
-        } else if matches!(self.adv_wizard.action, Some(AdvAction::PatchArb))
-            && self.adv_wizard.step == 1
-        {
-            self.adv_wiz_arb_inspect_step()
         } else {
             self.adv_wiz_source_step()
         };
@@ -123,9 +122,10 @@ impl App {
         let body = if shared_exec {
             body
         } else {
-            if !is_confirm
-                && ((!needs_country && self.adv_wizard.step == 0)
-                    || (needs_country && self.adv_wizard.step == 1))
+            if detect_arb_loader
+                || (!is_confirm
+                    && ((!needs_country && self.adv_wizard.step == 0)
+                        || (needs_country && self.adv_wizard.step == 1)))
             {
                 self.wizard_picker_step(step_title, body)
             } else {
@@ -165,11 +165,7 @@ impl App {
                     .map(|p| self.loader_fits_model(std::path::Path::new(p)))
                     .unwrap_or(true);
             let can = (if detect_arb_step0 {
-                if self.is_tb320fc() {
-                    self.adv_wizard.file_path.is_some()
-                } else {
-                    true
-                }
+                self.can_query_rollback()
             } else {
                 self.adv_wizard.can_next()
             }) && !self.operation.is_running()
@@ -213,6 +209,16 @@ impl App {
             let (title, subtitle) = self.exec_status_copy();
             return Some((title, Some(subtitle)));
         }
+        if action == AdvAction::DetectArb
+            && self.adv_wizard.step == 0
+            && !self.device.model.eq_ignore_ascii_case("TB322FC")
+            && self.rollback_query_needs_loader()
+        {
+            return Some((
+                self.t("edl_loader_title").to_string(),
+                Some(self.loader_picker_subtitle()),
+            ));
+        }
 
         let (title, subtitle) = if self.adv_wizard.is_confirm_step() {
             (
@@ -233,11 +239,6 @@ impl App {
             (
                 self.t("adv_region_target_title").to_string(),
                 self.t("adv_region_target_subtitle").to_string(),
-            )
-        } else if matches!(action, AdvAction::PatchArb) && self.adv_wizard.step == 1 {
-            (
-                self.t("adv_arb_inspect_title").to_string(),
-                self.t("adv_arb_inspect_subtitle").to_string(),
             )
         } else {
             let subtitle = if matches!(action, AdvAction::DetectArb | AdvAction::PatchDevinfo) {
@@ -470,57 +471,16 @@ impl App {
             .into()
     }
 
-    /// PatchArb inspect step — render boot.img + vbmeta_system.img
-    /// rollback indices (decimal + UTC) read from the picked folder so
-    /// the user can sanity-check the source before opening the
-    /// timestamp popup. Next on this step opens the popup.
-    pub(crate) fn adv_wiz_arb_inspect_step(&self) -> Element<'_, Message> {
-        let (boot_idx, vbmeta_idx) = self.adv_wizard.arb_inspect.unwrap_or((0, 0));
-        let mk_row = |label_key: &'static str, idx: u64| -> Element<'_, Message> {
-            let utc = format_unix_timestamp_utc(idx);
-            iced::widget::row![
-                text(self.t(label_key).to_string())
-                    .size(theme::text_size::BODY_MEDIUM)
-                    .style(muted_style)
-                    .width(Length::Fixed(220.0)),
-                text(idx.to_string())
-                    .size(theme::text_size::BODY_MEDIUM)
-                    .width(Length::Fixed(140.0)),
-                text(utc).size(12.0).style(muted_style),
-            ]
-            .spacing(12.0)
-            .align_y(iced::Alignment::Center)
-            .into()
-        };
-        let col = column![
-            mk_row("adv_arb_inspect_boot", boot_idx),
-            mk_row("adv_arb_inspect_vbmeta", vbmeta_idx),
-        ]
-        .spacing(8.0)
-        .padding(28.0)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center);
-        container(col)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
-    }
-
-    /// DetectArb step 0. The TB320FC hardware path needs an EDL loader (the deeper
-    /// path falls back to dumping `boot_a` + `vbmeta_system_a` when
-    /// stored_rollback_index is missing, so a Firehose loader is
-    /// required); other models just see a Start prompt because the
-    /// detection runs entirely over fastboot vars.
+    /// Present the actual transport requirement; never an empty source step.
     pub(crate) fn adv_wiz_detect_arb_step(&self) -> Element<'_, Message> {
-        if self.is_tb320fc() {
+        if self.device.model.eq_ignore_ascii_case("TB322FC") {
+            text(self.t("arb_detect_no_anti_rollback").to_string())
+                .size(theme::text_size::BODY_MEDIUM)
+                .into()
+        } else if self.rollback_query_needs_loader() {
             self.adv_wiz_loader_step()
         } else {
-            container(column![])
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+            confirm_definition_row(self.t("unroot_backup_manifest_model"), &self.device.model)
         }
     }
 
@@ -559,23 +519,30 @@ impl App {
             ));
         }
         if matches!(self.adv_wizard.action, Some(AdvAction::PatchArb))
-            && let Some(idx) = self.adv_wizard.arb_index_committed
+            && let Some(targets) = self.adv_wizard.arb_targets
         {
-            let utc = format_unix_timestamp_utc(idx);
-            grid_rows.push(confirm_definition_row(
-                self.t("adv_confirm_arb_index"),
-                &format!("{idx}  ({utc})"),
-            ));
             if let Some((boot_idx, vbmeta_idx)) = self.adv_wizard.arb_inspect {
-                grid_rows.push(confirm_definition_row(
-                    self.t("adv_arb_inspect_boot"),
-                    &format!("{boot_idx} → {idx}"),
-                ));
-                grid_rows.push(confirm_definition_row(
-                    self.t("adv_arb_inspect_vbmeta"),
-                    &format!("{vbmeta_idx} → {idx}"),
-                ));
+                for (key, original, target) in [
+                    ("adv_arb_inspect_boot", boot_idx, targets.boot),
+                    ("adv_arb_inspect_vbmeta", vbmeta_idx, targets.vbmeta_system),
+                ] {
+                    grid_rows.push(confirm_definition_content(
+                        self.t(key),
+                        text(format!("{original} → {target}"))
+                            .size(theme::text_size::BODY_MEDIUM)
+                            .style(move |t: &Theme| iced::widget::text::Style {
+                                color: Some(if original != target {
+                                    pal_of(t).error
+                                } else {
+                                    pal_of(t).on_surface
+                                }),
+                            })
+                            .into(),
+                    ));
+                }
             }
+            grid_rows.push(confirm_path_row(source_label, &path));
+            return self.confirm_step_frame(vec![], grid_rows, vec![]);
         }
         self.confirm_step_frame(
             vec![],

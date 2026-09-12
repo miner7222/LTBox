@@ -1107,7 +1107,14 @@ impl App {
         // The hint under each field reports what the *image* carries, so it has
         // to be read from the firmware every time. Deriving it from the field
         // made it echo whatever the user had just typed.
-        let originals = self.flash.firmware_rollback_indices.as_ref();
+        let advanced_originals = self.adv_wizard.arb_inspect.map(|(a, b)| (Ok(a), Ok(b)));
+        let originals = if self.current_view == View::Advanced
+            && self.adv_wizard.action == Some(AdvAction::PatchArb)
+        {
+            advanced_originals.as_ref()
+        } else {
+            self.flash.firmware_rollback_indices.as_ref()
+        };
         let boot_field = self.manual_rollback_input(
             "boot",
             boot_buffer,
@@ -1215,81 +1222,6 @@ impl App {
         ]
         .spacing(6)
         .into()
-    }
-
-    /// PatchArb timestamp popup. Reads `adv_wizard.arb_index_buffer`
-    /// for the in-flight typing and renders the UTC representation in
-    /// real time once the buffer hits exactly 10 digits. OK is enabled
-    /// only on a 10-digit buffer that parses to a `u64`.
-    pub(crate) fn arb_index_popup_view(&self) -> Element<'_, Message> {
-        let buf = self.adv_wizard.arb_index_buffer.clone();
-        let valid = buf.len() == 10 && buf.parse::<u64>().is_ok();
-
-        // UTC preview only when the buffer is exactly 10 digits, so
-        // shrinking the value (e.g. backspacing while editing) makes
-        // the preview disappear instead of jumping to a stale time.
-        let utc_preview: Element<'_, Message> = if valid {
-            let ts: u64 = buf.parse().unwrap_or(0);
-            let formatted = format_unix_timestamp_utc(ts);
-            text(formatted)
-                .size(theme::text_size::BODY_MEDIUM)
-                .style(success_style)
-                .into()
-        } else {
-            // Keep a fixed-height placeholder so the layout doesn't
-            // jump when the preview appears / disappears.
-            container(text("").size(theme::text_size::BODY_MEDIUM))
-                .height(20)
-                .into()
-        };
-
-        let header = column![
-            text(self.t("arb_index_popup_title").to_string()).size(theme::text_size::TITLE_LARGE),
-            text(self.t("arb_index_popup_subtitle").to_string())
-                .size(theme::text_size::BODY_SMALL)
-                .style(muted_style),
-        ]
-        .spacing(3);
-
-        let input = iced::widget::text_input(
-            self.t("arb_index_popup_placeholder"),
-            &self.adv_wizard.arb_index_buffer,
-        )
-        .on_input(|s| Message::Adv(AdvMsg::AdvWizArbIndexInput(s)))
-        .padding([8, 12])
-        .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
-        .size(14)
-        .width(Length::Fill)
-        .style(m3_text_input_style);
-        let input = if valid {
-            input.on_submit(Message::Adv(AdvMsg::AdvWizArbIndexConfirm))
-        } else {
-            input
-        };
-
-        let input = container(input).height(Length::Fixed(40.0)).center_y(40);
-        let cancel_btn = m3_outlined_button(self.t("btn_cancel").to_string())
-            .on_press(Message::Adv(AdvMsg::AdvWizArbIndexCancel));
-        let ok_btn = {
-            let btn = m3_filled_button(self.t("btn_ok").to_string());
-            if valid {
-                btn.on_press(Message::Adv(AdvMsg::AdvWizArbIndexConfirm))
-            } else {
-                btn
-            }
-        };
-
-        let content = popup_sections(
-            header,
-            column![input, utc_preview].spacing(6),
-            iced::widget::row![Space::new().width(Length::Fill), cancel_btn, ok_btn]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-            theme::DIALOG_WIDTH_SM,
-            false,
-        );
-
-        m3_dialog(content)
     }
 
     /// Manual serial-number prompt for auto region detection. Shown by the

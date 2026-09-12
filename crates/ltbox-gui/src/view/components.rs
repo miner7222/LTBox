@@ -665,7 +665,7 @@ pub(crate) fn confirm_path_row<'a>(label: &str, value: &str) -> Element<'a, Mess
     )
 }
 
-fn confirm_definition_content<'a>(
+pub(crate) fn confirm_definition_content<'a>(
     label: &str,
     value: Element<'a, Message>,
 ) -> Element<'a, Message> {

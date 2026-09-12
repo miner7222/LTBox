@@ -1079,7 +1079,7 @@ fn run_country_change(
 
 mod country;
 mod full;
-mod manual;
+pub(crate) mod manual;
 mod simple;
 
 pub(crate) use country::change_country_worker;

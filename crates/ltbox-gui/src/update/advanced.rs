@@ -631,11 +631,9 @@ impl App {
             }
             AdvMsg::AdvWizOpen(a) => {
                 self.adv_wizard.open(a);
-                // DetectArb on the TB320FC hardware path needs an EDL loader
-                // (Firehose) — apply the Settings default loader like every
-                // other loader-picker flow.
+                // Apply the saved loader only to EDL-based index queries.
                 if matches!(a, AdvAction::DetectArb)
-                    && self.is_tb320fc()
+                    && self.rollback_query_needs_loader()
                     && let Some(path) = self.resolved_default_loader()
                     && let Ok(resolved) = self.resolve_loader_input(&path)
                 {
@@ -655,6 +653,11 @@ impl App {
                 Task::none()
             }
             AdvMsg::AdvWizNext => {
+                if self.adv_wizard.action != Some(AdvAction::DetectArb)
+                    && !self.adv_wizard.can_next()
+                {
+                    return Task::none();
+                }
                 if self.adv_wizard.is_image_info() && self.adv_wizard.step == 0 {
                     self.adv_wizard.next();
                     return self.update(Message::Adv(AdvMsg::AdvImageInfoExecStart));
@@ -663,7 +666,10 @@ impl App {
                 if matches!(self.adv_wizard.action, Some(AdvAction::DetectArb))
                     && self.adv_wizard.step == 0
                 {
-                    self.adv_wizard.next();
+                    if !self.can_query_rollback() {
+                        return Task::none();
+                    }
+                    self.adv_wizard.step = 1;
                     return self.update(Message::Adv(AdvMsg::AdvDetectArbExecStart));
                 }
                 // PatchArb source step inspects rollback indices.
@@ -716,17 +722,7 @@ impl App {
                         self.adv_wizard.arb_inspect =
                             Some((boot_info.rollback_index, vbmeta_info.rollback_index));
                         self.error_msg = None;
-                        self.adv_wizard.next();
-                        return Task::none();
-                    }
-                    if self.adv_wizard.step == 1 {
-                        self.adv_wizard.arb_index_buffer = self
-                            .adv_wizard
-                            .arb_index_committed
-                            .map(|v| v.to_string())
-                            .unwrap_or_default();
-                        self.arb_index_popup_open = true;
-                        return Task::none();
+                        return self.open_manual_rollback_editor();
                     }
                 }
                 // Change Country: leaving the Country step → apply the Settings
@@ -810,7 +806,13 @@ impl App {
                     }
                     // Pre-create output folder so the Done card's
                     // "Open Folder" pill always points somewhere real.
-                    if action.produces_output() {
+                    if action == AdvAction::PatchArb {
+                        self.adv_wizard.output_dir = self
+                            .adv_wizard
+                            .file_path
+                            .as_ref()
+                            .map(std::path::PathBuf::from);
+                    } else if action.produces_output() {
                         let dir = adv_output_dir(action);
                         let _ = std::fs::create_dir_all(&dir);
                         self.adv_wizard.output_dir = Some(dir);
@@ -860,7 +862,10 @@ impl App {
                     // (e.g. upgrade a TB323FU .melf to its sibling Sahara
                     // manifest) so the confirm screen shows the loader actually
                     // used and Start needs no re-resolve.
-                    if matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo)) {
+                    if matches!(
+                        self.adv_wizard.action,
+                        Some(AdvAction::PatchDevinfo | AdvAction::DetectArb)
+                    ) {
                         match self.resolve_loader_input(&p) {
                             Ok(resolved) => {
                                 self.adv_wizard.file_path = Some(resolved);
@@ -873,6 +878,8 @@ impl App {
                         }
                         return Task::none();
                     }
+                    self.adv_wizard.arb_targets = None;
+                    self.adv_wizard.arb_inspect = None;
                     self.adv_wizard.file_path = Some(p);
                 }
                 Task::none()
@@ -923,33 +930,6 @@ impl App {
                 }
                 Task::none()
             }
-            AdvMsg::AdvWizArbIndexInput(s) => {
-                // Strip non-digits + cap at 10 chars so paste-of-garbage
-                // can't smuggle a longer / non-numeric value past the UI.
-                let cleaned: String = s.chars().filter(|c| c.is_ascii_digit()).take(10).collect();
-                self.adv_wizard.arb_index_buffer = cleaned;
-                Task::none()
-            }
-            AdvMsg::AdvWizArbIndexConfirm => {
-                let buf = self.adv_wizard.arb_index_buffer.clone();
-                if buf.len() != 10 {
-                    return Task::none();
-                }
-                let Ok(parsed) = buf.parse::<u64>() else {
-                    return Task::none();
-                };
-                self.adv_wizard.arb_index_committed = Some(parsed);
-                self.adv_wizard.arb_index_buffer.clear();
-                self.arb_index_popup_open = false;
-                // Advance to Confirm.
-                self.adv_wizard.next();
-                Task::none()
-            }
-            AdvMsg::AdvWizArbIndexCancel => {
-                self.adv_wizard.arb_index_buffer.clear();
-                self.arb_index_popup_open = false;
-                Task::none()
-            }
             AdvMsg::AdvExec(action) => {
                 // Picker ran in AdvConfirm; replay the saved path.
                 let Some(path) = self.adv_confirm_path.clone() else {
@@ -976,7 +956,7 @@ impl App {
                     // RegionConvert only — user-picked target.
                     let adv_region_target: Option<DeviceRegion> = self.adv_wizard.region_target;
                     // PatchArb only — committed unix-timestamp index.
-                    let adv_arb_index: Option<u64> = self.adv_wizard.arb_index_committed;
+                    let adv_arb_index = self.adv_wizard.arb_targets;
                     let output_dir: std::path::PathBuf = self
                         .adv_wizard
                         .output_dir
@@ -1060,6 +1040,9 @@ impl App {
                 Task::none()
             }
             AdvMsg::AdvDetectArbExecStart => {
+                if !self.can_query_rollback() {
+                    return Task::none();
+                }
                 let phases = self.begin_phased_op(View::Advanced, OperationPhaseKind::DetectArb);
                 self.error_msg = None;
                 let conn = self.device.connection;

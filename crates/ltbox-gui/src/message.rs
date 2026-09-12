@@ -375,14 +375,6 @@ pub(crate) enum AdvMsg {
     AdvWizOpenCountry,
     AdvWizOpenRegionTarget,
     AdvWizOpenOutputFolder,
-    /// PatchArb timestamp popup: live-typing input.
-    AdvWizArbIndexInput(String),
-    /// PatchArb timestamp popup: OK pressed (only valid when the buffer
-    /// is exactly 10 digits — UI gates this).
-    AdvWizArbIndexConfirm,
-    /// PatchArb timestamp popup: cancel — closes the popup, clears the
-    /// buffer, leaves the wizard on the source step.
-    AdvWizArbIndexCancel,
 }
 
 #[derive(Debug, Clone)]

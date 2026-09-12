@@ -41,163 +41,159 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-/// Worker for the Advanced → Detect Anti-Rollback flow. Mirrors the
-/// flash wizard's ARB probe but in a manual, report-only shape:
-///
-/// 1. Reach fastboot (reboot from ADB if needed).
-/// 2. Read `stored_rollback_index:N` vars. Any entry whose value is
-///    not 0 / 1 makes the device anti-rollback; the report lists each
-///    surviving entry as `stored_rollback_index:N = TS (UTC)`.
-/// 3. If no `stored_rollback_index` was reported AND the model
-///    enforces rollback protection (every supported model except
-///    `TB322FC`), fall back to dumping the active-slot `boot` +
-///    `vbmeta_system` over EDL using the user-picked Firehose loader
-///    and report their AVB rollback indices the same way.
-/// 4. Otherwise (no stored_rollback_index, or `TB322FC`) the device
-///    is not anti-rollback.
-/// 5. Always reboot to system at the end so the user can keep using
-///    the device.
+/// Only these models expose the rollback floors through fastboot.
+pub(crate) fn rollback_query_uses_fastboot(conn: ConnectionStatus, model: &str) -> bool {
+    matches!(
+        conn,
+        ConnectionStatus::Adb | ConnectionStatus::AdbRecovery | ConnectionStatus::Fastboot
+    ) && (model.eq_ignore_ascii_case("TB321FU") || model.eq_ignore_ascii_case("TB520FU"))
+}
+
+impl App {
+    pub(crate) fn rollback_query_needs_loader(&self) -> bool {
+        !rollback_query_uses_fastboot(self.device.connection, &self.device.model)
+    }
+
+    pub(crate) fn can_query_rollback(&self) -> bool {
+        !self.device.model.eq_ignore_ascii_case("TB322FC")
+            && self.device_reachable()
+            && (!self.rollback_query_needs_loader()
+                || self.adv_wizard.file_path.as_deref().is_some_and(|path| {
+                    std::path::Path::new(path).is_file()
+                        && self.loader_fits_model(std::path::Path::new(path))
+                }))
+    }
+}
+
+/// Report stored fastboot floors on supported models, otherwise inspect AVB
+/// metadata over EDL. An EDL image index is not a hardware rollback floor.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn detect_arb_run(
     conn: ConnectionStatus,
     device_model: String,
     loader_path: Option<String>,
-    i_anti: &str,
+    _i_anti: &str,
     i_not: &str,
     i_reboot_fastboot: &str,
     i_reboot_system: &str,
     i_edl_dump: &str,
     phases: PhaseReporter,
     log: &mut Vec<String>,
-) -> std::result::Result<(), String> {
+) -> Result<(), String> {
     use ltbox_device::adb::AdbManager;
     use ltbox_device::fastboot::FastbootDevice;
-
-    // Step 1: ensure we are in fastboot.
+    if device_model.eq_ignore_ascii_case("TB322FC") {
+        return Err(i_not.to_string());
+    }
     ltbox_core::live!(log, "[ARB] {}", phases.marker(1));
-    if !matches!(conn, ConnectionStatus::Fastboot) {
-        match conn {
-            ConnectionStatus::Adb | ConnectionStatus::AdbRecovery => {
-                ltbox_core::live!(log, "[ARB] {i_reboot_fastboot}");
-                let mut adb = AdbManager::new();
-                if !adb.check_device().unwrap_or(false) {
-                    return Err("ADB device not reachable".into());
-                }
-                let _ = adb.shell("reboot bootloader");
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                if FastbootDevice::wait_for_device().is_err() {
-                    return Err("Failed to enter fastboot".into());
-                }
-            }
-            _ => {
-                return Err(
-                    "Device must be in ADB or fastboot to run anti-rollback detection".into(),
-                );
-            }
+    if rollback_query_uses_fastboot(conn, &device_model) {
+        if conn != ConnectionStatus::Fastboot {
+            ltbox_core::live!(log, "[ARB] {i_reboot_fastboot}");
+            AdbManager::new()
+                .shell("reboot bootloader")
+                .map_err(|e| e.to_string())?;
+            FastbootDevice::wait_for_device().map_err(|e| e.to_string())?;
         }
-    }
-
-    // Step 2: read fastboot vars (rollback_indices map is the source
-    // of truth — its emptiness drives the model-specific fallback).
-    ltbox_core::live!(log, "[ARB] {}", phases.marker(2));
-    let vars = FastbootDevice::open()
-        .and_then(|mut d| d.get_all_vars())
-        .map_err(|e| format!("fastboot vars: {e}"))?;
-
-    let stored_present = !vars.rollback_indices.is_empty();
-    if stored_present {
+        ltbox_core::live!(log, "[ARB] {}", phases.marker(2));
+        let mut dev = FastbootDevice::open().map_err(|e| e.to_string())?;
+        let vars = dev.get_all_vars().map_err(|e| e.to_string())?;
+        let mut indices: Vec<_> = vars.rollback_indices.into_iter().collect();
+        indices.sort_by_key(|(index, _)| *index);
         ltbox_core::live!(log, "[ARB] {}", phases.marker(4));
-        let mut filtered: Vec<(u32, u64)> = vars
-            .rollback_indices
-            .iter()
-            .filter(|&(_, &v)| v != 0 && v != 1)
-            .map(|(k, v)| (*k, *v))
-            .collect();
-        filtered.sort_by_key(|(k, _)| *k);
-        ltbox_core::live!(log, "");
-        ltbox_core::live!(log, "{i_anti}");
-        ltbox_core::live!(log, "");
-        for (idx, ts) in &filtered {
-            let utc = format_unix_timestamp_utc(*ts);
-            ltbox_core::live!(log, "stored_rollback_index:{idx} = {ts} ({utc})");
+        for (index, value) in &indices {
+            ltbox_core::live!(log, "stored_rollback_index:{index} = {value}");
         }
-        ltbox_core::live!(log, "");
         ltbox_core::live!(log, "[ARB] {}", phases.marker(5));
         ltbox_core::live!(log, "[ARB] {i_reboot_system}");
-        if let Ok(mut dev) = FastbootDevice::open() {
-            let _ = dev.reboot();
+        dev.reboot().map_err(|e| e.to_string())?;
+        if indices.is_empty() {
+            return Err("fastboot did not report rollback indices".into());
         }
         return Ok(());
     }
 
-    // Step 3: every model except the no-ARB TB322FC enforces rollback
-    // protection but may not expose `stored_rollback_index` over fastboot —
-    // read the ACTIVE-slot boot + vbmeta_system indices over EDL. (TB322FC
-    // falls through to step 4 / "no anti-rollback".)
-    if is_rollback_protected_model(&device_model) {
-        ltbox_core::live!(log, "[ARB] {}", phases.marker(3));
-        let Some(loader) = loader_path else {
-            return Err("An EDL loader is required for the deeper rollback inspection".into());
-        };
-        ltbox_core::live!(log, "[ARB] {i_edl_dump}");
-        if ensure_edl(ConnectionStatus::Fastboot, "ARB", log).is_err() {
-            return Err("Failed to enter EDL".into());
+    let loader = loader_path
+        .filter(|p| std::path::Path::new(p).is_file())
+        .ok_or_else(|| "An EDL loader is required for rollback inspection".to_string())?;
+    // Capture the slot before leaving a readable transport. When starting in
+    // EDL no active-slot claim can be made, so report both slots explicitly.
+    let slots = if matches!(
+        conn,
+        ConnectionStatus::Adb | ConnectionStatus::AdbRecovery | ConnectionStatus::Fastboot
+    ) {
+        vec![
+            ltbox_device::controller::poll_active_slot(std::time::Duration::from_secs(30), log)
+                .map_err(|e| e.to_string())?,
+        ]
+    } else {
+        vec!["_a".to_string(), "_b".to_string()]
+    };
+    ltbox_core::live!(log, "[ARB] {}", phases.marker(3));
+    ensure_edl(conn, "ARB", log).map_err(|()| "Failed to enter EDL".to_string())?;
+    let temporary = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let mut session = open_edl_session(std::path::Path::new(&loader), log)?;
+    ltbox_core::live!(log, "[ARB] {i_edl_dump}");
+    for slot in slots {
+        for (name, lun) in [("boot", 4), ("vbmeta_system", 0)] {
+            let partition = format!("{name}{slot}");
+            let output = temporary.path().join(format!("{partition}.img"));
+            session
+                .dump_partition(&partition, &output, 0, lun, log)
+                .map_err(|e| format!("dump {partition}: {e}"))?;
+            let index = ltbox_patch::avb::extract_image_avb_info(&output)
+                .map_err(|e| format!("{partition} AVB: {e}"))?
+                .rollback_index;
+            ltbox_core::live!(log, "{partition} = {index}");
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        let loader_pb = std::path::PathBuf::from(&loader);
-        let mut session = open_edl_session(&loader_pb, log)?;
-        // Read the active slot (a first-time user may be on `_b`).
-        let slot = active_slot_suffix(vars.current_slot.as_deref());
-        let boot_part = format!("boot{slot}");
-        let vbm_part = format!("vbmeta_system{slot}");
-        let tmp = std::env::temp_dir();
-        let boot_out = tmp.join(format!("ltbox_arb_{boot_part}.img"));
-        let vbm_out = tmp.join(format!("ltbox_arb_{vbm_part}.img"));
-        // boot → LUN 4, vbmeta_system → LUN 0 per the hardcoded LUN map.
-        session
-            .dump_partition(&boot_part, &boot_out, 0, 4, log)
-            .map_err(|e| format!("dump {boot_part}: {e}"))?;
-        session
-            .dump_partition(&vbm_part, &vbm_out, 0, 0, log)
-            .map_err(|e| format!("dump {vbm_part}: {e}"))?;
-        let boot_idx = ltbox_patch::avb::extract_image_avb_info(&boot_out)
-            .map_err(|e| format!("boot AVB: {e}"))?
-            .rollback_index;
-        let vbm_idx = ltbox_patch::avb::extract_image_avb_info(&vbm_out)
-            .map_err(|e| format!("vbmeta_system AVB: {e}"))?
-            .rollback_index;
-        let _ = std::fs::remove_file(&boot_out);
-        let _ = std::fs::remove_file(&vbm_out);
-        ltbox_core::live!(log, "[ARB] {}", phases.marker(4));
-        ltbox_core::live!(log, "");
-        ltbox_core::live!(log, "{i_anti}");
-        ltbox_core::live!(log, "");
-        ltbox_core::live!(
-            log,
-            "{boot_part} = {boot_idx} ({})",
-            format_unix_timestamp_utc(boot_idx)
-        );
-        ltbox_core::live!(
-            log,
-            "{vbm_part} = {vbm_idx} ({})",
-            format_unix_timestamp_utc(vbm_idx)
-        );
-        ltbox_core::live!(log, "");
-        ltbox_core::live!(log, "[ARB] {}", phases.marker(5));
-        ltbox_core::live!(log, "[ARB] {i_reboot_system}");
-        session.reset_tolerant(log);
-        return Ok(());
     }
-
-    // Step 4: no stored_rollback_index, no TB320FC override.
     ltbox_core::live!(log, "[ARB] {}", phases.marker(4));
-    ltbox_core::live!(log, "");
-    ltbox_core::live!(log, "{i_not}");
-    ltbox_core::live!(log, "");
+    ltbox_core::live!(
+        log,
+        "{}",
+        ltbox_core::i18n::tr("arb_edl_index_trust_warning")
+    );
     ltbox_core::live!(log, "[ARB] {}", phases.marker(5));
     ltbox_core::live!(log, "[ARB] {i_reboot_system}");
-    if let Ok(mut dev) = FastbootDevice::open() {
-        let _ = dev.reboot();
-    }
+    session.reset_tolerant(log);
     Ok(())
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+    #[test]
+    fn only_known_fastboot_models_use_stored_floors() {
+        for model in ["TB321FU", "TB520FU"] {
+            assert!(rollback_query_uses_fastboot(ConnectionStatus::Adb, model));
+            assert!(rollback_query_uses_fastboot(
+                ConnectionStatus::Fastboot,
+                model
+            ));
+            assert!(!rollback_query_uses_fastboot(ConnectionStatus::Edl, model));
+        }
+        for model in ["", "unknown", "TB322FC", "TB320FC", "TB324ZC"] {
+            assert!(!rollback_query_uses_fastboot(ConnectionStatus::Adb, model));
+        }
+    }
+
+    #[test]
+    fn exempt_device_is_gated_and_unknown_edl_requires_a_loader() {
+        let mut app = App::default();
+        app.device.connection = ConnectionStatus::Adb;
+        app.device.model = "TB322FC".into();
+        assert!(!app.can_query_rollback());
+        assert_eq!(
+            app.update(Message::Adv(AdvMsg::AdvDetectArbExecStart))
+                .units(),
+            0
+        );
+        assert!(!app.operation.is_running());
+        app.device.model.clear();
+        app.device.connection = ConnectionStatus::Edl;
+        assert!(app.rollback_query_needs_loader());
+        assert!(!app.can_query_rollback());
+        let loader = tempfile::Builder::new().suffix(".melf").tempfile().unwrap();
+        app.adv_wizard.file_path = Some(loader.path().to_string_lossy().into_owned());
+        assert!(app.can_query_rollback());
+    }
 }

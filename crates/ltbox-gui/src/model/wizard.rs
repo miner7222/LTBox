@@ -2131,10 +2131,7 @@ pub(crate) struct AdvWizard {
     pub(crate) region_target: Option<DeviceRegion>,
     /// `{exe_dir}/output_<action>/` — set on Confirm → Exec.
     pub(crate) output_dir: Option<std::path::PathBuf>,
-    /// PatchArb: live-typing buffer for the unix-timestamp popup.
-    pub(crate) arb_index_buffer: String,
-    /// PatchArb: committed target rollback index. Gates inspect-step Next.
-    pub(crate) arb_index_committed: Option<u64>,
+    pub(crate) arb_targets: Option<crate::ManualRollbackIndices>,
     /// PatchArb: `(boot_rollback, vbmeta_rollback)` from picked firmware.
     pub(crate) arb_inspect: Option<(u64, u64)>,
 }
@@ -2173,16 +2170,10 @@ impl AdvWizard {
                 "flash_step_flash",
             ]
         } else if matches!(self.action, Some(AdvAction::PatchArb)) {
-            &[
-                "adv_step_source",
-                "adv_step_arb_inspect",
-                "flash_step_confirm",
-                "flash_step_flash",
-            ]
+            &["adv_step_source", "flash_step_confirm", "flash_step_flash"]
         } else if matches!(self.action, Some(AdvAction::DetectArb)) {
-            // DetectArb: source step is either a loader picker (TB320FC
-            // path) or a "Start" prompt; no separate confirm — Next on
-            // the source step jumps straight to exec.
+            // Model/transport determines the loader requirement. Start on
+            // the source step jumps straight to execution.
             &["adv_step_source", "flash_step_flash"]
         } else {
             &["adv_step_source", "flash_step_confirm", "flash_step_flash"]
@@ -2224,11 +2215,9 @@ impl Wizard for AdvWizard {
         if self.needs_region_target() && self.step == 1 {
             return self.region_target.is_some();
         }
-        // PatchArb inspect step (step 1) requires the inspect read to
-        // have completed successfully before the user can advance into
-        // the timestamp popup → confirm step.
+        // Offline editing requires inspected sources and both confirmed targets.
         if matches!(self.action, Some(AdvAction::PatchArb)) && self.step == 1 {
-            return self.arb_inspect.is_some();
+            return self.arb_inspect.is_some() && self.arb_targets.is_some();
         }
         true
     }

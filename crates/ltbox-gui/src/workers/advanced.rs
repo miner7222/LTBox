@@ -5,13 +5,88 @@
 use crate::{AdvAction, DeviceRegion, PhaseReporter};
 use ltbox_core::tr_args;
 
+/// Prepare both images before modifying firmware. Backups are never overwritten.
+pub(crate) fn patch_firmware_rollback(
+    folder: &std::path::Path,
+    target: crate::ManualRollbackIndices,
+    phases: &PhaseReporter,
+    log: &mut Vec<String>,
+) -> Result<(), String> {
+    use crate::workers::flash::manual::{
+        build_manual_rollback_overlays, prepare_manual_rollback_plan,
+    };
+    use ltbox_patch::rollback::RollbackIndices;
+    let names = ["boot.img", "vbmeta_system.img"];
+    ltbox_core::live!(log, "[ARB] {}", phases.marker(1));
+    for name in names {
+        if folder.join(format!("{name}.bak")).exists() {
+            return Err(format!("Backup already exists: {name}.bak"));
+        }
+    }
+    let plan = prepare_manual_rollback_plan(
+        folder,
+        RollbackIndices {
+            boot: 0,
+            vbmeta_system: 0,
+        },
+        Some(RollbackIndices {
+            boot: target.boot,
+            vbmeta_system: target.vbmeta_system,
+        }),
+    )?;
+    let temporary = tempfile::tempdir_in(folder).map_err(|e| e.to_string())?;
+    ltbox_core::live!(log, "[ARB] {}", phases.marker(2));
+    let overlays =
+        build_manual_rollback_overlays(folder, &temporary.path().join("patched"), plan, log)?;
+    // Reserve/copy both backups before either original can be changed.
+    ltbox_core::live!(log, "[ARB] {}", phases.marker(3));
+    for name in names {
+        let mut source = std::fs::File::open(folder.join(name)).map_err(|e| e.to_string())?;
+        let mut backup = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(folder.join(format!("{name}.bak")))
+            .map_err(|e| e.to_string())?;
+        std::io::copy(&mut source, &mut backup).map_err(|e| e.to_string())?;
+        backup.sync_all().map_err(|e| e.to_string())?;
+    }
+    ltbox_core::live!(log, "[ARB] {}", phases.marker(4));
+    for (partition, _, patched) in overlays {
+        let name = match partition.as_str() {
+            "boot_a" => "boot.img",
+            "vbmeta_system_a" => "vbmeta_system.img",
+            _ => return Err(format!("Unexpected rollback overlay: {partition}")),
+        };
+        if let Err(error) = std::fs::copy(&patched, folder.join(name)) {
+            let mut failures = Vec::new();
+            for original in names {
+                if let Err(restore) = std::fs::copy(
+                    folder.join(format!("{original}.bak")),
+                    folder.join(original),
+                ) {
+                    failures.push(format!("{original}: {restore}"));
+                }
+            }
+            return Err(format!(
+                "Replace {name}: {error}; restore errors: {failures:?}. Original backups remain in the firmware folder."
+            ));
+        }
+    }
+    ltbox_core::live!(
+        log,
+        "[ARB] {}",
+        tr_args!("live_advanced_output_folder", path = folder.display())
+    );
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn advanced_file_worker(
     input_path: String,
     action: AdvAction,
     adv_country: Option<String>,
     adv_region_target: Option<DeviceRegion>,
-    adv_arb_index: Option<u64>,
+    adv_arb_index: Option<crate::ManualRollbackIndices>,
     output_dir: std::path::PathBuf,
     action_label: String,
     phases: PhaseReporter,
@@ -21,7 +96,7 @@ pub(crate) fn advanced_file_worker(
     let parent = input.parent().unwrap_or(std::path::Path::new("."));
     // Created eagerly so a no-op exec still
     // leaves a folder for the user to find.
-    if action.produces_output() {
+    if action.produces_output() && action != AdvAction::PatchArb {
         let _ = std::fs::create_dir_all(&output_dir);
         ltbox_core::live!(
             log,
@@ -314,183 +389,9 @@ pub(crate) fn advanced_file_worker(
             }
         }
         AdvAction::PatchArb => {
-            ltbox_core::live!(log, "[ARB] {}", phases.marker(1));
-            // `input` is the firmware folder; user-picked
-            // target rollback index lives on the wizard.
             let target = adv_arb_index
                 .ok_or_else(|| ltbox_core::i18n::tr("err_patch_arb_target_missing"))?;
-            let boot = input.join("boot.img");
-            let vbmeta = input.join("vbmeta_system.img");
-            if !boot.is_file() {
-                return Err(tr_args!(
-                    "err_patch_arb_missing_image",
-                    image = "boot.img",
-                    path = input.display().to_string()
-                ));
-            }
-            if !vbmeta.is_file() {
-                return Err(tr_args!(
-                    "err_patch_arb_missing_image",
-                    image = "vbmeta_system.img",
-                    path = input.display().to_string()
-                ));
-            }
-            // Read AVB info first so the abort guards (rollback
-            // == 0 / 1) trip before any signing-key work runs.
-            let boot_info = ltbox_patch::avb::extract_image_avb_info(&boot).map_err(|e| {
-                tr_args!(
-                    "err_patch_arb_inspect_failed",
-                    image = "boot.img",
-                    error = e.to_string()
-                )
-            })?;
-            let vbmeta_info = ltbox_patch::avb::extract_image_avb_info(&vbmeta).map_err(|e| {
-                tr_args!(
-                    "err_patch_arb_inspect_failed",
-                    image = "vbmeta_system.img",
-                    error = e.to_string()
-                )
-            })?;
-            if boot_info.rollback_index <= 1 {
-                return Err(tr_args!(
-                    "err_patch_arb_rollback_refuse",
-                    image = "boot.img",
-                    index = boot_info.rollback_index.to_string()
-                ));
-            }
-            if vbmeta_info.rollback_index <= 1 {
-                return Err(tr_args!(
-                    "err_patch_arb_rollback_refuse",
-                    image = "vbmeta_system.img",
-                    index = vbmeta_info.rollback_index.to_string()
-                ));
-            }
-            ltbox_core::live!(log, "[ARB] {}", phases.marker(2));
-            // Signing key resolution: only the two stock
-            // test keys embedded in avbtool-rs are supported.
-            // Anything else aborts — user-supplied PEMs are
-            // intentionally not consulted.
-            let resolve_key = |info: &ltbox_patch::avb::AvbImageInfo,
-                               label: &str|
-             -> std::result::Result<&'static str, String> {
-                ltbox_patch::key_map::key_spec_for_pubkey(info.public_key_sha1.as_deref())
-                    .ok_or_else(|| {
-                        ltbox_patch::key_map::unresolved_signing_key_error(
-                            label,
-                            info.public_key_sha1.as_deref().unwrap_or_default(),
-                        )
-                    })
-            };
-            let boot_key = resolve_key(&boot_info, "boot.img")?;
-            let vbmeta_key = resolve_key(&vbmeta_info, "vbmeta_system.img")?;
-            ltbox_core::live!(
-                log,
-                "[ARB] {}",
-                tr_args!(
-                    "live_patch_arb_signing_key",
-                    name = "boot.img",
-                    key = boot_key
-                )
-            );
-            ltbox_core::live!(
-                log,
-                "[ARB] {}",
-                tr_args!(
-                    "live_patch_arb_signing_key",
-                    name = "vbmeta_system.img",
-                    key = vbmeta_key
-                )
-            );
-            ltbox_core::live!(
-                log,
-                "[ARB] {}",
-                tr_args!(
-                    "live_patch_arb_rollback_change",
-                    name = "boot.img",
-                    old = boot_info.rollback_index.to_string(),
-                    new = target.to_string()
-                )
-            );
-            ltbox_core::live!(
-                log,
-                "[ARB] {}",
-                tr_args!(
-                    "live_patch_arb_rollback_change",
-                    name = "vbmeta_system.img",
-                    old = vbmeta_info.rollback_index.to_string(),
-                    new = target.to_string()
-                )
-            );
-            let boot_out = output_dir.join("boot.img");
-            let vbmeta_out = output_dir.join("vbmeta_system.img");
-            // boot.img: NONE → add_hash_footer; signed → resign.
-            ltbox_core::live!(log, "[ARB] {}", phases.marker(3));
-            std::fs::copy(&boot, &boot_out).map_err(|e| {
-                tr_args!(
-                    "err_patch_arb_copy_failed",
-                    image = "boot.img",
-                    error = e.to_string()
-                )
-            })?;
-            if boot_info.algorithm == "NONE" {
-                ltbox_patch::avb::add_hash_footer(
-                    &boot_out,
-                    &boot_info,
-                    Some(boot_key),
-                    Some(target),
-                )
-                .map_err(|e| {
-                    tr_args!(
-                        "err_patch_arb_footer_failed",
-                        image = "boot.img",
-                        error = e.to_string()
-                    )
-                })?;
-            } else {
-                ltbox_patch::avb::resign_image(
-                    &boot_out,
-                    boot_key,
-                    &boot_info.algorithm,
-                    Some(target),
-                )
-                .map_err(|e| {
-                    tr_args!(
-                        "err_patch_arb_resign_failed",
-                        image = "boot.img",
-                        error = e.to_string()
-                    )
-                })?;
-            }
-            // vbmeta_system.img: always resign (chains require sig).
-            ltbox_core::live!(log, "[ARB] {}", phases.marker(4));
-            std::fs::copy(&vbmeta, &vbmeta_out).map_err(|e| {
-                tr_args!(
-                    "err_patch_arb_copy_failed",
-                    image = "vbmeta_system.img",
-                    error = e.to_string()
-                )
-            })?;
-            ltbox_patch::avb::resign_image(
-                &vbmeta_out,
-                vbmeta_key,
-                &vbmeta_info.algorithm,
-                Some(target),
-            )
-            .map_err(|e| {
-                tr_args!(
-                    "err_patch_arb_resign_failed",
-                    image = "vbmeta_system.img",
-                    error = e.to_string()
-                )
-            })?;
-            ltbox_core::live!(
-                log,
-                "[ARB] {}",
-                tr_args!(
-                    "live_advanced_output_folder",
-                    path = output_dir.display().to_string()
-                )
-            );
+            patch_firmware_rollback(input, target, &phases, &mut log)?;
         }
         AdvAction::RebuildVbmeta => {
             ltbox_core::live!(log, "[AVB] {}", phases.marker(1));

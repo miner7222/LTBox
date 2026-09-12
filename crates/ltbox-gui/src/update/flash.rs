@@ -595,6 +595,19 @@ impl App {
                     return Task::none();
                 };
 
+                if self.current_view == View::Advanced
+                    && self.adv_wizard.action == Some(AdvAction::PatchArb)
+                {
+                    self.adv_wizard.arb_targets = Some(ManualRollbackIndices {
+                        boot: boot_index,
+                        vbmeta_system: vbmeta_index,
+                    });
+                    self.adv_wizard.step = 1;
+                    self.manual_rollback_editor = None;
+                    self.manual_rollback_buffers = None;
+                    return Task::none();
+                }
+
                 if effective_rollback_mode(
                     self.flash_rollback_policy(),
                     ltbox_patch::rollback::RollbackMode::Manual,
@@ -619,6 +632,45 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn advanced_manual_editor_confirms_distinct_indices_without_changing_flash_config() {
+        let mut app = App {
+            current_view: View::Advanced,
+            ..App::default()
+        };
+        app.adv_wizard.open(AdvAction::PatchArb);
+        app.adv_wizard.arb_inspect = Some((100, 80));
+        let original = app.wf_config.manual_rollback_indices;
+        let _ = app.open_manual_rollback_editor();
+        assert_eq!(app.adv_wizard.step, 0);
+        assert!(app.confirm_edit_field.is_none());
+        let _ = app.update(Message::Flash(FlashMsg::FlashManualRollbackInput(
+            ManualRollbackEditor::Boot,
+            "90".into(),
+        )));
+        let _ = app.update(Message::Flash(FlashMsg::FlashManualRollbackInput(
+            ManualRollbackEditor::VbmetaSystem,
+            "75".into(),
+        )));
+        let _ = app.update(Message::Flash(FlashMsg::FlashManualRollbackConfirm));
+        assert!(app.adv_wizard.is_confirm_step());
+        assert_eq!(
+            app.adv_wizard.arb_targets,
+            Some(ManualRollbackIndices {
+                boot: 90,
+                vbmeta_system: 75
+            })
+        );
+        assert_eq!(app.wf_config.manual_rollback_indices, original);
+        assert!(app.manual_rollback_editor.is_none());
+        app.adv_wizard.step = 0;
+        let _ = app.open_manual_rollback_editor();
+        assert_eq!(app.manual_rollback_values, (Some(90), Some(75)));
+        let _ = app.update(Message::Flash(FlashMsg::FlashManualRollbackCancel));
+        assert_eq!(app.adv_wizard.step, 0);
+        assert!(app.manual_rollback_editor.is_none());
+    }
 
     #[test]
     fn flash_rejects_disallowed_direct_rollback_selections() {

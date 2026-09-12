@@ -1852,8 +1852,6 @@ struct App {
     /// option when no
     /// usable polled serial is available.
     flash_serial_prompt: Option<String>,
-    /// PatchArb wizard's unix-timestamp input popup.
-    arb_index_popup_open: bool,
     rollback_popup_open: bool,
     /// Shared across both rows so `boot` and `vbmeta_system` stay
     /// directly comparable while cycling.
@@ -2074,7 +2072,6 @@ impl Default for App {
             ota_changelog_editor: iced::widget::text_editor::Content::with_text(""),
             qfil_popup: None,
             flash_serial_prompt: None,
-            arb_index_popup_open: false,
             rollback_popup_open: false,
             rollback_value_format: RollbackValueFormat::default(),
             manual_rollback_format: RollbackValueFormat::Unix,
@@ -2271,7 +2268,13 @@ impl App {
     }
 
     pub(crate) fn open_manual_rollback_editor(&mut self) -> Task<Message> {
-        let defaults = self.flash.firmware_rollback_indices.clone();
+        let advanced = self.current_view == View::Advanced
+            && self.adv_wizard.action == Some(AdvAction::PatchArb);
+        let defaults = if advanced {
+            self.adv_wizard.arb_inspect.map(|(a, b)| (Ok(a), Ok(b)))
+        } else {
+            self.flash.firmware_rollback_indices.clone()
+        };
         let Some(defaults) = defaults else {
             return Task::none();
         };
@@ -2284,14 +2287,22 @@ impl App {
         // Values the user already confirmed win over the image defaults —
         // reopening the editor to check a number must not silently discard it.
         // The image index stays visible under each field either way.
-        let buffers = match self.wf_config.manual_rollback_indices {
+        let buffers = match if advanced {
+            self.adv_wizard.arb_targets
+        } else {
+            self.wf_config.manual_rollback_indices
+        } {
             Some(entered) => (
                 self.manual_rollback_format.render(entered.boot),
                 self.manual_rollback_format.render(entered.vbmeta_system),
             ),
             None => (seed(&defaults.0), seed(&defaults.1)),
         };
-        self.confirm_edit_field = Some(ConfirmField::Rollback);
+        self.confirm_edit_field = if advanced {
+            None
+        } else {
+            Some(ConfirmField::Rollback)
+        };
         self.manual_rollback_editor = Some(ManualRollbackEditor::Boot);
         self.manual_rollback_values = (
             self.manual_rollback_format.parse(&buffers.0).ok(),
@@ -3333,13 +3344,6 @@ impl App {
         } else {
             target.unwrap_or(device)
         }
-    }
-
-    /// Whether the polled device follows the TB320FC hardware path. These model
-    /// identities also target `boot` for Magisk and KernelSU LKM;
-    /// LAVIE Tab 9QHD1 shares the same path.
-    fn is_tb320fc(&self) -> bool {
-        ltbox_core::model::is_tb320fc_model(&self.device.model)
     }
 
     /// Whether the polled device is a TB323FU. Drives the multi-image
@@ -4429,8 +4433,8 @@ mod tests {
         assert_eq!(arb.matches("phases.marker(1)").count(), 1);
         assert_eq!(arb.matches("phases.marker(2)").count(), 1);
         assert_eq!(arb.matches("phases.marker(3)").count(), 1);
-        assert_eq!(arb.matches("phases.marker(4)").count(), 3);
-        assert_eq!(arb.matches("phases.marker(5)").count(), 3);
+        assert_eq!(arb.matches("phases.marker(4)").count(), 2);
+        assert_eq!(arb.matches("phases.marker(5)").count(), 2);
     }
 
     #[test]
@@ -4467,8 +4471,8 @@ mod tests {
             Some("AdvAction::PatchDevinfo=>{"),
         );
         let patch_arb = action(
-            "AdvAction::PatchArb=>{",
-            Some("AdvAction::RebuildVbmeta=>{"),
+            "pub(crate)fnpatch_firmware_rollback(",
+            Some("pub(crate)fnadvanced_file_worker("),
         );
         let rebuild = action("AdvAction::RebuildVbmeta=>{", None);
         assert_once_in_order(&xml, 3);

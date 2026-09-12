@@ -5,7 +5,7 @@ use ltbox_patch::rollback::{ManualRollbackPlan, RollbackIndices, plan_manual_rol
 
 /// Validate the optional manual targets against the device floors and the
 /// firmware indices read from the two rollback-protected AVB images.
-pub(super) fn prepare_manual_rollback_plan(
+pub(crate) fn prepare_manual_rollback_plan(
     fw_dir: &Path,
     device_floors: RollbackIndices,
     requested: Option<RollbackIndices>,
@@ -43,7 +43,7 @@ fn inspect_firmware_index(fw_dir: &Path, image: &str, filename: &str) -> Result<
 /// Build overlays only for partitions whose manual target changes its
 /// firmware index. Unchanged partitions remain untouched so their original
 /// bytes and signing keys stay in the ordinary firmware flash path.
-pub(super) fn build_manual_rollback_overlays(
+pub(crate) fn build_manual_rollback_overlays(
     fw_dir: &Path,
     work_dir: &Path,
     plan: ManualRollbackPlan,
@@ -208,6 +208,100 @@ mod tests {
             original
         );
         assert_eq!(std::fs::read(work.join("existing")).unwrap(), b"preserve");
+    }
+
+    #[test]
+    fn offline_edit_keeps_exact_backups_and_distinct_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        image(&dir.path().join("boot.img"), 100, true);
+        image(&dir.path().join("vbmeta_system.img"), 80, true);
+        let boot = std::fs::read(dir.path().join("boot.img")).unwrap();
+        let vbmeta = std::fs::read(dir.path().join("vbmeta_system.img")).unwrap();
+        let phases = crate::PhaseReporter::from_labels(vec!["test".into(); 4]);
+        let targets = crate::ManualRollbackIndices {
+            boot: 90,
+            vbmeta_system: 75,
+        };
+        crate::workers::advanced::patch_firmware_rollback(
+            dir.path(),
+            targets,
+            &phases,
+            &mut vec![],
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("boot.img.bak")).unwrap(),
+            boot
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("vbmeta_system.img.bak")).unwrap(),
+            vbmeta
+        );
+        for (name, expected) in [("boot.img", 90), ("vbmeta_system.img", 75)] {
+            let info = ltbox_patch::avb::extract_image_avb_info(&dir.path().join(name)).unwrap();
+            assert_eq!(info.rollback_index, expected);
+            assert_eq!(info.algorithm, "SHA256_RSA2048");
+        }
+        let edited = std::fs::read(dir.path().join("boot.img")).unwrap();
+        assert!(
+            crate::workers::advanced::patch_firmware_rollback(
+                dir.path(),
+                targets,
+                &phases,
+                &mut vec![]
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(dir.path().join("boot.img")).unwrap(), edited);
+        assert_eq!(
+            std::fs::read(dir.path().join("boot.img.bak")).unwrap(),
+            boot
+        );
+    }
+
+    #[test]
+    fn offline_source_next_opens_shared_editor_before_confirmation() {
+        use crate::{AdvAction, AdvMsg, App, FlashMsg, Message, View};
+        let dir = tempfile::tempdir().unwrap();
+        image(&dir.path().join("boot.img"), 100, true);
+        image(&dir.path().join("vbmeta_system.img"), 80, true);
+        let mut app = App {
+            current_view: View::Advanced,
+            ..App::default()
+        };
+        app.adv_wizard.open(AdvAction::PatchArb);
+        app.adv_wizard.file_path = Some(dir.path().to_string_lossy().into_owned());
+        let _ = app.update(Message::Adv(AdvMsg::AdvWizNext));
+        assert_eq!(app.adv_wizard.arb_inspect, Some((100, 80)));
+        assert_eq!(app.adv_wizard.step, 0);
+        assert!(app.manual_rollback_editor.is_some());
+        assert!(!app.operation.is_running());
+        let _ = app.update(Message::Flash(FlashMsg::FlashManualRollbackConfirm));
+        assert!(app.adv_wizard.is_confirm_step());
+        assert!(!dir.path().join("boot.img.bak").exists());
+    }
+
+    #[test]
+    fn offline_inspection_failure_leaves_both_sources_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        image(&dir.path().join("boot.img"), 100, true);
+        std::fs::write(dir.path().join("vbmeta_system.img"), b"invalid").unwrap();
+        let before = std::fs::read(dir.path().join("boot.img")).unwrap();
+        let phases = crate::PhaseReporter::from_labels(vec!["test".into(); 4]);
+        assert!(
+            crate::workers::advanced::patch_firmware_rollback(
+                dir.path(),
+                crate::ManualRollbackIndices {
+                    boot: 90,
+                    vbmeta_system: 75
+                },
+                &phases,
+                &mut vec![]
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(dir.path().join("boot.img")).unwrap(), before);
+        assert!(!dir.path().join("boot.img.bak").exists());
     }
 
     #[test]
