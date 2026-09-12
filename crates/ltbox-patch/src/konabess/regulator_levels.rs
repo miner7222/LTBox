@@ -87,11 +87,14 @@ const SUN_NAMES: [&str; 26] = [
     "SUPER_TURBO_NO_CPR",
 ];
 
-const CANOE_VOTES: [u32; 28] = [
-    16, 48, 50, 51, 52, 54, 56, 60, 64, 72, 80, 96, 128, 144, 192, 224, 256, 288, 320, 336, 384,
-    400, 416, 432, 448, 452, 464, 480,
+// Qualcomm's SM8850 binding names vote 76 LOW_SVS_L0 (distinct from P1 at 72).
+// OnePlusOSS/android_kernel_oneplus_sm8850, fc30e54174d254ff7f33622a9278e4435f6718d2:
+// include/dt-bindings/regulator/qcom,rpmh-regulator-levels.h
+const CANOE_VOTES: [u32; 29] = [
+    16, 48, 50, 51, 52, 54, 56, 60, 64, 72, 76, 80, 96, 128, 144, 192, 224, 256, 288, 320, 336,
+    384, 400, 416, 432, 448, 452, 464, 480,
 ];
-const CANOE_NAMES: [&str; 28] = [
+const CANOE_NAMES: [&str; 29] = [
     "RETENTION",
     "MIN_SVS",
     "LOW_SVS_D3",
@@ -102,6 +105,7 @@ const CANOE_NAMES: [&str; 28] = [
     "LOW_SVS_D0",
     "LOW_SVS",
     "LOW_SVS_P1",
+    "LOW_SVS_L0",
     "LOW_SVS_L1",
     "LOW_SVS_L2",
     "SVS",
@@ -156,7 +160,7 @@ mod tests {
             (&DIWALI_VOTES[..], &DIWALI_NAMES[..], 17),
             (&PINEAPPLE_VOTES[..], &PINEAPPLE_NAMES[..], 24),
             (&SUN_VOTES[..], &SUN_NAMES[..], 26),
-            (&CANOE_VOTES[..], &CANOE_NAMES[..], 28),
+            (&CANOE_VOTES[..], &CANOE_NAMES[..], 29),
         ] {
             assert_eq!(votes.len(), expected);
             assert_eq!(names.len(), expected);
@@ -171,5 +175,17 @@ mod tests {
         assert_eq!(regulator_level_name("sun", 452), Some("TURBO_L4"));
         assert_eq!(regulator_level_name("canoe", 51), Some("LOW_SVS_D2_5"));
         assert_eq!(regulator_level_name("sun", 51), None);
+    }
+
+    #[test]
+    fn canoe_low_svs_l0_is_distinct_from_its_neighbors() {
+        assert_eq!(regulator_level_name("canoe", 72), Some("LOW_SVS_P1"));
+        assert_eq!(regulator_level_name("canoe", 76), Some("LOW_SVS_L0"));
+        assert_eq!(regulator_level_name("canoe", 80), Some("LOW_SVS_L1"));
+        let votes = regulator_level_votes("canoe").unwrap();
+        assert!(votes.windows(3).any(|votes| votes == [72, 76, 80]));
+        for chip in ["diwali", "pineapple", "sun", "unknown"] {
+            assert_eq!(regulator_level_name(chip, 76), None);
+        }
     }
 }

@@ -18,11 +18,111 @@ use ltbox_patch::avb;
 use ltbox_patch::konabess::{
     GpuTable, KonaBessExport, build_konabess_avb_images, classify_vendor_boot_dtbs,
     extract_vendor_boot_dtbs, inspect_vendor_boot_gpu_candidates, parse_fdt_gpu_info, read_export,
-    replace_fdt_gpu_table_from_table, replace_vendor_boot_dtb, replace_vendor_boot_gpu_table,
+    regulator_level_name, replace_fdt_gpu_table_from_table, replace_vendor_boot_dtb,
+    replace_vendor_boot_gpu_table,
 };
 
 fn required_path(name: &str) -> PathBuf {
     PathBuf::from(env::var_os(name).unwrap_or_else(|| panic!("{name} must be set")))
+}
+
+#[test]
+#[ignore = "requires LTBOX_TEST_KONABESS_VENDOR_BOOT_DIR with local real images"]
+fn real_chip_alias_imports_preserve_dtbs_and_canoe_votes_are_named() {
+    let fixture_dir = required_path("LTBOX_TEST_KONABESS_VENDOR_BOOT_DIR");
+    let mut canoe_l0_count = 0;
+    for name in [
+        "tb320fc.img",
+        "tb321fu.img",
+        "tb322fc.img",
+        "tb323fu.img",
+        "tb324zc.img",
+    ] {
+        let image = std::fs::read(fixture_dir.join(name)).unwrap();
+        let blobs = extract_vendor_boot_dtbs(&image).unwrap();
+        let candidates = inspect_vendor_boot_gpu_candidates(&image).unwrap();
+        assert!(!candidates.is_empty(), "{name}");
+        for (candidate_position, candidate) in candidates.iter().enumerate() {
+            let chip = candidate.chip.as_deref().unwrap();
+            let aliases: &[&str] = match chip {
+                "diwali" => &["diwali-lte", "diwalip"],
+                "pineapple" => &["pineapplep", "volcano", "volcanop"],
+                "sun" => &["sunp", "tuna", "tunap"],
+                "canoe" => &["canoep"],
+                other => panic!("unexpected fixture chip: {other}"),
+            };
+            let table = candidate.table.as_ref().unwrap();
+            for alias in aliases {
+                let rebuilt =
+                    replace_fdt_gpu_table_from_table(&blobs[candidate.index], alias, table)
+                        .unwrap();
+                assert_eq!(
+                    rebuilt, blobs[candidate.index],
+                    "{name} DTB {} / {alias}",
+                    candidate.index
+                );
+            }
+            if chip == "canoe" {
+                for property in table
+                    .groups
+                    .iter()
+                    .flat_map(|group| &group.levels)
+                    .flat_map(|level| &level.properties)
+                    .filter(|property| property.name == "qcom,level")
+                {
+                    for &vote in &property.cells {
+                        assert!(
+                            regulator_level_name(chip, vote).is_some(),
+                            "{name}: unknown vote {vote}"
+                        );
+                        if vote == 76 {
+                            assert_eq!(regulator_level_name(chip, vote), Some("LOW_SVS_L0"));
+                            canoe_l0_count += 1;
+                        }
+                    }
+                }
+            }
+            // Exercise the same lower-level gate through the whole-image API.
+            if candidate_position == 0 {
+                let mut export = KonaBessExport {
+                    chip: aliases[0].into(),
+                    description: String::new(),
+                    table: table.clone(),
+                    import_warnings: vec![],
+                };
+                let frequency = export.table.groups[0].levels[0]
+                    .properties
+                    .iter_mut()
+                    .find(|property| property.name == "qcom,gpu-freq")
+                    .unwrap();
+                frequency.cells[0] = frequency.cells[0].checked_add(1).unwrap();
+                let alias_image =
+                    replace_vendor_boot_dtb(&image, candidate.index, &export).unwrap();
+                export.chip = chip.into();
+                let canonical_image =
+                    replace_vendor_boot_dtb(&image, candidate.index, &export).unwrap();
+                assert_eq!(
+                    alias_image, canonical_image,
+                    "{name}: alias changed the patch result"
+                );
+                assert_ne!(
+                    alias_image, image,
+                    "{name}: edited frequency was not applied"
+                );
+                export.chip = if chip == "sun" { "pineapple" } else { "sun" }.into();
+                assert!(replace_vendor_boot_dtb(&image, candidate.index, &export).is_err());
+            }
+        }
+        println!(
+            "{name}: {} GPU DTBs accepted aliases without changing original bytes",
+            candidates.len()
+        );
+    }
+    assert!(
+        canoe_l0_count > 0,
+        "the fixtures must exercise the missing canoe vote"
+    );
+    println!("canoe: {canoe_l0_count} LOW_SVS_L0 (76) entries verified");
 }
 
 fn changed_cell_count(before: &GpuTable, after: &GpuTable) -> usize {

@@ -109,7 +109,7 @@ pub(super) fn replace_fdt_gpu_table_with_chip(
         .as_deref()
         .or(section_chip)
         .ok_or_else(|| error("target FDT chip cannot be identified"))?;
-    if chip != export.chip {
+    if !chip_names_match(chip, &export.chip) {
         return Err(error(format!(
             "chip mismatch: export is `{}`, target FDT is `{chip}`",
             export.chip
@@ -929,6 +929,36 @@ mod tests {
         assert!(chip_names_match("canoe", "canoep"));
         assert!(!chip_names_match("sun", "pineapple"));
         assert!(!chip_names_match("unknown", "unknown"));
+    }
+
+    #[test]
+    fn table_replacement_accepts_every_alias_without_changing_chip_identity() {
+        for (family, aliases) in CHIP_ALIAS_SETS {
+            for target_alias in aliases {
+                let original = table(&[(0, 1)], 100);
+                let fdt = synthetic_fdt(target_alias, "Alias target", &original);
+                let edited = table(&[(0, 1)], 200);
+                for export_alias in aliases {
+                    for chip in [export_alias.to_string(), format!("qcom,{export_alias}")] {
+                        let rebuilt = replace_fdt_gpu_table_from_table(&fdt, &chip, &edited)
+                            .unwrap_or_else(|e| panic!("{target_alias} / {chip}: {e}"));
+                        let info = parse_fdt_gpu_info(&rebuilt).unwrap();
+                        assert_eq!(info.chip.as_deref(), Some(family));
+                        assert_eq!(info.table.as_ref(), Some(&edited));
+                        assert_eq!(info.model.as_deref(), Some("Alias target"));
+                    }
+                }
+                for other in [
+                    "unknown",
+                    "qcom,unknown",
+                    "",
+                    if family == "sun" { "pineapple" } else { "sun" },
+                ] {
+                    assert!(replace_fdt_gpu_table_from_table(&fdt, other, &edited).is_err());
+                }
+                assert_eq!(parse_fdt_gpu_info(&fdt).unwrap().table, Some(original));
+            }
+        }
     }
 
     #[test]
