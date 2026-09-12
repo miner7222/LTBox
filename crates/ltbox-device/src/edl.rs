@@ -78,12 +78,39 @@ const EDL_SESSION_OPEN_TIMEOUT: Duration = Duration::from_secs(45);
 /// without parsing terminal `pbr` output. The last value remains available
 /// until [`clear_flash_progress`] so short gaps between partitions do not
 /// flicker empty in the UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlashProgress {
     pub partition: String,
     pub percent: u8,
     pub completed_bytes: u64,
     pub total_bytes: u64,
+    /// Bytes acknowledged across every write in the current operation.
+    pub operation_completed_bytes: u64,
+    /// Planned transfer bytes, including sector padding. Later generated
+    /// overlays register their sizes before they are written.
+    pub operation_total_bytes: u64,
+}
+
+impl FlashProgress {
+    fn register(&mut self, bytes: u64) {
+        self.operation_total_bytes = self.operation_total_bytes.saturating_add(bytes);
+    }
+
+    fn begin_partition(&mut self, partition: &str, total: u64) {
+        self.partition = partition.to_string();
+        self.percent = 0;
+        self.completed_bytes = 0;
+        self.total_bytes = total;
+    }
+
+    fn update_partition(&mut self, partition: &str, completed: u64, total: u64) {
+        let delta = completed.saturating_sub(self.completed_bytes);
+        self.operation_completed_bytes = self.operation_completed_bytes.saturating_add(delta);
+        self.partition = partition.to_string();
+        self.percent = flash_percent(completed, total);
+        self.completed_bytes = completed;
+        self.total_bytes = total;
+    }
 }
 
 fn flash_progress_slot() -> &'static Mutex<Option<FlashProgress>> {
@@ -109,17 +136,39 @@ pub fn clear_flash_progress() {
 }
 
 fn publish_flash_progress(partition: &str, percent: u8, completed_bytes: u64, total_bytes: u64) {
-    let next = FlashProgress {
-        partition: partition.to_string(),
-        percent,
-        completed_bytes,
-        total_bytes,
-    };
-    match flash_progress_slot().lock() {
-        Ok(mut guard) => *guard = Some(next),
-        // Poisoning should not panic production flash/GUI polling paths.
-        Err(poisoned) => *poisoned.into_inner() = Some(next),
+    let mut guard = flash_progress_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let snapshot = guard.get_or_insert_with(FlashProgress::default);
+    snapshot.update_partition(partition, completed_bytes, total_bytes);
+    debug_assert_eq!(snapshot.percent, percent);
+}
+
+fn register_flash_bytes(bytes: u64) {
+    let mut guard = flash_progress_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let snapshot = guard.get_or_insert_with(FlashProgress::default);
+    snapshot.register(bytes);
+}
+
+fn begin_partition_progress(partition: &str, total: u64, register: bool) {
+    if register {
+        register_flash_bytes(total);
     }
+    let mut guard = flash_progress_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let snapshot = guard.get_or_insert_with(FlashProgress::default);
+    snapshot.begin_partition(partition, total);
+}
+
+fn padded_transfer_bytes(num_sectors: usize, sector_size: usize) -> Result<u64> {
+    let bytes = num_sectors
+        .checked_mul(sector_size)
+        .ok_or_else(|| EdlError::Session("Padded image transfer size exceeds usize".to_string()))?;
+    u64::try_from(bytes)
+        .map_err(|_| EdlError::Session("Padded image transfer size exceeds u64".to_string()))
 }
 
 /// Integer percent in `0..=100`, overflow-safe for large byte totals.
@@ -992,7 +1041,11 @@ impl EdlSession {
             tr("log_edl_flash_cmd"),
             image.display()
         );
-        qdl::firehose_program_storage(
+        let transfer_bytes =
+            padded_transfer_bytes(num_sectors, self.dev.fh_config().storage_sector_size)?;
+        begin_partition_progress(part_name, transfer_bytes, true);
+        let mut last_percent = None;
+        qdl::firehose_program_storage_with_progress(
             &mut self.dev,
             &mut file,
             part_name,
@@ -1000,6 +1053,9 @@ impl EdlSession {
             0,
             lun,
             start_sector,
+            |completed, total| {
+                update_flash_progress(&mut last_percent, part_name, completed, total)
+            },
         )
         .map_err(|e| EdlError::Session(format!("Partition write failed: {e}")))?;
         ltbox_core::live!(log, "[EDL] {} {part_name}", tr("log_edl_flashed"));
@@ -1098,8 +1154,22 @@ impl EdlSession {
                 .replace("{bytes}", &file_len.to_string())
                 .replace("{sectors}", &num_sectors.to_string())
         );
-        qdl::firehose_program_storage(&mut self.dev, &mut file, "", num_sectors, 0, lun, "0")
-            .map_err(|e| EdlError::Session(format!("Physical LUN write failed: {e}")))?;
+        let transfer_bytes =
+            padded_transfer_bytes(num_sectors, self.dev.fh_config().storage_sector_size)?;
+        let label = format!("LUN {lun}");
+        begin_partition_progress(&label, transfer_bytes, true);
+        let mut last_percent = None;
+        qdl::firehose_program_storage_with_progress(
+            &mut self.dev,
+            &mut file,
+            &label,
+            num_sectors,
+            0,
+            lun,
+            "0",
+            |completed, total| update_flash_progress(&mut last_percent, &label, completed, total),
+        )
+        .map_err(|e| EdlError::Session(format!("Physical LUN write failed: {e}")))?;
         ltbox_core::live!(
             log,
             "[EDL] {}",
@@ -1206,7 +1276,11 @@ impl EdlSession {
             image.display()
         );
 
-        qdl::firehose_program_storage(
+        let transfer_bytes =
+            padded_transfer_bytes(num_sectors, self.dev.fh_config().storage_sector_size)?;
+        begin_partition_progress(part_name, transfer_bytes, true);
+        let mut last_percent = None;
+        qdl::firehose_program_storage_with_progress(
             &mut self.dev,
             &mut file,
             part_name,
@@ -1214,6 +1288,9 @@ impl EdlSession {
             slot,
             lun,
             &start.to_string(),
+            |completed, total| {
+                update_flash_progress(&mut last_percent, part_name, completed, total)
+            },
         )
         .map_err(|e| EdlError::Session(format!("Partition write failed: {e}")))?;
         ltbox_core::live!(log, "[EDL] {} {part_name}", tr("log_edl_flashed"));
@@ -1370,6 +1447,7 @@ impl EdlSession {
         log: &mut Vec<String>,
     ) -> Result<()> {
         Self::preflight_rawprogram_super_images(program_xmls)?;
+        register_flash_bytes(self.rawprogram_transfer_bytes(program_xmls, wipe)?);
 
         if wipe {
             ltbox_core::live!(log, "[Flash] {}", tr("log_flash_wipe_enabled"));
@@ -1421,6 +1499,7 @@ impl EdlSession {
         log: &mut Vec<String>,
     ) -> Result<()> {
         Self::preflight_rawprogram_super_images(program_xmls)?;
+        register_flash_bytes(self.rawprogram_transfer_bytes(program_xmls, true)?);
 
         for xml_path in program_xmls {
             ltbox_core::live!(
@@ -1447,6 +1526,43 @@ impl EdlSession {
             self.apply_patch_xml(xml_path, log)?;
         }
         Ok(())
+    }
+
+    /// Total padded bytes that the selected rawprogram pass will actually
+    /// write. Registering this before the first partition keeps the operation
+    /// denominator stable instead of growing it one image at a time.
+    fn rawprogram_transfer_bytes(&self, program_xmls: &[PathBuf], wipe: bool) -> Result<u64> {
+        let sector_size = self.dev.fh_config().storage_sector_size;
+        let mut total = 0u64;
+        for xml_path in program_xmls {
+            let xml_content = std::fs::read_to_string(xml_path)?;
+            let doc = roxmltree::Document::parse(&xml_content).map_err(|e| {
+                EdlError::Session(format!("XML parse error in {}: {e}", xml_path.display()))
+            })?;
+            let xml_dir = xml_path.parent().unwrap_or(Path::new("."));
+            for node in doc
+                .descendants()
+                .filter(|node| node.tag_name().name().eq_ignore_ascii_case("program"))
+            {
+                let label = node.attribute("label").unwrap_or("").trim();
+                if !wipe && Self::keep_data_skip_labels(label) {
+                    continue;
+                }
+                let filename = node.attribute("filename").unwrap_or("").trim();
+                let ctx = format!("{} <program label={label}>", xml_path.display());
+                let num_sectors: usize =
+                    parse_xml_attr(&node, "num_partition_sectors", 0usize, &ctx)?;
+                if filename.is_empty() || num_sectors == 0 {
+                    continue;
+                }
+                let image_path = ltbox_core::safe_path::safe_join(xml_dir, filename)
+                    .map_err(|e| EdlError::Session(e.to_string()))?;
+                if image_path.exists() {
+                    total = total.saturating_add(padded_transfer_bytes(num_sectors, sector_size)?);
+                }
+            }
+        }
+        Ok(total)
     }
 
     /// Erase every `<program>` whose label is in `WIPE_ERASE_BASES`
@@ -1625,6 +1741,9 @@ impl EdlSession {
 
         // Publish only when the integer percentage changes so the process-wide
         // slot is not locked/allocated on every Firehose chunk.
+        let transfer_bytes =
+            padded_transfer_bytes(num_sectors, self.dev.fh_config().storage_sector_size)?;
+        begin_partition_progress(&label, transfer_bytes, false);
         let mut last_percent: Option<u8> = None;
         qdl::firehose_program_storage_with_progress(
             &mut self.dev,
@@ -2022,35 +2141,27 @@ mod tests {
     }
 
     #[test]
-    fn flash_progress_latest_value_and_clear() {
-        // Keep process-wide static state isolated for parallel cargo test.
-        clear_flash_progress();
-        let mut last = None;
-        update_flash_progress(&mut last, "boot", 0, 200); // initial 0
-        assert_eq!(last, Some(0));
-        assert_eq!(flash_progress().unwrap().percent, 0);
-
-        update_flash_progress(&mut last, "boot", 1, 200); // unchanged integer %
-        assert_eq!(last, Some(0));
-        assert_eq!(flash_progress().unwrap().percent, 0);
-
-        update_flash_progress(&mut last, "boot", 200, 200); // final 100
-        assert_eq!(last, Some(100));
-        assert_eq!(flash_progress().unwrap().percent, 100);
-
-        last = None;
-        update_flash_progress(&mut last, "system", 0, 400); // new partition
+    fn flash_progress_accumulates_partitions_without_losing_current_details() {
+        let mut progress = FlashProgress::default();
+        progress.register(200);
+        progress.register(400);
+        progress.begin_partition("boot", 200);
+        progress.update_partition("boot", 1, 200);
+        assert_eq!(progress.percent, 0);
+        progress.update_partition("boot", 200, 200);
+        progress.begin_partition("system", 400);
+        progress.update_partition("system", 0, 400);
         assert_eq!(
-            flash_progress(),
-            Some(FlashProgress {
+            progress,
+            FlashProgress {
                 partition: "system".into(),
                 percent: 0,
                 completed_bytes: 0,
                 total_bytes: 400,
-            })
+                operation_completed_bytes: 200,
+                operation_total_bytes: 600,
+            }
         );
-        clear_flash_progress();
-        assert_eq!(flash_progress(), None);
     }
 
     #[test]

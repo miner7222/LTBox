@@ -1,6 +1,9 @@
 //! Validate a complete set of partition images before programming any of them.
 
-use super::{EdlError, EdlSession, QdlChan, Result, tr};
+use super::{
+    EdlError, EdlSession, QdlChan, Result, begin_partition_progress, padded_transfer_bytes, tr,
+    update_flash_progress,
+};
 use std::fs::File;
 use std::path::Path;
 
@@ -121,8 +124,32 @@ impl EdlSession {
             })?);
         }
 
+        // The whole batch is known after preflight, so publish its complete
+        // denominator before the first write. This keeps cumulative progress
+        // stable across the generated overlay images in a full flash.
+        let sector_size = self.dev.fh_config().storage_sector_size;
+        for image in &prepared {
+            super::register_flash_bytes(
+                padded_transfer_bytes(image.num_sectors, sector_size).map_err(|source| {
+                    PartitionFlashError {
+                        partition: image.request.label.to_string(),
+                        source,
+                    }
+                })?,
+            );
+        }
+
         for mut image in prepared {
             let request = image.request;
+            let transfer_bytes =
+                padded_transfer_bytes(image.num_sectors, sector_size).map_err(|source| {
+                    PartitionFlashError {
+                        partition: request.label.to_string(),
+                        source,
+                    }
+                })?;
+            begin_partition_progress(request.label, transfer_bytes, false);
+            let mut last_percent = None;
             on_partition(request.label, request.image, log);
             ltbox_core::live!(
                 log,
@@ -141,7 +168,9 @@ impl EdlSession {
                 request.slot,
                 request.lun,
                 &image.start.to_string(),
-                |_, _| {},
+                |completed, total| {
+                    update_flash_progress(&mut last_percent, request.label, completed, total)
+                },
                 &mut on_write_start,
             )
             .map_err(|error| PartitionFlashError {

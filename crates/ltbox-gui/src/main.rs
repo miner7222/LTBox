@@ -5478,6 +5478,8 @@ mod tests {
                 percent: 42,
                 completed_bytes: 42,
                 total_bytes: 100,
+                operation_completed_bytes: 42,
+                operation_total_bytes: 100,
             }),
             operation_error: err.map(str::to_string),
             ..App::default()
@@ -5494,6 +5496,8 @@ mod tests {
             percent: 7,
             completed_bytes: 7,
             total_bytes: 100,
+            operation_completed_bytes: 7,
+            operation_total_bytes: 100,
         });
         assert_eq!(
             simple.firmware_flash_progress_label().as_deref(),
@@ -5551,6 +5555,8 @@ mod tests {
                 percent: 10,
                 completed_bytes: 10,
                 total_bytes: 100,
+                operation_completed_bytes: 10,
+                operation_total_bytes: 100,
             });
             clear(&mut app);
             assert!(app.flash_progress.is_none());
