@@ -526,6 +526,9 @@ jobs:
     name: Test macos_${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: ""
+      CI_CACHE_LABEL: macOS native test dependency cache
     strategy:
       fail-fast: false
       matrix:
@@ -543,28 +546,53 @@ jobs:
           rustup show
           rustup target add ${{ matrix.target }}
 
-      - name: Cargo source cache
-        uses: ./.github/actions/cargo-sources
+      - name: Identify Apple toolchain for dependency cache
+        run: |
+          apple_tools="$( { xcodebuild -version; xcrun --show-sdk-version; xcrun --show-sdk-path; clang --version; } | shasum -a 256 | cut -d ' ' -f 1)"
+          echo "APPLE_TOOLCHAIN_KEY=${apple_tools}" >> "${GITHUB_ENV}"
 
-      - name: sccache
-        uses: ./.github/actions/sccache-setup
+      - name: Start cache restore timer
+        run: python3 ci/cache_metrics.py start dependency-cache-restore
+
+      - name: macOS test dependency target cache
+        id: macos-test-cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-native-test-${{ matrix.arch }}-v1
+          key: ${{ env.APPLE_TOOLCHAIN_KEY }}
+          cache-targets: true
+          cache-workspace-crates: false
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/sccache-diagnostics' }}
+
+      - name: Finish cache restore timer
+        run: python3 ci/cache_metrics.py finish dependency-cache-restore
 
       - name: cargo clippy (native macOS)
         # Lints the cfg(target_os = "macos") paths that the Windows-targeted
         # clippy job never sees. The cfg is identical for both Apple targets,
         # so linting once on the arm64 leg is enough.
         if: ${{ matrix.arch == 'arm64' }}
-        run: cargo clippy --workspace --all-targets --locked
+        run: python3 ci/cache_metrics.py run clippy cargo clippy --workspace --all-targets --locked
 
       - name: cargo test --workspace
-        run: cargo test --workspace --locked --target ${{ matrix.target }}
+        run: python3 ci/cache_metrics.py run workspace-tests cargo test --workspace --locked --target ${{ matrix.target }}
 
-      - name: Report compiler cache diagnostics
+      - name: Record macOS test cache experiment
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/sccache-report
+        env:
+          TARGET_CACHE_HIT: ${{ steps.macos-test-cache.outputs.cache-hit }}
+        run: python3 ci/cache_metrics.py report target
+
+      - name: Upload cache measurements
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+          name: macos-test-${{ matrix.arch }}-cache-metrics
+          path: ${{ runner.temp }}/cache-metrics/
+          retention-days: 14
+
 
   test:
     # Cross-built .exes can't execute on the Linux build runners
