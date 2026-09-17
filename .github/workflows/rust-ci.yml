@@ -313,6 +313,9 @@ jobs:
             target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
 
+    env:
+      RUSTC_WRAPPER: ""
+      CI_CACHE_LABEL: Linux release dependency cache
     steps:
       - uses: actions/checkout@v7
 
@@ -342,13 +345,21 @@ jobs:
           rustup show
           rustup target add ${{ matrix.target }}
 
-      - name: Cargo source cache
-        uses: ./.github/actions/cargo-sources
-        with:
-          save: ${{ github.ref == 'refs/heads/main' && runner.arch == 'X64' }}
+      - name: Start cache restore timer
+        run: python3 ci/cache_metrics.py start dependency-cache-restore
 
-      - name: sccache
-        uses: ./.github/actions/sccache-setup
+      - name: Linux release dependency target cache
+        id: linux-release-cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-release-${{ matrix.target }}-v1
+          cache-targets: true
+          cache-workspace-crates: false
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/sccache-diagnostics' }}
+
+      - name: Finish cache restore timer
+        run: python3 ci/cache_metrics.py finish dependency-cache-restore
 
       - name: Resolve release tag or commit
         id: meta
@@ -361,7 +372,7 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
       - name: cargo build --release
-        run: cargo build --release --locked --target ${{ matrix.target }} -p ltbox-gui
+        run: python3 ci/cache_metrics.py run release-build cargo build --release --locked --target ${{ matrix.target }} -p ltbox-gui
 
       - name: Test native Linux packages
         run: bash packaging/linux/test_packages.sh target/${{ matrix.target }}/release/ltbox
@@ -402,12 +413,21 @@ jobs:
             ${{ steps.stage.outputs.tarball }}.sha256
           if-no-files-found: error
 
-      - name: Report compiler cache diagnostics
+      - name: Record Linux release cache experiment
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/sccache-report
+        env:
+          TARGET_CACHE_HIT: ${{ steps.linux-release-cache.outputs.cache-hit }}
+        run: python3 ci/cache_metrics.py report target
+
+      - name: Upload cache measurements
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+          name: linux-release-${{ matrix.arch }}-cache-metrics
+          path: ${{ runner.temp }}/cache-metrics/
+          retention-days: 14
+
 
   build-macos:
     needs: release-version
