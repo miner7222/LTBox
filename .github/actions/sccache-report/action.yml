@@ -1,0 +1,18 @@
+name: Report sccache diagnostics
+description: Publish numeric cache statistics and allowlisted error categories
+inputs:
+  artifact-name:
+    description: Unique artifact name for this job and matrix entry
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Summarize cache writes
+      shell: bash
+      run: python ci/sccache_diagnostics.py report
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/sccache-diagnostics/report.json
+        if-no-files-found: error
+        retention-days: 14

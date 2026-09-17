@@ -1,0 +1,11 @@
+name: Pinned sccache with diagnostics
+description: Configure private diagnostic logging before starting sccache
+runs:
+  using: composite
+  steps:
+    - name: Configure diagnostic log
+      shell: bash
+      run: python ci/sccache_diagnostics.py configure
+    - uses: mozilla-actions/sccache-action@v0.0.11
+      with:
+        version: v0.18.0

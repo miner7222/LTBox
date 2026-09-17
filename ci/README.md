@@ -48,3 +48,25 @@ If restore/save overhead outweighs the build savings, set `cache-targets` back
 to false and retain the measurements. Avoid enabling target archives on all
 matrix entries without measuring their impact on repository cache pressure.
 Existing caches are not deleted by this change.
+
+## sccache write diagnostics
+
+All compiler-cache jobs use `.github/actions/sccache-setup`, pinning sccache to
+0.18.0. The GHA cache namespace includes the sccache version, even when
+`SCCACHE_GHA_VERSION` is set; review version upgrades as cold-cache events.
+
+The setup action enables only `sccache::server` debug logging in a runner-temporary
+file. The report action runs after build/test steps, including failures, and
+publishes numeric statistics plus allowlisted HTTP error codes and OpenDAL error
+kinds in the job summary and a 14-day JSON artifact. Raw logs, error messages,
+headers, URLs, and paths are not uploaded. An unknown category is deliberately
+retained rather than publishing unrecognized text. Missing logs/statistics are
+reported as unavailable, not zero errors. Diagnostic failures do not fail builds.
+
+Compare `cache_write_errors` with HTTP 429 (rate limiting), 403 (access), and
+409 / AlreadyExists (competing writes). Log-entry counts need not match final
+statistics exactly; the snapshot precedes action post steps. Existing cache
+behavior remains unchanged so the next run can diagnose the current backend.
+Use workflow_dispatch on the diagnostic branch to run Rust CI; pushing a branch
+other than main/dev does not trigger it automatically. The external-download
+workflow uses the same setup but need not be run for this investigation.

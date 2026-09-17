@@ -115,7 +115,7 @@ jobs:
         uses: ./.github/actions/cargo-sources
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: cargo xwin clippy
         # Check Windows cfg paths against the same sysroot as release builds.
@@ -123,6 +123,13 @@ jobs:
 
       - name: cargo xwin clippy (demo)
         run: cargo xwin clippy -p ltbox-gui --features demo --all-targets --locked --target x86_64-pc-windows-msvc
+
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
 
   cargo-deny:
     name: cargo-deny
@@ -209,7 +216,7 @@ jobs:
         uses: ./.github/actions/cargo-sources
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: Resolve release tag or commit
         id: meta
@@ -282,6 +289,13 @@ jobs:
             ${{ steps.stage.outputs.zip }}.sha256
           if-no-files-found: error
 
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+
   build-linux:
     needs: release-version
     name: Build linux_${{ matrix.arch }}
@@ -334,7 +348,7 @@ jobs:
           save: ${{ github.ref == 'refs/heads/main' && runner.arch == 'X64' }}
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: Resolve release tag or commit
         id: meta
@@ -388,6 +402,13 @@ jobs:
             ${{ steps.stage.outputs.tarball }}.sha256
           if-no-files-found: error
 
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+
   build-macos:
     needs: release-version
     name: Build macos_universal
@@ -420,7 +441,7 @@ jobs:
           save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: Resolve release tag or commit
         id: meta
@@ -461,6 +482,13 @@ jobs:
             ${{ steps.stage.outputs.tarball }}.sha256
           if-no-files-found: error
 
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+
   test-macos:
     # macOS test gate — distinct from the universal packaging job so validation
     # can run in parallel with the slower two-slice release build. Both Mac
@@ -493,7 +521,7 @@ jobs:
         uses: ./.github/actions/cargo-sources
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: cargo clippy (native macOS)
         # Lints the cfg(target_os = "macos") paths that the Windows-targeted
@@ -504,6 +532,13 @@ jobs:
 
       - name: cargo test --workspace
         run: cargo test --workspace --locked --target ${{ matrix.target }}
+
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
 
   test:
     # Cross-built .exes can't execute on the Linux build runners
@@ -546,7 +581,7 @@ jobs:
         run: python ci/cache_metrics.py finish dependency-cache-restore
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: cargo test --workspace
         run: python ci/cache_metrics.py run workspace-tests cargo test --workspace --locked
@@ -577,6 +612,13 @@ jobs:
           name: windows-cache-metrics
           path: ${{ runner.temp }}/cache-metrics/
           retention-days: 14
+
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
 
   test-linux:
     # Linux native test gate — distinct from the Windows test job
@@ -612,7 +654,7 @@ jobs:
         uses: ./.github/actions/cargo-sources
 
       - name: sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: ./.github/actions/sccache-setup
 
       - name: cargo clippy (native Linux)
         # Lints the cfg(target_os = "linux") paths that the Windows-targeted
@@ -621,6 +663,13 @@ jobs:
 
       - name: cargo test --workspace
         run: cargo test --workspace --locked
+
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
 
   release:
     name: Draft GitHub Release

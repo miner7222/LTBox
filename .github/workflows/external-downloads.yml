@@ -34,7 +34,7 @@ jobs:
       - uses: ./.github/actions/cargo-sources
         with:
           save: ${{ github.ref == 'refs/heads/main' }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: ./.github/actions/sccache-setup
       - name: Build and verify the test executable
         run: |
           cargo test -p ltbox-patch --lib --locked --no-run --message-format=json > root-test-build.json
@@ -45,6 +45,13 @@ jobs:
           path: root-test/
           if-no-files-found: error
           retention-days: 1
+
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
 
   root:
     needs: build-root-tests
@@ -99,7 +106,7 @@ jobs:
       - uses: ./.github/actions/cargo-sources
         with:
           save: ${{ github.ref == 'refs/heads/main' && runner.os == 'Windows' }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: ./.github/actions/sccache-setup
       - name: Fetch drivers without installing
         shell: bash
         run: |
@@ -117,3 +124,10 @@ jobs:
           name: download-other-${{ matrix.os }}
           path: '*-check.log'
           retention-days: 30
+
+      - name: Report compiler cache diagnostics
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/sccache-report
+        with:
+          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
