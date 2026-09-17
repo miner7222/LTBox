@@ -1,72 +1,76 @@
 # CI caching
 
-## Downloads and compilation
+## Rust CI: dependency artifacts
 
-The local `cargo-sources` action stores Cargo registry archives, registry index
-data, and Git objects. Its key uses the OS and root `Cargo.lock`, not the Rust
-compiler, CPU architecture, or flags. Cargo reconstructs extracted sources and
-Git checkouts. A designated main-branch writer fetches the complete lockfile on
-a miss; other jobs and pull requests restore without saving another copy.
+Build, test, and Clippy jobs use Swatinem/rust-cache with dependency target
+artifacts and Cargo sources. Workspace artifacts and installed Cargo tools are
+excluded. Each job clears RUSTC_WRAPPER: Rust CI no longer uses sccache for these
+compilation jobs. Do not add the separate cargo-sources action to these jobs;
+that would restore the same downloads twice.
 
-Linux x86_64 and macOS release-build jobs populate their OS caches. The weekly
-root build can also populate Linux sources, and the weekly non-root Windows job
-populates Windows sources. Compiler output remains in sccache. Do not share the
-target-specific xwin SDK caches across Windows target architectures.
+Keys keep release, test, and cross-Clippy outputs separate, including each
+architecture. rust-cache also keys on Rust/compiler environment and lockfiles.
+Apple jobs include an Xcode/SDK/clang fingerprint; Windows cross jobs include
+clang/lld and retain the separate target-specific cargo-xwin SDK cache. Avoid
+broad restore prefixes for xwin SDKs.
 
-Weekly root checks compile one lib test executable and share it through a
-one-day workflow artifact. The executable is selected from Cargo JSON and its
-exact ignored test is checked before upload, so renamed tests cannot silently
-produce a zero-test success. All eight providers still run independently. This
-artifact belongs to the current workflow run; it is not a cross-run binary cache.
-Downloaded provider APKs, modules, drivers, and application assets are never
-included in these caches.
+Main and the diagnostic branch ci/sccache-diagnostics may populate dependency
+caches. Other branches restore only. GitHub cache visibility is ref-scoped;
+merging these changes does not transfer the diagnostic branch's caches to main.
+Expect a new main cache warm-up. Do not cache downloaded firmware, provider
+payloads, drivers, or other external-download test payloads.
 
-## Windows dependency cache experiment
+## Measurements and results
 
-The native Windows test job additionally uses rust-cache for dependency build
-artifacts. Workspace artifacts and installed Cargo tools are excluded. This
-job retains rust-cache's own compiler/environment/lockfile key and source cache;
-it does not also restore the separate source-only cache. Only main writes it.
-Other build jobs continue to use sccache without a target archive.
+Per-job cache-metrics artifacts (14-day retention) and job summaries include:
 
-`windows-cache-metrics` artifacts (14-day retention) and the job summary record:
+- Exact target cache hit and restore duration.
+- Build, Clippy, workspace test, and demo phase durations where applicable.
+- Target bytes before pruning, which are NOT the compressed cache size.
 
-- Dependency cache restoration time, including rust-cache setup.
-- Workspace and demo test command duration and exit status.
-- Exact cache-hit status, raw sccache statistics, and repository cache usage
-  during the run (before the new target archive is saved).
-- Target size before rust-cache prunes it. This is **not** the compressed archive
-  size; post-job cache logs contain actual archive size and save time.
+Post-job logs provide compressed archive size and cleanup/save duration.
+Windows additionally snapshots repository cache usage. sccache.json records
+`enabled: false` when no compiler wrapper is used. Compare whole job duration,
+including restore and post steps, rather than compilation time alone.
 
-Compare repeated runs of the same commit and runner image after the cache is
-warm. Compare total job time, not just compilation, against the prior workflow.
-The baseline run `34700445610` had a 62.87% Rust sccache hit rate for Windows
-tests, 105 non-cacheable `crate-type` calls, and a 4m54s test build. That run used
-an older commit, so it is context rather than a controlled benchmark.
+The sequential experiment began with run 35189880119: direct sccache GHA writes
+had 808 successes and 2,574 failures, all HTTP 429. Run 35218455625 completed
+successfully with exact dependency cache hits in all ten compilation jobs.
+Representative warm measurements from that final run:
 
-If restore/save overhead outweighs the build savings, set `cache-targets` back
-to false and retain the measurements. Avoid enabling target archives on all
-matrix entries without measuring their impact on repository cache pressure.
-Existing caches are not deleted by this change.
+| Job | Restore | Main measured phase |
+|---|---:|---:|
+| Windows tests | 26.5s | workspace 121.7s; demo 65.1s |
+| Linux tests | 29.4s | Clippy 11.0s; tests 49.6s |
+| macOS arm64 tests | 19.8s | Clippy 20.2s; tests 66.1s |
+| macOS Intel tests | 45.1s | tests 111.8s |
+| macOS universal | 16.9s | build/package 331.6s |
+| Linux x64 / arm64 release | 6.8s / 9.8s | 138.5s / 123.0s |
+| Windows x64 / arm64 cross release | 8.1s / 5.9s | 123.3s / 139.6s |
+| Windows cross Clippy | 11.6s | default 9.6s; demo 5.4s |
 
-## sccache write diagnostics
+The ten initial compressed dependency archives total approximately 6.93 GiB.
+The repository cache usage snapshot remained close to 10 GiB, including older
+and other caches. Multiple lockfile versions and refs can cause eviction;
+these results do not guarantee long-term hit rates. No existing cache was
+manually deleted. Hosted-runner load and image differences limit comparisons
+between runs; each new configuration had a cold run and a same-commit warm run.
 
-All compiler-cache jobs use `.github/actions/sccache-setup`, pinning sccache to
-0.18.0. The GHA cache namespace includes the sccache version, even when
-`SCCACHE_GHA_VERSION` is set; review version upgrades as cold-cache events.
+## Weekly download contracts
 
-The setup action enables only `sccache::server` debug logging in a runner-temporary
-file. The report action runs after build/test steps, including failures, and
-publishes numeric statistics plus allowlisted HTTP error codes and OpenDAL error
-kinds in the job summary and a 14-day JSON artifact. Raw logs, error messages,
-headers, URLs, and paths are not uploaded. An unknown category is deliberately
-retained rather than publishing unrecognized text. Missing logs/statistics are
-reported as unavailable, not zero errors. Diagnostic failures do not fail builds.
+The external-downloads workflow was not executed or migrated in this experiment.
+It still uses the cargo-sources action (OS/lockfile-keyed Cargo archives, index,
+and Git objects), plus pinned sccache 0.18.0. Main-branch writers populate Linux
+sources from the root-contract build and Windows sources from the Windows job.
 
-Compare `cache_write_errors` with HTTP 429 (rate limiting), 403 (access), and
-409 / AlreadyExists (competing writes). Log-entry counts need not match final
-statistics exactly; the snapshot precedes action post steps. Existing cache
-behavior remains unchanged so the next run can diagnose the current backend.
-Use workflow_dispatch on the diagnostic branch to run Rust CI; pushing a branch
-other than main/dev does not trigger it automatically. The external-download
-workflow uses the same setup but need not be run for this investigation.
+Root contract checks compile one lib test executable and distribute it through
+a one-day artifact. ci/stage_root_test.py selects the exact Cargo JSON executable
+and verifies the ignored test exists before upload. Provider payloads are not
+cached, so the weekly checks continue to exercise real downloads.
+
+The sccache setup/report actions remain for these jobs. Private server logs are
+reduced to numeric counters and allowlisted HTTP/error categories in summaries
+and 14-day JSON artifacts. Raw logs, headers, URLs, and paths are not uploaded.
+Unknown categories and unavailable statistics are explicit. The GHA namespace
+includes sccache's version even when SCCACHE_GHA_VERSION is set, so version
+upgrades should be treated as cold-cache events.
