@@ -69,6 +69,9 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      RUSTC_WRAPPER: ""
+      CI_CACHE_LABEL: Windows cross clippy dependency cache
     steps:
       - uses: actions/checkout@v7
 
@@ -111,25 +114,50 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: xwin-${{ runner.os }}-${{ env.CARGO_XWIN_VERSION }}-x86_64-pc-windows-msvc-v2
 
-      - name: Cargo source cache
-        uses: ./.github/actions/cargo-sources
+      - name: Identify cross compiler for dependency cache
+        run: |
+          cross_tools="$( { clang --version; lld-link --version; } | sha256sum | cut -d ' ' -f 1)"
+          echo "CROSS_TOOLCHAIN_KEY=${cross_tools}" >> "${GITHUB_ENV}"
 
-      - name: sccache
-        uses: ./.github/actions/sccache-setup
+      - name: Start cache restore timer
+        run: python3 ci/cache_metrics.py start dependency-cache-restore
+
+      - name: Cross clippy dependency target cache
+        id: clippy-cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-cross-clippy-x86_64-v1
+          key: ${{ env.CROSS_TOOLCHAIN_KEY }}
+          cache-targets: true
+          cache-workspace-crates: false
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/sccache-diagnostics' }}
+
+      - name: Finish cache restore timer
+        run: python3 ci/cache_metrics.py finish dependency-cache-restore
 
       - name: cargo xwin clippy
         # Check Windows cfg paths against the same sysroot as release builds.
-        run: cargo xwin clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc
+        run: python3 ci/cache_metrics.py run clippy cargo xwin clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc
 
       - name: cargo xwin clippy (demo)
-        run: cargo xwin clippy -p ltbox-gui --features demo --all-targets --locked --target x86_64-pc-windows-msvc
+        run: python3 ci/cache_metrics.py run demo-clippy cargo xwin clippy -p ltbox-gui --features demo --all-targets --locked --target x86_64-pc-windows-msvc
 
-      - name: Report compiler cache diagnostics
+      - name: Record cross clippy cache experiment
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/sccache-report
+        env:
+          TARGET_CACHE_HIT: ${{ steps.clippy-cache.outputs.cache-hit }}
+        run: python3 ci/cache_metrics.py report target
+
+      - name: Upload cache measurements
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+          name: cross-clippy-cache-metrics
+          path: ${{ runner.temp }}/cache-metrics/
+          retention-days: 14
+
 
   cargo-deny:
     name: cargo-deny
