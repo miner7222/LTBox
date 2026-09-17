@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import time
@@ -35,9 +36,12 @@ def report(directory: Path, target: Path, cache_hit: str) -> None:
             "target_cache_exact_hit": cache_hit == "true", "phases": rows,
             "target_bytes_before_cache_pruning": target_bytes}
     record(directory, "summary", **data)
-    stats = subprocess.run(["sccache", "--show-stats", "--stats-format=json"],
-                           capture_output=True, text=True, check=False)
-    (directory / "sccache.json").write_text(stats.stdout, encoding="utf-8")
+    if os.getenv("RUSTC_WRAPPER") and shutil.which("sccache"):
+        stats = subprocess.run(["sccache", "--show-stats", "--stats-format=json"],
+                               capture_output=True, text=True, timeout=30, check=False)
+        (directory / "sccache.json").write_text(stats.stdout, encoding="utf-8")
+    else:
+        record(directory, "sccache", enabled=False)
     summary = os.getenv("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as output:

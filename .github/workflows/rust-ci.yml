@@ -550,6 +550,8 @@ jobs:
     name: Test (host x86_64)
     runs-on: windows-2025-vs2026
     timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: ""
     permissions:
       contents: read
       actions: read
@@ -574,14 +576,11 @@ jobs:
           shared-key: windows-host-test-v1
           cache-targets: true
           cache-workspace-crates: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/sccache-diagnostics' }}
           cache-bin: false
 
       - name: Finish cache restore timer
         run: python ci/cache_metrics.py finish dependency-cache-restore
-
-      - name: sccache
-        uses: ./.github/actions/sccache-setup
 
       - name: cargo test --workspace
         run: python ci/cache_metrics.py run workspace-tests cargo test --workspace --locked
@@ -612,13 +611,6 @@ jobs:
           name: windows-cache-metrics
           path: ${{ runner.temp }}/cache-metrics/
           retention-days: 14
-
-      - name: Report compiler cache diagnostics
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/sccache-report
-        with:
-          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
 
   test-linux:
     # Linux native test gate — distinct from the Windows test job
