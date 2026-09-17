@@ -174,6 +174,9 @@ jobs:
           - name: win_arm64
             target: aarch64-pc-windows-msvc
 
+    env:
+      RUSTC_WRAPPER: ""
+      CI_CACHE_LABEL: Windows cross release dependency cache
     steps:
       - uses: actions/checkout@v7
 
@@ -212,11 +215,27 @@ jobs:
           path: ~/.cache/cargo-xwin
           key: xwin-${{ runner.os }}-${{ env.CARGO_XWIN_VERSION }}-${{ matrix.target }}-v2
 
-      - name: Cargo source cache
-        uses: ./.github/actions/cargo-sources
+      - name: Identify cross compiler for dependency cache
+        run: |
+          cross_tools="$( { clang --version; lld-link --version; } | sha256sum | cut -d ' ' -f 1)"
+          echo "CROSS_TOOLCHAIN_KEY=${cross_tools}" >> "${GITHUB_ENV}"
 
-      - name: sccache
-        uses: ./.github/actions/sccache-setup
+      - name: Start cache restore timer
+        run: python3 ci/cache_metrics.py start dependency-cache-restore
+
+      - name: Windows cross dependency target cache
+        id: windows-cross-cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-cross-release-${{ matrix.target }}-v1
+          key: ${{ env.CROSS_TOOLCHAIN_KEY }}
+          cache-targets: true
+          cache-workspace-crates: false
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/sccache-diagnostics' }}
+
+      - name: Finish cache restore timer
+        run: python3 ci/cache_metrics.py finish dependency-cache-restore
 
       - name: Resolve release tag or commit
         id: meta
@@ -263,7 +282,7 @@ jobs:
           CC_aarch64_pc_windows_msvc: clang-cl
           CXX_aarch64_pc_windows_msvc: clang-cl
           AR_aarch64_pc_windows_msvc: llvm-lib
-        run: cargo xwin build --release --locked --target ${{ matrix.target }} -p ltbox-gui
+        run: python3 ci/cache_metrics.py run release-build cargo xwin build --release --locked --target ${{ matrix.target }} -p ltbox-gui
 
       - name: Stage artifact
         id: stage
@@ -289,12 +308,21 @@ jobs:
             ${{ steps.stage.outputs.zip }}.sha256
           if-no-files-found: error
 
-      - name: Report compiler cache diagnostics
+      - name: Record Windows cross cache experiment
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/sccache-report
+        env:
+          TARGET_CACHE_HIT: ${{ steps.windows-cross-cache.outputs.cache-hit }}
+        run: python3 ci/cache_metrics.py report target
+
+      - name: Upload cache measurements
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          artifact-name: sccache-${{ github.job }}-${{ strategy.job-index || '0' }}
+          name: windows-cross-${{ matrix.name }}-cache-metrics
+          path: ${{ runner.temp }}/cache-metrics/
+          retention-days: 14
+
 
   build-linux:
     needs: release-version
