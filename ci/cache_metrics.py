@@ -30,7 +30,7 @@ def measure(directory: Path, name: str, command: list[str]) -> int:
 def report(directory: Path, target: Path, cache_hit: str) -> None:
     rows = {path.stem: json.loads(path.read_text(encoding="utf-8"))
             for path in directory.glob("*.json")
-            if path.stem in {"dependency-cache-restore", "workspace-tests", "demo-tests"}}
+            if path.stem in {"dependency-cache-restore", "workspace-tests", "demo-tests", "release-build"}}
     target_bytes = sum(path.stat().st_size for path in target.rglob("*") if path.is_file())
     data = {"commit": os.getenv("GITHUB_SHA"), "run": os.getenv("GITHUB_RUN_ID"),
             "target_cache_exact_hit": cache_hit == "true", "phases": rows,
@@ -45,7 +45,7 @@ def report(directory: Path, target: Path, cache_hit: str) -> None:
     summary = os.getenv("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as output:
-            output.write("\n### Windows dependency cache experiment\n\n")
+            output.write("\n### " + os.getenv("CI_CACHE_LABEL", "Windows dependency cache experiment") + "\n\n")
             output.write(f"Exact cache hit: **{cache_hit == 'true'}**\n\n")
             output.write("| Phase | Seconds |\n|---|---:|\n")
             for name, row in rows.items():
