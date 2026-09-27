@@ -478,6 +478,14 @@ impl App {
         if demo::is_active(&app) {
             return (app, win);
         }
+        let mut app = app;
+        let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        if let Err(error) = app
+            .log_history
+            .persist_to(&log_dir().join("sessions"), &stamp)
+        {
+            tracing::warn!("session transcript not persisted: {error}");
+        }
         let driver_check = Task::perform(
             async {
                 tokio::task::spawn_blocking(ltbox_device::driver::check_required_drivers)

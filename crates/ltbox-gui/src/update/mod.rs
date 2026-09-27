@@ -590,7 +590,7 @@ impl App {
             }
             Message::ClearLog => {
                 self.log_lines.clear();
-                self.log_history = crate::log_history::LogHistory::default();
+                self.log_history = self.log_history.cleared();
                 self.rebuild_log_editor();
             }
             Message::SaveLog => {

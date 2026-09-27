@@ -482,6 +482,15 @@ fn main() -> iced::Result {
     result
 }
 
+/// `<config>/ltbox/logs`, or `<temp>/ltbox-logs` when the config directory
+/// is unknown or not UTF-8. Holds `ltbox.log` and the `sessions/` transcripts.
+pub(crate) fn log_dir() -> std::path::PathBuf {
+    dirs::config_dir()
+        .map(|d| d.join("ltbox").join("logs"))
+        .filter(|d| d.to_str().is_some())
+        .unwrap_or_else(|| std::env::temp_dir().join("ltbox-logs"))
+}
+
 /// Default `RUST_LOG` directives for the log file.
 ///
 /// * `adb_client` logs a line per connect, and the dashboard reconnects every
@@ -505,12 +514,8 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_subscriber::{EnvFilter, fmt};
 
     // Fall back to `%TEMP%\ltbox-logs` on non-UTF-8 APPDATA paths.
-    let log_dir: Utf8PathBuf = dirs::config_dir()
-        .and_then(|d| Utf8PathBuf::from_path_buf(d.join("ltbox").join("logs")).ok())
-        .unwrap_or_else(|| {
-            Utf8PathBuf::from_path_buf(std::env::temp_dir().join("ltbox-logs"))
-                .unwrap_or_else(|_| Utf8PathBuf::from("ltbox-logs"))
-        });
+    let log_dir: Utf8PathBuf =
+        Utf8PathBuf::from_path_buf(log_dir()).unwrap_or_else(|_| Utf8PathBuf::from("ltbox-logs"));
     if std::fs::create_dir_all(&log_dir).is_err() {
         return None;
     }
