@@ -616,6 +616,9 @@ impl App {
         if self.current_view == View::SystemUpdate {
             return self.view_sysupdate_wizard();
         }
+        if self.current_view == View::Debloat {
+            return self.view_debloat_wizard();
+        }
         if self.current_view == View::Unroot {
             return self.view_unroot_wizard();
         }

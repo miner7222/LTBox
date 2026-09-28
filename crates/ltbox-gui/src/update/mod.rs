@@ -13,6 +13,7 @@ mod device_poll_tests;
 mod poll_gate_tests;
 
 mod advanced;
+mod debloat;
 mod device_poll_gate;
 mod flash;
 mod konabess;
@@ -275,6 +276,13 @@ impl App {
                 {
                     self.sysupdate.reset();
                 }
+                if v == View::Debloat
+                    && !busy
+                    && !self.debloat.is_in_exec()
+                    && !self.debloat.is_on_confirm_step()
+                {
+                    self.debloat.reset();
+                }
                 if v == View::Unroot
                     && !busy
                     && !self.unroot.is_in_exec()
@@ -410,6 +418,7 @@ impl App {
                 self.region_target_popup_open = false;
             }
             Message::Sys(m) => return self.update_sys(m),
+            Message::Debloat(m) => return self.update_debloat(m),
             Message::Root(m) => return self.update_root(m),
             Message::Unroot(m) => return self.update_unroot(m),
             Message::Adv(m) => return self.update_adv(m),
@@ -518,6 +527,7 @@ impl App {
                     View::Root => self.root.reset(),
                     View::Flash => self.flash.reset(),
                     View::SystemUpdate => self.sysupdate.reset(),
+                    View::Debloat => self.debloat.reset(),
                     View::Unroot => self.unroot.reset(),
                     View::KonaBess => {
                         self.konabess.reset();

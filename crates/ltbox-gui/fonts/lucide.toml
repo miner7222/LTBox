@@ -11,6 +11,7 @@ help_context = "circle-question-mark"
 nav_dashboard     = "layout-dashboard"
 nav_flash         = "zap"
 nav_system_update = "cloud-download"
+nav_debloat       = "package-minus"
 nav_root          = "lock-open"
 nav_unroot        = "lock"
 nav_konabess      = "gpu"
@@ -84,6 +85,10 @@ tile_wipe         = "shredder"
 tile_update_off   = "bell-off"
 tile_update_on    = "bell"
 tile_rescue       = "life-buoy"
+
+# Debloat wizard cards
+tile_debloat_remove  = "package-x"
+tile_debloat_restore = "archive-restore"
 
 # Recents label (12 px)
 history           = "history"

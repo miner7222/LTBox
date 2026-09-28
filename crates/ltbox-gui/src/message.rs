@@ -2,11 +2,11 @@
 //! sub-message enums it wraps, dispatched by `App::update`.
 
 use crate::{
-    AdvAction, ConfirmField, DataMode, DevicePollResult, DeviceRegion, DumpPartsScanResult, Family,
-    FirmwareIdentity, FlashPartsScanResult, FlashTarget, GpuCellKey, Language,
-    ManualRollbackEditor, NightlySource, PartsSortColumn, PickerTarget, Provider, RebootTarget,
-    RescueRegion, RollbackSetting, RootMode, SkrootFlavor, SysUpdateAction, ThemeChoice, ThemeSeed,
-    UnrootType, VerChoice, View,
+    AdvAction, ConfirmField, DataMode, DebloatAction, DebloatPreset, DebloatScanResult,
+    DevicePollResult, DeviceRegion, DumpPartsScanResult, Family, FirmwareIdentity,
+    FlashPartsScanResult, FlashTarget, GpuCellKey, Language, ManualRollbackEditor, NightlySource,
+    PartsSortColumn, PickerTarget, Provider, RebootTarget, RescueRegion, RollbackSetting, RootMode,
+    SkrootFlavor, SysUpdateAction, ThemeChoice, ThemeSeed, UnrootType, VerChoice, View,
 };
 
 #[derive(Debug, Clone)]
@@ -186,6 +186,7 @@ pub(crate) enum Message {
     Root(RootMsg),
     Unroot(UnrootMsg),
     Sys(SysMsg),
+    Debloat(DebloatMsg),
     Adv(AdvMsg),
     KonaBess(KonaBessMsg),
     FlashParts(FlashPartsMsg),
@@ -358,6 +359,18 @@ pub(crate) enum SysMsg {
     SysRescueFolderChosen(Option<String>),
     SysRescueRegion(RescueRegion),
     SysRescueRegionPopupDismiss,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DebloatMsg {
+    Action(DebloatAction),
+    Next,
+    Back,
+    Toggle(String),
+    Preset(DebloatPreset),
+    ScanDone(DebloatScanResult),
+    ExecStart,
+    ExecDone(Vec<String>),
 }
 
 #[derive(Debug, Clone)]

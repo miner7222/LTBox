@@ -55,6 +55,7 @@ The interface supports **English, Korean, Simplified Chinese, Russian, Japanese,
 | Flash firmware | Prepare and flash firmware, with model-specific region and rollback handling and data-wipe choices. |
 | Root and unroot | Patch supported boot images with a selected root provider; restore backed-up stock images and associated verification metadata. |
 | Manage system updates | Disable or re-enable OTA updates; use boot recovery on supported devices after a region-converted OTA fails to boot. |
+| Debloat | Remove or restore preinstalled apps for the current user from a reviewed per-model list (TB321FU for now). |
 | Tune the GPU | Edit clock and voltage tables with KonaBess and rebuild the affected AVB images on supported models. |
 | Inspect and reboot | View device information and reboot into Android, recovery, bootloader, fastbootd, or EDL as supported by the current connection. |
 

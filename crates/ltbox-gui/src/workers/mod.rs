@@ -1,6 +1,7 @@
 //! Off-UI-thread worker functions, one module per operation.
 
 pub(crate) mod advanced;
+pub(crate) mod debloat;
 pub(crate) mod edl_transition;
 pub(crate) mod flash;
 pub(crate) mod konabess;

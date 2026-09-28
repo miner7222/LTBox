@@ -136,6 +136,7 @@ impl App {
         match self.current_view {
             View::Flash => self.flash.is_in_exec(),
             View::SystemUpdate => self.sysupdate.is_in_exec(),
+            View::Debloat => self.debloat.is_in_exec(),
             View::Root => self.root.is_in_exec(),
             View::Unroot => self.unroot.is_in_exec(),
             View::KonaBess => self.konabess.step >= 3,

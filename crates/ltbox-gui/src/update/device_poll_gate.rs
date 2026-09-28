@@ -17,6 +17,7 @@ pub(super) fn defers_message(app: &App, message: &Message) -> bool {
                     1
                 }
         }
+        Message::Debloat(DebloatMsg::Next) => matches!(app.debloat.step, 0 | 2),
         Message::FlashParts(FlashPartsMsg::FlashPartsNext) => app.flash_parts.step != 1,
         Message::FlashParts(FlashPartsMsg::FlashPartsBack) => app.flash_parts.step == 1,
         Message::FlashParts(FlashPartsMsg::FlashPartsClose) => {
@@ -46,6 +47,7 @@ pub(super) fn defers_message(app: &App, message: &Message) -> bool {
                 | Message::Root(RootMsg::RootExecStart)
                 | Message::Unroot(UnrootMsg::UnrootExecStart)
                 | Message::Sys(SysMsg::SysExecStart)
+                | Message::Debloat(DebloatMsg::ExecStart)
                 | Message::Adv(AdvMsg::AdvDetectArbExecStart)
                 | Message::FlashParts(
                     FlashPartsMsg::FlashPartsScanStart | FlashPartsMsg::FlashPartsExecStart

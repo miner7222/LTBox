@@ -7,7 +7,7 @@
 //! state machine, the device poll subscription, persisted settings,
 //! and the active palette.
 //!
-//! Wizards: Flash · SystemUpdate · Root · Unroot · KonaBess · Reboot · Advanced.
+//! Wizards: Flash · SystemUpdate · Debloat · Root · Unroot · KonaBess · Reboot · Advanced.
 //! Sub-modules: [`theme`] M3 tokens · [`settings_store`] `settings.json`
 //! in the user config dir · [`stdout_tap`] native-crate log capture.
 
@@ -19,6 +19,7 @@ mod arb;
 mod arb_overlay;
 mod backup;
 mod country_flags;
+mod debloat;
 #[cfg(feature = "demo")]
 mod demo;
 #[cfg(feature = "demo")]
@@ -91,6 +92,7 @@ pub(crate) use view::components::*;
 pub(crate) use view::styles::*;
 pub(crate) use widgets::*;
 pub(crate) use workers::advanced::*;
+pub(crate) use workers::debloat::*;
 pub(crate) use workers::edl_transition::*;
 pub(crate) use workers::flash::*;
 pub(crate) use workers::konabess::*;

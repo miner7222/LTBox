@@ -137,6 +137,7 @@ impl Scene {
             "view:root" => Some(Self::View(View::Root)),
             "view:unroot" => Some(Self::View(View::Unroot)),
             "view:sysupdate" => Some(Self::View(View::SystemUpdate)),
+            "view:debloat" => Some(Self::View(View::Debloat)),
             "view:konabess" => Some(Self::View(View::KonaBess)),
             "view:konabess-table" => Some(Self::KonaBessTable),
             "view:reboot" => Some(Self::View(View::Reboot)),
@@ -778,6 +779,7 @@ mod tests {
             (Scene::parse("view:root").unwrap(), View::Root),
             (Scene::parse("view:unroot").unwrap(), View::Unroot),
             (Scene::parse("view:sysupdate").unwrap(), View::SystemUpdate),
+            (Scene::parse("view:debloat").unwrap(), View::Debloat),
             (Scene::parse("view:konabess").unwrap(), View::KonaBess),
             (Scene::parse("view:reboot").unwrap(), View::Reboot),
             (Scene::parse("view:advanced").unwrap(), View::Advanced),
@@ -811,6 +813,7 @@ mod tests {
                 View::Root => assert_eq!(app.root.step, 0),
                 View::Unroot => assert_eq!(app.unroot.step, 0),
                 View::SystemUpdate => assert_eq!(app.sysupdate.step, 0),
+                View::Debloat => assert_eq!(app.debloat.step, 0),
                 View::KonaBess => {
                     assert_eq!(app.konabess.step, 0);
                     assert!(app.konabess.loader_path.is_none());

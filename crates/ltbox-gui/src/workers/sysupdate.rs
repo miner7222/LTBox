@@ -7,7 +7,7 @@ use crate::{
 };
 use ltbox_core::tr_args;
 
-fn package_reinstall_succeeded(output: &str, package: &str) -> bool {
+pub(crate) fn package_reinstall_succeeded(output: &str, package: &str) -> bool {
     let prefix = format!("Package {package} installed for user: ");
     output.lines().any(|line| {
         line.trim()

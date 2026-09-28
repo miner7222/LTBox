@@ -47,6 +47,8 @@ pub(crate) enum OperationPhaseKind {
     Unroot,
     SysUpdateDisable,
     SysUpdateEnable,
+    DebloatRemove,
+    DebloatRestore,
     BootRecovery,
     ChangeCountry,
     DetectArb,
@@ -90,6 +92,8 @@ impl OperationPhaseKind {
             Self::KonaBess => Some((&[2, 3, 4, 5, 6], 0.8)),
             Self::SysUpdateDisable
             | Self::SysUpdateEnable
+            | Self::DebloatRemove
+            | Self::DebloatRestore
             | Self::OfflineConvertXml
             | Self::RegionConversion
             | Self::PatchArb
@@ -142,7 +146,14 @@ impl OperationPhaseKind {
             | (Self::FlashPhysical, 0..=2)
             | (Self::DumpPhysical, 0..=3)
             | (Self::KonaBess, 1..=5) => Edl,
-            (Self::Root, 7) | (Self::SysUpdateDisable | Self::SysUpdateEnable, _) => Adb,
+            (Self::Root, 7)
+            | (
+                Self::SysUpdateDisable
+                | Self::SysUpdateEnable
+                | Self::DebloatRemove
+                | Self::DebloatRestore,
+                _,
+            ) => Adb,
             (Self::DetectArb, 0..=1) => Fastboot,
             (Self::BootRecovery | Self::KonaBess, 0) => Current,
             (Self::Flash, 8)
@@ -175,6 +186,8 @@ impl OperationPhaseKind {
             Self::Unroot,
             Self::SysUpdateDisable,
             Self::SysUpdateEnable,
+            Self::DebloatRemove,
+            Self::DebloatRestore,
             Self::BootRecovery,
             Self::ChangeCountry,
             Self::DetectArb,
@@ -250,6 +263,8 @@ impl OperationPhaseKind {
                 "op_sys_enable_phase_policy",
                 "op_sys_enable_phase_packages",
             ],
+            Self::DebloatRemove => &["op_sys_phase_adb", "op_debloat_remove_phase_packages"],
+            Self::DebloatRestore => &["op_sys_phase_adb", "op_debloat_restore_phase_packages"],
             Self::BootRecovery => &[
                 "op_rescue_phase_1",
                 "op_rescue_phase_2",

@@ -1,0 +1,241 @@
+{
+  "models": [
+    "TB321FU"
+  ],
+  "packages": [
+    {
+      "id": "com.ss.android.ugc.aweme",
+      "label": "Douyin",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "net.huanci.hsjpro",
+      "label": "Huashijie Pro",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.qiyi.video.pad",
+      "label": "iQIYI HD",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.smile.gifmaker",
+      "label": "Kuaishou",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.lenovo.legionzone",
+      "label": "Legion Zone",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.tblenovo.center",
+      "label": "Lenovo Center",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.lenovo.club.app",
+      "label": "Lenovo Club",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.lenovo.minigamelauncher",
+      "label": "Lenovo Mini Games",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.motorola.mobiledesktop",
+      "label": "Motorola Mobile Desktop",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.newskyer.draw",
+      "label": "Newskyer Draw",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.tencent.qqmusic",
+      "label": "QQ Music",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.sohu.inputmethod.sogou.oem",
+      "label": "Sogou Keyboard",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "io.moreless.tide",
+      "label": "Tide",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.sina.weibo",
+      "label": "Weibo",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "cn.wps.moffice_eng",
+      "label": "WPS Office",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.youku.phone",
+      "label": "Youku",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calculator",
+      "label": "ZUI Calculator",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar",
+      "label": "ZUI Calendar",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.avengers",
+      "label": "ZUI Calendar theme: Avengers",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.blue",
+      "label": "ZUI Calendar theme: Blue",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.golden",
+      "label": "ZUI Calendar theme: Golden",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.grace",
+      "label": "ZUI Calendar theme: Grace",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.mains",
+      "label": "ZUI Calendar theme: Mains",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.mostbeautiful",
+      "label": "ZUI Calendar theme: Most Beautiful",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.paintingr",
+      "label": "ZUI Calendar theme: Painting",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.pink",
+      "label": "ZUI Calendar theme: Pink",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.superhero",
+      "label": "ZUI Calendar theme: Superhero",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.calendar.overlay.thin",
+      "label": "ZUI Calendar theme: Thin",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.deskclock",
+      "label": "ZUI Clock",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.gallery",
+      "label": "ZUI Gallery",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.notes",
+      "label": "ZUI Notes",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.recorder",
+      "label": "ZUI Recorder",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.weather",
+      "label": "ZUI Weather",
+      "method": "uninstall",
+      "recommended": true
+    },
+    {
+      "id": "com.lenovo.leos.cloud.sync",
+      "label": "Lenovo Cloud Sync",
+      "method": "disable",
+      "recommended": true
+    },
+    {
+      "id": "com.lenovo.menu_assistant.hd",
+      "label": "Lenovo Menu Assistant",
+      "method": "disable",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.browser",
+      "label": "ZUI Browser",
+      "method": "disable",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.clone",
+      "label": "ZUI Clone",
+      "method": "disable",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.contacts",
+      "label": "ZUI Contacts",
+      "method": "disable",
+      "recommended": true
+    },
+    {
+      "id": "com.zui.filemanager",
+      "label": "ZUI File Manager",
+      "method": "disable",
+      "recommended": false
+    }
+  ]
+}

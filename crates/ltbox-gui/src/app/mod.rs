@@ -107,6 +107,7 @@ pub(crate) struct App {
     pub(crate) root: RootWizard,
     pub(crate) flash: FlashWizard,
     pub(crate) sysupdate: SysUpdateWizard,
+    pub(crate) debloat: DebloatWizard,
     pub(crate) unroot: UnrootWizard,
     /// Staged path for the pending advanced action — replayed into the
     /// exec path on Start so no second dialog fires.
@@ -371,6 +372,7 @@ impl Default for App {
             root: RootWizard::default(),
             flash: FlashWizard::default(),
             sysupdate: SysUpdateWizard::default(),
+            debloat: DebloatWizard::default(),
             unroot: UnrootWizard::default(),
             adv_confirm_path: None,
             adv_wizard: AdvWizard::default(),

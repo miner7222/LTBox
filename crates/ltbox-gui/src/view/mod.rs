@@ -5,6 +5,7 @@ mod advanced;
 mod chrome;
 pub(crate) mod components;
 mod dashboard;
+mod debloat;
 mod flash;
 mod konabess;
 mod parts;

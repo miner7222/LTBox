@@ -15,6 +15,7 @@ use ltbox_patch::konabess::{
 };
 
 mod advanced;
+mod debloat;
 mod flash;
 mod konabess;
 mod partitions;
@@ -25,6 +26,7 @@ mod sysupdate;
 mod unroot;
 
 pub(crate) use advanced::*;
+pub(crate) use debloat::*;
 pub(crate) use flash::*;
 pub(crate) use konabess::*;
 pub(crate) use partitions::*;
