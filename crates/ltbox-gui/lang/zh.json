@@ -173,6 +173,8 @@
   "dual_usb_help_side_label": "侧边端口 · 不可用",
   "dual_usb_help_title": "应使用哪个 USB-C 端口",
   "dump_parts_col_size": "容量",
+  "dump_parts_footer_counts": "分区 {total} 个 · 已选 {selected}",
+  "dump_parts_footer_size": "转储容量 {size}",
   "dump_parts_select_title": "选择要转储的分区",
   "dump_parts_step_dump": "转储",
   "dump_parts_step_select": "选择",

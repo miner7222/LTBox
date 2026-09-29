@@ -173,6 +173,8 @@
   "dual_usb_help_side_label": "Side port · Do not use",
   "dual_usb_help_title": "Which USB-C port to use",
   "dump_parts_col_size": "Size",
+  "dump_parts_footer_counts": "{total} partitions · Selected {selected}",
+  "dump_parts_footer_size": "Dump size {size}",
   "dump_parts_select_title": "Select Partitions to Dump",
   "dump_parts_step_dump": "Dump",
   "dump_parts_step_select": "Select",

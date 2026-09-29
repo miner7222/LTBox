@@ -173,6 +173,8 @@
   "dual_usb_help_side_label": "側面ポート · 使用不可",
   "dual_usb_help_title": "使用するUSB-Cポート",
   "dump_parts_col_size": "サイズ",
+  "dump_parts_footer_counts": "パーティション {total} 件 · 選択 {selected}",
+  "dump_parts_footer_size": "ダンプサイズ {size}",
   "dump_parts_select_title": "ダンプするパーティションを選択",
   "dump_parts_step_dump": "ダンプ",
   "dump_parts_step_select": "選択",

@@ -173,6 +173,8 @@
   "dual_usb_help_side_label": "Сбоку · Нельзя",
   "dual_usb_help_title": "Какой порт USB-C использовать",
   "dump_parts_col_size": "Размер",
+  "dump_parts_footer_counts": "{total} разд. · Выбрано {selected}",
+  "dump_parts_footer_size": "Объём дампа {size}",
   "dump_parts_select_title": "Выбор разделов для дампа",
   "dump_parts_step_dump": "Дамп",
   "dump_parts_step_select": "Выбор",

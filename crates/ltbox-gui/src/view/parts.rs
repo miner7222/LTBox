@@ -411,19 +411,16 @@ impl App {
         .into()
     }
 
-    /// Shared frame for the partition / physical-storage select tables.
+    /// Shared frame for the physical-storage select tables.
     fn select_step_frame<'a>(
         &'a self,
-        search: Option<Element<'a, Message>>,
         list: iced::widget::Column<'a, Message>,
     ) -> Element<'a, Message> {
         let scrolled = scrollable(list)
             .style(m3_scrollable_style)
             .height(Length::Fill)
             .width(Length::Fill);
-        let col = column![]
-            .push(search)
-            .push(scrolled)
+        let col = column![scrolled,]
             .spacing(10.0)
             .padding(20.0)
             .width(Length::Fill)
@@ -434,7 +431,8 @@ impl App {
             .into()
     }
 
-    fn flash_parts_select_frame<'a>(
+    /// Shared frame for the partition select tables: search, table, totals.
+    fn parts_table_frame<'a>(
         &'a self,
         search: Element<'a, Message>,
         list: iced::widget::Column<'a, Message>,
@@ -687,7 +685,7 @@ impl App {
         let search = self.parts_search_field(&self.flash_parts.search, |query| {
             Message::FlashParts(FlashPartsMsg::FlashPartsSearchInput(query))
         });
-        self.flash_parts_select_frame(search, list, footer.into())
+        self.parts_table_frame(search, list, footer.into())
     }
 
     pub(crate) fn flash_parts_confirm_step(&self) -> Element<'_, Message> {
@@ -935,10 +933,36 @@ impl App {
             list = list.push(self.parts_search_empty_row());
         }
 
+        // Selected rows the search hides still get dumped, so the totals
+        // always cover every row.
+        let selected = self.dump_parts.rows.iter().filter(|row| row.selected);
+        let (selected_count, selected_size) = selected
+            .fold((0_usize, 0_u64), |(count, size), row| {
+                (count + 1, size.saturating_add(row.size_bytes))
+            });
+        let footer = row![
+            text(tr_args!(
+                "dump_parts_footer_counts",
+                total = self.dump_parts.rows.len().to_string(),
+                selected = selected_count.to_string(),
+            ))
+            .size(12.0),
+            Space::new().width(Length::Fill),
+            text(tr_args!(
+                "dump_parts_footer_size",
+                size = format_bytes_auto(selected_size),
+            ))
+            .size(12.0),
+        ]
+        .spacing(12)
+        .padding([12.0, 4.0])
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center);
+
         let search = self.parts_search_field(&self.dump_parts.search, |query| {
             Message::DumpParts(DumpPartsMsg::DumpPartsSearchInput(query))
         });
-        self.select_step_frame(Some(search), list)
+        self.parts_table_frame(search, list, footer.into())
     }
 
     pub(crate) fn view_dump_phys_wizard(&self) -> Element<'_, Message> {
@@ -1069,7 +1093,7 @@ impl App {
             list = list.push(data_row);
         }
 
-        self.select_step_frame(None, list)
+        self.select_step_frame(list)
     }
 
     pub(crate) fn view_flash_phys_wizard(&self) -> Element<'_, Message> {
@@ -1236,7 +1260,7 @@ impl App {
             list = list.push(data_row);
         }
 
-        self.select_step_frame(None, list)
+        self.select_step_frame(list)
     }
 
     pub(crate) fn flash_phys_confirm_step(&self) -> Element<'_, Message> {

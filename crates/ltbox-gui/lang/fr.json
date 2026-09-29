@@ -173,6 +173,8 @@
   "dual_usb_help_side_label": "Port latéral · Ne pas utiliser",
   "dual_usb_help_title": "Quel port USB-C utiliser",
   "dump_parts_col_size": "Taille",
+  "dump_parts_footer_counts": "{total} partitions · Sélection {selected}",
+  "dump_parts_footer_size": "Taille à extraire {size}",
   "dump_parts_select_title": "Sélectionner les partitions à extraire",
   "dump_parts_step_dump": "Extraction",
   "dump_parts_step_select": "Sélection",

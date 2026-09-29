@@ -173,6 +173,8 @@
   "dual_usb_help_side_label": "측면 · 불가",
   "dual_usb_help_title": "사용할 USB-C 포트",
   "dump_parts_col_size": "용량",
+  "dump_parts_footer_counts": "파티션 {total}개 · 선택 {selected}",
+  "dump_parts_footer_size": "덤프 용량 {size}",
   "dump_parts_select_title": "덤프할 파티션 선택",
   "dump_parts_step_dump": "덤프",
   "dump_parts_step_select": "선택",
