@@ -428,6 +428,8 @@ pub(crate) enum FlashPartsMsg {
     FlashPartsExecDone(Vec<String>),
     /// Header click in the Select-step table.
     FlashPartsSortBy(PartsSortColumn),
+    /// Select-step search field edit; filters the table as the user types.
+    FlashPartsSearchInput(String),
 }
 
 #[derive(Debug, Clone)]
@@ -446,8 +448,11 @@ pub(crate) enum DumpPartsMsg {
     DumpPartsExecDone(Vec<String>),
     /// Header click in the Select-step table.
     DumpPartsSortBy(PartsSortColumn),
-    /// Header checkbox: select-all when any unselected, otherwise clear.
+    /// Header checkbox: select every visible row when any is unselected,
+    /// otherwise clear the visible rows.
     DumpPartsToggleAll,
+    /// Select-step search field edit; filters the table as the user types.
+    DumpPartsSearchInput(String),
 }
 
 #[derive(Debug, Clone)]

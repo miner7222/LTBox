@@ -960,6 +960,8 @@
   "ota_popup_title": "펌웨어 업데이트",
   "ota_popup_to": "신규",
   "ota_popup_unavailable": "OTA 없음",
+  "parts_search_no_match": "일치하는 파티션 없음",
+  "parts_search_placeholder": "파티션 검색",
   "phys_col_storage": "저장소",
   "phys_select_title": "물리 저장소 선택",
   "phys_step_select": "선택",

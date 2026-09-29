@@ -960,6 +960,8 @@
   "ota_popup_title": "固件更新",
   "ota_popup_to": "目标版本",
   "ota_popup_unavailable": "暂无 OTA",
+  "parts_search_no_match": "没有匹配的分区",
+  "parts_search_placeholder": "搜索分区",
   "phys_col_storage": "存储",
   "phys_select_title": "选择物理存储",
   "phys_step_select": "选择",

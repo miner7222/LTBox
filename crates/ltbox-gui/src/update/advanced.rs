@@ -239,6 +239,7 @@ impl App {
                 self.dump_parts.scanning = true;
                 self.dump_parts.scan_error = None;
                 self.dump_parts.rows.clear();
+                self.dump_parts.search.clear();
                 self.begin_op(View::Advanced);
                 self.error_msg = None;
                 let conn = self.device.connection;
@@ -282,12 +283,11 @@ impl App {
                 Task::none()
             }
             DumpPartsMsg::DumpPartsToggleAll => {
-                let all_selected = !self.dump_parts.rows.is_empty()
-                    && self.dump_parts.rows.iter().all(|r| r.selected);
-                let target = !all_selected;
-                for r in self.dump_parts.rows.iter_mut() {
-                    r.selected = target;
-                }
+                self.dump_parts.toggle_visible();
+                Task::none()
+            }
+            DumpPartsMsg::DumpPartsSearchInput(query) => {
+                self.dump_parts.search = query;
                 Task::none()
             }
             DumpPartsMsg::DumpPartsSelectFolder => {
@@ -437,6 +437,7 @@ impl App {
                 self.flash_parts.scanning = true;
                 self.flash_parts.scan_error = None;
                 self.flash_parts.rows.clear();
+                self.flash_parts.search.clear();
                 let conn = self.device.connection;
                 self.log_push(format!(
                     "[FlashParts] {}",
@@ -475,6 +476,10 @@ impl App {
             }
             FlashPartsMsg::FlashPartsSortBy(col) => {
                 self.flash_parts.toggle_sort(col);
+                Task::none()
+            }
+            FlashPartsMsg::FlashPartsSearchInput(query) => {
+                self.flash_parts.search = query;
                 Task::none()
             }
             FlashPartsMsg::FlashPartsExecStart => {

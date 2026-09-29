@@ -112,6 +112,13 @@ mod flash_part_row_tests {
     }
 }
 
+/// Live table filter: case-insensitive substring match on the partition
+/// label. A blank query matches every row.
+pub(crate) fn partition_label_matches(label: &str, query: &str) -> bool {
+    let query = query.trim();
+    query.is_empty() || label.to_lowercase().contains(&query.to_lowercase())
+}
+
 /// Column the partition table is currently sorted by. Header click
 /// fires `*SortBy(col)`; clicking the active column toggles direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -145,6 +152,8 @@ pub(crate) struct FlashPartsWizard {
     /// so initial layout matches the device's GPT order well enough
     /// for LUN-then-label browsing.
     pub(crate) sort_desc: bool,
+    /// Select-step table filter; hides rows without changing their state.
+    pub(crate) search: String,
 }
 
 pub(crate) const FLASH_PARTS_STEPS: &[&str] = &[
@@ -155,6 +164,15 @@ pub(crate) const FLASH_PARTS_STEPS: &[&str] = &[
 ];
 
 impl FlashPartsWizard {
+    /// Rows the table shows under the current search, with their index in
+    /// `rows` so row messages keep addressing the right entry.
+    pub(crate) fn visible_rows(&self) -> impl Iterator<Item = (usize, &FlashPartRow)> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| partition_label_matches(&row.label, &self.search))
+    }
+
     pub(crate) fn active_rows(&self) -> Vec<FlashPartRow> {
         self.rows
             .iter()
@@ -282,6 +300,8 @@ pub(crate) struct DumpPartsWizard {
     pub(crate) entry_connection: Option<ConnectionStatus>,
     pub(crate) sort_col: PartsSortColumn,
     pub(crate) sort_desc: bool,
+    /// Select-step table filter; hides rows without changing their selection.
+    pub(crate) search: String,
 }
 
 pub(crate) const DUMP_PARTS_STEPS: &[&str] = &[
@@ -308,6 +328,32 @@ impl DumpPartsWizard {
     }
     pub(crate) fn selected_rows(&self) -> Vec<DumpPartRow> {
         self.rows.iter().filter(|r| r.selected).cloned().collect()
+    }
+
+    /// Rows the table shows under the current search, with their index in
+    /// `rows` so row messages keep addressing the right entry.
+    pub(crate) fn visible_rows(&self) -> impl Iterator<Item = (usize, &DumpPartRow)> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| partition_label_matches(&row.label, &self.search))
+    }
+
+    /// Header checkbox state: every visible row is selected.
+    pub(crate) fn all_visible_selected(&self) -> bool {
+        let mut visible = self.visible_rows().peekable();
+        visible.peek().is_some() && visible.all(|(_, row)| row.selected)
+    }
+
+    /// Header checkbox: select every visible row, or clear them when all are
+    /// already selected. Rows hidden by the search keep their selection.
+    pub(crate) fn toggle_visible(&mut self) {
+        let target = !self.all_visible_selected();
+        for row in self.rows.iter_mut() {
+            if partition_label_matches(&row.label, &self.search) {
+                row.selected = target;
+            }
+        }
     }
 
     pub(crate) fn apply_sort(&mut self) {
@@ -339,5 +385,79 @@ impl DumpPartsWizard {
             self.sort_desc = false;
         }
         self.apply_sort();
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn dump_row(label: &str, selected: bool) -> DumpPartRow {
+        DumpPartRow {
+            lun: 0,
+            label: label.to_string(),
+            start_sector: 0,
+            num_sectors: 1,
+            size_bytes: 512,
+            selected,
+        }
+    }
+
+    #[test]
+    fn label_search_is_trimmed_case_insensitive_substring() {
+        assert!(partition_label_matches("boot_a", ""));
+        assert!(partition_label_matches("boot_a", "   "));
+        assert!(partition_label_matches("vendor_boot_a", "BOOT"));
+        assert!(partition_label_matches("vendor_boot_a", " boot_a "));
+        assert!(!partition_label_matches("userdata", "boot"));
+    }
+
+    #[test]
+    fn visible_rows_keep_their_original_indices() {
+        let wizard = DumpPartsWizard {
+            rows: vec![
+                dump_row("abl_a", false),
+                dump_row("boot_a", false),
+                dump_row("boot_b", false),
+            ],
+            search: "boot".to_string(),
+            ..Default::default()
+        };
+        let indices: Vec<_> = wizard.visible_rows().map(|(idx, _)| idx).collect();
+        assert_eq!(indices, [1, 2]);
+    }
+
+    #[test]
+    fn select_all_only_touches_visible_rows() {
+        let mut wizard = DumpPartsWizard {
+            rows: vec![
+                dump_row("abl_a", true),
+                dump_row("boot_a", false),
+                dump_row("boot_b", false),
+            ],
+            search: "boot".to_string(),
+            ..Default::default()
+        };
+        assert!(!wizard.all_visible_selected());
+
+        wizard.toggle_visible();
+        assert!(wizard.rows.iter().all(|row| row.selected));
+        assert!(wizard.all_visible_selected());
+
+        wizard.toggle_visible();
+        let selected: Vec<_> = wizard.rows.iter().map(|row| row.selected).collect();
+        assert_eq!(selected, [true, false, false]);
+    }
+
+    #[test]
+    fn select_all_is_unchecked_when_nothing_is_visible() {
+        let mut wizard = DumpPartsWizard {
+            rows: vec![dump_row("boot_a", true)],
+            search: "modem".to_string(),
+            ..Default::default()
+        };
+        assert!(!wizard.all_visible_selected());
+        wizard.toggle_visible();
+        assert!(wizard.rows[0].selected);
     }
 }

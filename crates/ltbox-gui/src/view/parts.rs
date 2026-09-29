@@ -375,16 +375,55 @@ impl App {
         )
     }
 
+    /// Live filter above a partition table. Every keystroke re-filters, so
+    /// Enter does nothing — but it must still be claimed here: an unclaimed
+    /// Enter reaches a row checkbox that kept keyboard focus and toggles it.
+    fn parts_search_field<'a>(
+        &self,
+        query: &str,
+        on_input: impl Fn(String) -> Message + 'a,
+    ) -> Element<'a, Message> {
+        container(
+            widget::text_input(self.t("parts_search_placeholder"), query)
+                .on_input(on_input)
+                .on_submit(Message::Noop)
+                .width(Length::Fill)
+                .padding([8, 12])
+                .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
+                .size(theme::text_size::BODY_MEDIUM)
+                .style(m3_text_input_style),
+        )
+        .height(Length::Fixed(40.0))
+        .center_y(40)
+        .width(Length::Fill)
+        .into()
+    }
+
+    /// Table row shown when the search hides every partition.
+    fn parts_search_empty_row(&self) -> Element<'_, Message> {
+        container(
+            text(self.t("parts_search_no_match").to_string())
+                .size(12.0)
+                .style(muted_style),
+        )
+        .padding([12.0, 10.0])
+        .width(Length::Fill)
+        .into()
+    }
+
     /// Shared frame for the partition / physical-storage select tables.
     fn select_step_frame<'a>(
         &'a self,
+        search: Option<Element<'a, Message>>,
         list: iced::widget::Column<'a, Message>,
     ) -> Element<'a, Message> {
         let scrolled = scrollable(list)
             .style(m3_scrollable_style)
             .height(Length::Fill)
             .width(Length::Fill);
-        let col = column![scrolled,]
+        let col = column![]
+            .push(search)
+            .push(scrolled)
             .spacing(10.0)
             .padding(20.0)
             .width(Length::Fill)
@@ -397,6 +436,7 @@ impl App {
 
     fn flash_parts_select_frame<'a>(
         &'a self,
+        search: Element<'a, Message>,
         list: iced::widget::Column<'a, Message>,
         footer: Element<'a, Message>,
     ) -> Element<'a, Message> {
@@ -406,6 +446,10 @@ impl App {
             .width(Length::Fill);
         container(
             column![
+                container(search).padding(iced::Padding {
+                    bottom: 10.0,
+                    ..iced::Padding::ZERO
+                }),
                 scrolled,
                 widget::rule::horizontal(1).style(shell_rule_style),
                 footer
@@ -469,7 +513,9 @@ impl App {
 
         let mut list =
             column![header, widget::rule::horizontal(1).style(shell_rule_style)].spacing(0);
-        for (idx, r) in self.flash_parts.rows.iter().enumerate() {
+        let mut any_visible = false;
+        for (idx, r) in self.flash_parts.visible_rows() {
+            any_visible = true;
             let marker_cell: Element<'_, Message> = match r.state {
                 FlashRowState::Skip | FlashRowState::Write => container(focus_button::actionable(
                     iced::widget::checkbox(r.state == FlashRowState::Write)
@@ -596,6 +642,9 @@ impl App {
 
             list = list.push(tinted);
         }
+        if !any_visible {
+            list = list.push(self.parts_search_empty_row());
+        }
 
         let write_count = self
             .flash_parts
@@ -635,7 +684,10 @@ impl App {
         .width(Length::Fill)
         .align_y(iced::Alignment::Center);
 
-        self.flash_parts_select_frame(list, footer.into())
+        let search = self.parts_search_field(&self.flash_parts.search, |query| {
+            Message::FlashParts(FlashPartsMsg::FlashPartsSearchInput(query))
+        });
+        self.flash_parts_select_frame(search, list, footer.into())
     }
 
     pub(crate) fn flash_parts_confirm_step(&self) -> Element<'_, Message> {
@@ -785,12 +837,10 @@ impl App {
         let active = self.dump_parts.sort_col;
         let desc = self.dump_parts.sort_desc;
         let mk_msg = |c: PartsSortColumn| Message::DumpParts(DumpPartsMsg::DumpPartsSortBy(c));
-        // Header select-all: checked iff every row is selected (and there
-        // is at least one row). Click flips toward whichever direction
-        // would change state for the majority — full-select if any are
-        // unchecked, else clear.
-        let all_checked =
-            !self.dump_parts.rows.is_empty() && self.dump_parts.rows.iter().all(|r| r.selected);
+        // Header select-all acts on the rows the search leaves visible:
+        // checked iff every visible row is selected; a click selects them all
+        // when any is unchecked, otherwise clears them.
+        let all_checked = self.dump_parts.all_visible_selected();
         let header_cb = focus_button::actionable(
             iced::widget::checkbox(all_checked)
                 .style(m3_checkbox_style)
@@ -834,7 +884,9 @@ impl App {
 
         let mut list =
             column![header, widget::rule::horizontal(1).style(shell_rule_style)].spacing(0);
-        for (idx, row) in self.dump_parts.rows.iter().enumerate() {
+        let mut any_visible = false;
+        for (idx, row) in self.dump_parts.visible_rows() {
+            any_visible = true;
             let cb = focus_button::actionable(
                 iced::widget::checkbox(row.selected)
                     .style(m3_checkbox_style)
@@ -879,8 +931,14 @@ impl App {
             );
             list = list.push(tinted);
         }
+        if !any_visible {
+            list = list.push(self.parts_search_empty_row());
+        }
 
-        self.select_step_frame(list)
+        let search = self.parts_search_field(&self.dump_parts.search, |query| {
+            Message::DumpParts(DumpPartsMsg::DumpPartsSearchInput(query))
+        });
+        self.select_step_frame(Some(search), list)
     }
 
     pub(crate) fn view_dump_phys_wizard(&self) -> Element<'_, Message> {
@@ -1011,7 +1069,7 @@ impl App {
             list = list.push(data_row);
         }
 
-        self.select_step_frame(list)
+        self.select_step_frame(None, list)
     }
 
     pub(crate) fn view_flash_phys_wizard(&self) -> Element<'_, Message> {
@@ -1178,7 +1236,7 @@ impl App {
             list = list.push(data_row);
         }
 
-        self.select_step_frame(list)
+        self.select_step_frame(None, list)
     }
 
     pub(crate) fn flash_phys_confirm_step(&self) -> Element<'_, Message> {

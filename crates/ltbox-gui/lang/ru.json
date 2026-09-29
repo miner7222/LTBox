@@ -960,6 +960,8 @@
   "ota_popup_title": "Обновление прошивки",
   "ota_popup_to": "Новая",
   "ota_popup_unavailable": "OTA недоступно",
+  "parts_search_no_match": "Нет подходящих разделов",
+  "parts_search_placeholder": "Поиск разделов",
   "phys_col_storage": "Хранилище",
   "phys_select_title": "Выбор физического хранилища",
   "phys_step_select": "Выбор",

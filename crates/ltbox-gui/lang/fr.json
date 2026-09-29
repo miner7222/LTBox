@@ -960,6 +960,8 @@
   "ota_popup_title": "Mise à jour du firmware",
   "ota_popup_to": "Vers",
   "ota_popup_unavailable": "OTA indisponible",
+  "parts_search_no_match": "Aucune partition correspondante",
+  "parts_search_placeholder": "Rechercher une partition",
   "phys_col_storage": "Stockage",
   "phys_select_title": "Sélectionner le stockage physique",
   "phys_step_select": "Sélection",

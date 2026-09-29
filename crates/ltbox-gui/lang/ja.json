@@ -960,6 +960,8 @@
   "ota_popup_title": "ファームウェア更新",
   "ota_popup_to": "変更後",
   "ota_popup_unavailable": "OTA 利用不可",
+  "parts_search_no_match": "一致するパーティションがありません",
+  "parts_search_placeholder": "パーティションを検索",
   "phys_col_storage": "ストレージ",
   "phys_select_title": "物理ストレージを選択",
   "phys_step_select": "選択",

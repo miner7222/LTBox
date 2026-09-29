@@ -960,6 +960,8 @@
   "ota_popup_title": "Firmware Update",
   "ota_popup_to": "To",
   "ota_popup_unavailable": "OTA Unavailable",
+  "parts_search_no_match": "No matching partitions",
+  "parts_search_placeholder": "Search partitions",
   "phys_col_storage": "Storage",
   "phys_select_title": "Select Physical Storage",
   "phys_step_select": "Select",
