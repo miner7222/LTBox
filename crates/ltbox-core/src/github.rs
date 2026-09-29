@@ -121,6 +121,8 @@ pub struct WorkflowRun {
     pub created_at: String,
     pub head_branch: Option<String>,
     pub path: Option<String>,
+    #[serde(default)]
+    pub conclusion: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -331,11 +333,21 @@ impl GitHubClient {
     /// and other artifact-less runs, and GitHub's order among the runs a
     /// single tag push starts is not meaningful.
     pub fn workflow_runs_for_tag(&self, workflow_file: &str, tag: &str) -> Result<Vec<u64>> {
-        let tag = percent_encode(tag);
+        let encoded = percent_encode(tag);
         let resp: WorkflowRunsResponse = self.get_json(&format!(
-            "/actions/workflows/{workflow_file}/runs?per_page=30&status=success&branch={tag}"
+            "/actions/workflows/{workflow_file}/runs?per_page=30&status=success&branch={encoded}"
         ))?;
-        Ok(resp.workflow_runs.into_iter().map(|r| r.id).collect())
+        if !resp.workflow_runs.is_empty() {
+            return Ok(resp.workflow_runs.into_iter().map(|r| r.id).collect());
+        }
+        // The `status`/`branch` filters go through GitHub's run search, which
+        // has returned nothing for a tag run that completed a week earlier
+        // (KernelSU-Next v3.4.0). Check the unfiltered newest runs before
+        // concluding the tag has none.
+        let resp: WorkflowRunsResponse = self.get_json(&format!(
+            "/actions/workflows/{workflow_file}/runs?per_page=100"
+        ))?;
+        Ok(successful_tag_runs(resp.workflow_runs, tag))
     }
 
     pub fn workflow_artifacts(&self, run_id: u64) -> Result<Vec<String>> {
@@ -491,9 +503,34 @@ fn normalize_workflow_path(path: &str) -> String {
         .to_lowercase()
 }
 
+/// Successful runs pushed for `tag`, keeping the listing's newest-first order.
+fn successful_tag_runs(runs: Vec<WorkflowRun>, tag: &str) -> Vec<u64> {
+    runs.into_iter()
+        .filter(|run| {
+            run.head_branch.as_deref() == Some(tag) && run.conclusion.as_deref() == Some("success")
+        })
+        .map(|run| run.id)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unfiltered_tag_fallback_keeps_only_successful_runs_of_that_tag() {
+        let runs: WorkflowRunsResponse = serde_json::from_str(
+            r#"{"workflow_runs": [
+                {"id": 5, "created_at": "", "head_branch": "v3.4.0", "conclusion": "failure"},
+                {"id": 4, "created_at": "", "head_branch": "dev", "conclusion": "success"},
+                {"id": 3, "created_at": "", "head_branch": "v3.4.0", "conclusion": "success"},
+                {"id": 2, "created_at": "", "head_branch": "v3.4.0", "conclusion": null},
+                {"id": 1, "created_at": "", "head_branch": "v3.4.0", "conclusion": "success"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(successful_tag_runs(runs.workflow_runs, "v3.4.0"), [3, 1]);
+    }
 
     #[test]
     fn cache_validates_json_and_keeps_bypass_requests_isolated() {
