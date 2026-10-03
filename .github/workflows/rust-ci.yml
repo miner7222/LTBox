@@ -97,7 +97,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
 
       - name: Install cargo-xwin
-        uses: taiki-e/install-action@v2.87.1
+        uses: taiki-e/install-action@v2.87.21
         with:
           tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
 
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2.87.1
+        uses: taiki-e/install-action@v2.87.21
         with:
           tool: cargo-deny@0.19.8
 
@@ -218,7 +218,7 @@ jobs:
       - name: Install cargo-xwin
         # Pin a known-good release so a surprise upstream behaviour
         # change can't silently re-break the cross build.
-        uses: taiki-e/install-action@v2.87.1
+        uses: taiki-e/install-action@v2.87.21
         with:
           tool: cargo-xwin@${{ env.CARGO_XWIN_VERSION }}
 
