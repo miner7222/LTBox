@@ -99,7 +99,7 @@ serialport = "4"
 # GUI
 iced = { version = "0.14", features = ["tokio", "svg", "image", "advanced", "canvas"] }
 rfd = "0.17"
-dirs = "6"
+dirs = "7"
 fs4 = { version = "1", default-features = false }
 dark-light = "3"
 sys-locale = "0.3"
@@ -121,13 +121,7 @@ qdl = { path = "vendor/qdl", features = ["serial", "usb"] }
 # time with one Text-returning function per icon declared in
 # `fonts/lucide.toml`. No runtime dependency on the crate itself; the
 # generated code only uses `iced::widget::text` + `iced::Font`.
-# Pinned to d06e2cc — last commit before upstream reformatted the
-# `all_icons_example` / `subset_example` Cargo.toml files with multiline
-# inline tables (rejected by cargo's stricter TOML parser since 1.84).
-# The regression is benign (example crates, not consumed by LTBox's
-# build.rs codegen) but spams `cargo build` with two parse errors per
-# run. Bump back to `branch = "master"` once upstream lands a fix.
-iced_lucide = { git = "https://github.com/A-Disruption/iced_lucide", rev = "d06e2cc" }
+iced_lucide = "0.1.0"
 
 # Release tuning for the shipped GUI binary. `panic` is left at the default
 # "unwind" on purpose: worker threads rely on unwinding so a single failed

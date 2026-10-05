@@ -78,5 +78,4 @@ allow-git = [
     "https://github.com/miner7222/avbtool-rs",
     "https://github.com/miner7222/magiskboot-rs",
     "https://github.com/miner7222/kptools-rs",
-    "https://github.com/A-Disruption/iced_lucide",
 ]
