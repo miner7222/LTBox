@@ -24,8 +24,8 @@ use super::magisk::{
     download_magisk_apk_nightly, download_magisk_release_apk, fetch_nightly_apk_outer_zip,
 };
 use super::{
-    RootFamily, RootPipelineConfig, RootProvider, RootVersion, nightly_artifact_url, provider_repo,
-    resolve_nightly_run,
+    RootFamily, RootPipelineConfig, RootProvider, RootVersion, nightly_artifact_id,
+    nightly_artifact_url, provider_repo, resolve_nightly_run,
 };
 
 fn download_ksu_manager_apk_release(
@@ -69,7 +69,11 @@ fn download_ksu_manager_apk_nightly(
 ) -> Result<u64> {
     let (repo, run_id) = resolve_nightly_run(provider, manual_run_id, log)?;
     let client = GitHubClient::new(repo)?;
-    let artifact_names = client.workflow_artifacts(run_id)?;
+    let artifacts = client.workflow_artifact_details(run_id)?;
+    let artifact_names: Vec<String> = artifacts
+        .iter()
+        .map(|artifact| artifact.name.clone())
+        .collect();
     let pairs: Vec<(String, String)> = artifact_names
         .iter()
         .map(|name| (name.clone(), String::new()))
@@ -94,7 +98,7 @@ fn download_ksu_manager_apk_nightly(
     fetch_nightly_apk_outer_zip(
         "KSU",
         repo,
-        run_id,
+        nightly_artifact_id(&artifacts, repo, run_id, &artifact_name)?,
         &artifact_name,
         "ksu_manager_nightly",
         work_dir,
@@ -507,14 +511,14 @@ fn artifact_digest<'a>(artifacts: &'a [WorkflowArtifact], name: &str) -> Option<
 
 fn download_ksu_ko_artifact(
     repo: &str,
-    run_id: u64,
+    artifact_id: u64,
     ko_artifact: &str,
     reported_digest: Option<&str>,
     staging_dir: &Path,
     log: &mut Vec<String>,
 ) -> Result<()> {
     let ko_zip_path = staging_dir.join("ksu_lkm_artifact.zip");
-    let ko_url = nightly_artifact_url(repo, run_id, ko_artifact);
+    let ko_url = nightly_artifact_url(repo, artifact_id);
     download_to_file(&ko_url, &ko_zip_path, log)?;
     verify_nightly_artifact_zip(&ko_zip_path, ko_artifact, reported_digest, log)?;
     {
@@ -786,15 +790,18 @@ pub(super) fn download_ksu_release_payload(
                 name = ko_artifact
             )
         );
-        download_ksu_ko_artifact(
-            repo,
-            run_id,
-            &ko_artifact,
-            artifact_digest(&artifacts, &ko_artifact),
-            staging_dir,
-            log,
-        )
-        .map_err(|e| stable_lkm_sources_exhausted(&tag, &kver, e))?;
+        nightly_artifact_id(&artifacts, repo, run_id, &ko_artifact)
+            .and_then(|artifact_id| {
+                download_ksu_ko_artifact(
+                    repo,
+                    artifact_id,
+                    &ko_artifact,
+                    artifact_digest(&artifacts, &ko_artifact),
+                    staging_dir,
+                    log,
+                )
+            })
+            .map_err(|e| stable_lkm_sources_exhausted(&tag, &kver, e))?;
     }
 
     if release_init.is_some() {
@@ -806,11 +813,9 @@ pub(super) fn download_ksu_release_payload(
             "No arm64-safe `ksuinit*` workflow artifact on run {run_id} of {repo}"
         ))
     })?;
-    let nightly_url = format!(
-        "https://nightly.link/{repo}/actions/runs/{run_id}/{ksuinit_artifact}.zip",
-        repo = repo,
-        run_id = run_id,
-        ksuinit_artifact = ksuinit_artifact,
+    let nightly_url = nightly_artifact_url(
+        repo,
+        nightly_artifact_id(&artifacts, repo, run_id, &ksuinit_artifact)?,
     );
     ltbox_core::live!(
         log,
@@ -908,7 +913,7 @@ pub fn download_ksu_payload_nightly(
     );
     download_ksu_ko_artifact(
         repo,
-        run_id,
+        nightly_artifact_id(&artifacts, repo, run_id, &ko_artifact)?,
         &ko_artifact,
         artifact_digest(&artifacts, &ko_artifact),
         staging_dir,
@@ -927,7 +932,10 @@ pub fn download_ksu_payload_nightly(
         tr_args!("log_ksu_nightly_ksuinit_artifact", artifact = init_artifact)
     );
     let init_zip_path = staging_dir.join("ksu_nightly_init.zip");
-    let init_url = nightly_artifact_url(repo, run_id, &init_artifact);
+    let init_url = nightly_artifact_url(
+        repo,
+        nightly_artifact_id(&artifacts, repo, run_id, &init_artifact)?,
+    );
     download_to_file(&init_url, &init_zip_path, log)?;
     verify_nightly_artifact_zip(
         &init_zip_path,

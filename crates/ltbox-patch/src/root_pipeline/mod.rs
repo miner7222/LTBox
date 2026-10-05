@@ -392,14 +392,32 @@ pub fn ensure_nightly_run_id(cfg: &mut RootPipelineConfig, log: &mut Vec<String>
     Ok(())
 }
 
-/// Build the `nightly.link` public-mirror URL. Response is always ZIP-wrapped.
-pub(super) fn nightly_artifact_url(repo: &str, run_id: u64, artifact_name: &str) -> String {
-    let suffix = if artifact_name.ends_with(".zip") {
-        ""
-    } else {
-        ".zip"
-    };
-    format!("https://nightly.link/{repo}/actions/runs/{run_id}/{artifact_name}{suffix}")
+/// Build the `nightly.link` public-mirror URL for a workflow artifact ID.
+/// Response is always ZIP-wrapped.
+///
+/// The run + name form (`/actions/runs/{run}/{name}.zip`) 404s for existing,
+/// unexpired artifacts, so downloads always go through the artifact ID.
+pub(super) fn nightly_artifact_url(repo: &str, artifact_id: u64) -> String {
+    format!("https://nightly.link/{repo}/actions/artifacts/{artifact_id}.zip")
+}
+
+/// ID of the artifact called `name` among `run_id`'s `artifacts`. A name that
+/// cannot be resolved is a hard error: there is no run + name URL fallback.
+pub(super) fn nightly_artifact_id(
+    artifacts: &[ltbox_core::github::WorkflowArtifact],
+    repo: &str,
+    run_id: u64,
+    name: &str,
+) -> Result<u64> {
+    artifacts
+        .iter()
+        .find(|artifact| artifact.name == name)
+        .map(|artifact| artifact.id)
+        .ok_or_else(|| {
+            LtboxError::Download(format!(
+                "{repo} run {run_id}: cannot resolve an artifact ID for `{name}`"
+            ))
+        })
 }
 
 /// Resolve the GitHub repo slug for a given provider.
@@ -897,6 +915,28 @@ mod root_target_tests {
             nightly_run_id: None,
             release_tag: None,
         }
+    }
+
+    #[test]
+    fn nightly_url_uses_the_artifact_id() {
+        assert_eq!(
+            nightly_artifact_url("LyraVoid/FolkPatch", 11302121949),
+            "https://nightly.link/LyraVoid/FolkPatch/actions/artifacts/11302121949.zip"
+        );
+        let artifact = ltbox_core::github::WorkflowArtifact {
+            id: 7,
+            name: "manager".into(),
+            digest: None,
+            expired: false,
+            created_at: String::new(),
+            expires_at: String::new(),
+        };
+        assert_eq!(
+            nightly_artifact_id(std::slice::from_ref(&artifact), "o/r", 9, "manager").unwrap(),
+            7
+        );
+        let err = nightly_artifact_id(&[artifact], "o/r", 9, "other").unwrap_err();
+        assert!(err.to_string().contains("run 9") && err.to_string().contains("other"));
     }
 
     #[test]

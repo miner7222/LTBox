@@ -13,7 +13,9 @@ use ltbox_core::github::GitHubClient;
 use ltbox_core::{LtboxError, Result, tr_args};
 
 use super::apk::{collect_apks_recursive, pick_preferred_apk_path};
-use super::{RootProvider, nightly_artifact_url, provider_repo, resolve_nightly_run};
+use super::{
+    RootProvider, nightly_artifact_id, nightly_artifact_url, provider_repo, resolve_nightly_run,
+};
 
 /// Download latest Magisk APK into `dst_path`; returns the tag name.
 pub fn download_latest_magisk_apk(
@@ -61,7 +63,7 @@ pub(super) fn download_magisk_release_apk(
 pub(super) fn fetch_nightly_apk_outer_zip(
     log_tag: &str,
     repo: &str,
-    run_id: u64,
+    artifact_id: u64,
     artifact_name: &str,
     staging_name: &str,
     work_dir: &Path,
@@ -69,7 +71,7 @@ pub(super) fn fetch_nightly_apk_outer_zip(
     log: &mut Vec<String>,
 ) -> Result<()> {
     let outer_zip_path = work_dir.join(format!("{staging_name}.zip"));
-    let url = nightly_artifact_url(repo, run_id, artifact_name);
+    let url = nightly_artifact_url(repo, artifact_id);
     download_to_file(&url, &outer_zip_path, log)?;
 
     let staging = work_dir.join(staging_name);
@@ -155,7 +157,11 @@ pub fn download_magisk_apk_nightly(
 ) -> Result<u64> {
     let (repo, run_id) = resolve_nightly_run(provider, manual_run_id, log)?;
     let client = GitHubClient::new(repo)?;
-    let artifact_names = client.workflow_artifacts(run_id)?;
+    let artifacts = client.workflow_artifact_details(run_id)?;
+    let artifact_names: Vec<String> = artifacts
+        .iter()
+        .map(|artifact| artifact.name.clone())
+        .collect();
     if artifact_names.is_empty() {
         return Err(LtboxError::Patch(format!(
             "{repo} run {run_id} has no artifacts"
@@ -178,7 +184,7 @@ pub fn download_magisk_apk_nightly(
     fetch_nightly_apk_outer_zip(
         "Magisk",
         repo,
-        run_id,
+        nightly_artifact_id(&artifacts, repo, run_id, &artifact_name)?,
         &artifact_name,
         "magisk_nightly",
         work_dir,

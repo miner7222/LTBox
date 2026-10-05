@@ -98,7 +98,11 @@ pub fn download_apatch_payload_nightly(
 ) -> Result<u64> {
     let (repo, run_id) = resolve_nightly_run(provider, manual_run_id, log)?;
     let client = GitHubClient::new(repo)?;
-    let artifact_names = client.workflow_artifacts(run_id)?;
+    let artifacts = client.workflow_artifact_details(run_id)?;
+    let artifact_names: Vec<String> = artifacts
+        .iter()
+        .map(|artifact| artifact.name.clone())
+        .collect();
     if artifact_names.is_empty() {
         return Err(LtboxError::Patch(format!(
             "{repo} run {run_id} has no artifacts"
@@ -124,7 +128,7 @@ pub fn download_apatch_payload_nightly(
     fetch_nightly_apk_outer_zip(
         "APatch",
         repo,
-        run_id,
+        super::nightly_artifact_id(&artifacts, repo, run_id, artifact_name)?,
         artifact_name,
         "apatch_nightly",
         work_dir,
@@ -167,6 +171,7 @@ mod artifact_tests {
     #[test]
     fn nightly_manager_ignores_mappings_and_prefers_release() {
         let mappings = ltbox_core::github::WorkflowArtifact {
+            id: 1,
             name: "mappings".into(),
             digest: None,
             expired: false,
@@ -178,6 +183,7 @@ mod artifact_tests {
             std::slice::from_ref(&mappings)
         ));
         let manager = ltbox_core::github::WorkflowArtifact {
+            id: 2,
             name: "APatch-Release".into(),
             ..mappings.clone()
         };

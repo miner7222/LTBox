@@ -123,6 +123,19 @@ pub struct WorkflowRun {
     pub path: Option<String>,
     #[serde(default)]
     pub conclusion: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub event: Option<String>,
+    #[serde(default)]
+    repository: Option<RepoRef>,
+    #[serde(default)]
+    head_repository: Option<RepoRef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RepoRef {
+    full_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +145,8 @@ struct ArtifactsResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowArtifact {
+    /// Artifact ID; `nightly.link` resolves downloads by this, not by run + name.
+    pub id: u64,
     pub name: String,
     #[serde(default)]
     pub digest: Option<String>,
@@ -415,21 +430,12 @@ impl GitHubClient {
     ) -> Result<Vec<PublishedRelease>> {
         let now = chrono::Utc::now();
         let mut choices = Vec::new();
-        let mut page = 1;
-        loop {
-            let resp: WorkflowRunsResponse = self.get_json(&format!(
-                "/actions/workflows/{workflow_file}/runs?status=success&per_page=100&page={page}&branch={branch}"
-            ))?;
-            let finished = resp.workflow_runs.len() < 100
-                || resp.workflow_runs.last().is_some_and(|r| {
-                    chrono::DateTime::parse_from_rfc3339(&r.created_at).is_ok_and(|date| {
-                        now.signed_duration_since(date) >= chrono::Duration::days(90)
-                    })
-                });
-            let mut runs = resp.workflow_runs;
+        self.walk_workflow_runs(workflow_file, |mut runs| {
             runs.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
             for run in runs {
-                if !recent_timestamp(&run.created_at, now) {
+                if !is_trusted_successful_run(&run, branch)
+                    || !recent_timestamp(&run.created_at, now)
+                {
                     continue;
                 }
                 let artifacts = self.workflow_artifact_details(run.id)?;
@@ -443,30 +449,80 @@ impl GitHubClient {
                     published_at: run.created_at,
                 });
                 if choices.len() == 5 {
-                    return Ok(choices);
+                    return Ok(true);
                 }
             }
-            if finished {
-                break;
-            }
-            page += 1;
-        }
+            Ok(false)
+        })?;
         Ok(choices)
     }
 
+    /// Newest successful run of `workflow_file` on `branch` from this repository.
     pub fn latest_successful_run(
         &self,
         workflow_file: &str,
         branch: Option<&str>,
     ) -> Result<Option<u64>> {
-        let mut endpoint =
-            format!("/actions/workflows/{workflow_file}/runs?status=success&per_page=20");
-        if let Some(b) = branch {
-            endpoint.push_str(&format!("&branch={b}"));
-        }
-        let resp: WorkflowRunsResponse = self.get_json(&endpoint)?;
-        Ok(resp.workflow_runs.first().map(|r| r.id))
+        let mut found = None;
+        self.walk_workflow_runs(workflow_file, |runs| {
+            found = runs
+                .iter()
+                .find(|run| match branch {
+                    Some(b) => is_trusted_successful_run(run, b),
+                    None => is_same_repo_success(run),
+                })
+                .map(|run| run.id);
+            Ok(found.is_some())
+        })?;
+        Ok(found)
     }
+
+    /// Walk the workflow's **unfiltered** run listing newest-first, one page at a
+    /// time. GitHub's `status=`/`branch=` filters go through a search index that
+    /// lags by weeks (the unfiltered listing is authoritative), so callers filter
+    /// client-side. `visit` returns `Ok(true)` to stop early. The walk also stops
+    /// on a short page, once a page ends at a run 90 days old or more, and after
+    /// [`MAX_RUN_PAGES`] pages to bound API calls.
+    fn walk_workflow_runs(
+        &self,
+        workflow_file: &str,
+        mut visit: impl FnMut(Vec<WorkflowRun>) -> Result<bool>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now();
+        for page in 1..=MAX_RUN_PAGES {
+            let resp: WorkflowRunsResponse = self.get_json(&format!(
+                "/actions/workflows/{workflow_file}/runs?per_page=100&page={page}"
+            ))?;
+            let finished = resp.workflow_runs.len() < 100
+                || resp.workflow_runs.last().is_some_and(|r| {
+                    chrono::DateTime::parse_from_rfc3339(&r.created_at).is_ok_and(|date| {
+                        now.signed_duration_since(date) >= chrono::Duration::days(90)
+                    })
+                });
+            if visit(resp.workflow_runs)? || finished {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Upper bound on run-listing pages walked per lookup.
+const MAX_RUN_PAGES: u32 = 10;
+
+fn is_same_repo_success(run: &WorkflowRun) -> bool {
+    run.conclusion.as_deref() == Some("success")
+        && matches!(
+            (&run.head_repository, &run.repository),
+            (Some(head), Some(base)) if head.full_name == base.full_name
+        )
+}
+
+/// A successful run of `branch` whose head lives in the workflow's own
+/// repository. Fork PRs can use a head branch with the same name (`main`), so
+/// the branch name alone is not trusted.
+fn is_trusted_successful_run(run: &WorkflowRun, branch: &str) -> bool {
+    run.head_branch.as_deref() == Some(branch) && is_same_repo_success(run)
 }
 
 /// Percent-encode a tag for a URL path segment or query value.
@@ -506,9 +562,7 @@ fn normalize_workflow_path(path: &str) -> String {
 /// Successful runs pushed for `tag`, keeping the listing's newest-first order.
 fn successful_tag_runs(runs: Vec<WorkflowRun>, tag: &str) -> Vec<u64> {
     runs.into_iter()
-        .filter(|run| {
-            run.head_branch.as_deref() == Some(tag) && run.conclusion.as_deref() == Some("success")
-        })
+        .filter(|run| is_trusted_successful_run(run, tag))
         .map(|run| run.id)
         .collect()
 }
@@ -517,18 +571,73 @@ fn successful_tag_runs(runs: Vec<WorkflowRun>, tag: &str) -> Vec<u64> {
 mod tests {
     use super::*;
 
+    fn run(branch: &str, conclusion: Option<&str>, head: Option<&str>) -> WorkflowRun {
+        WorkflowRun {
+            id: 1,
+            created_at: String::new(),
+            head_branch: Some(branch.into()),
+            path: None,
+            conclusion: conclusion.map(Into::into),
+            status: None,
+            event: None,
+            repository: Some(RepoRef {
+                full_name: "o/r".into(),
+            }),
+            head_repository: head.map(|full_name| RepoRef {
+                full_name: full_name.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn trusted_run_needs_branch_success_and_same_repository() {
+        assert!(is_trusted_successful_run(
+            &run("main", Some("success"), Some("o/r")),
+            "main"
+        ));
+        assert!(!is_trusted_successful_run(
+            &run("dev", Some("success"), Some("o/r")),
+            "main"
+        ));
+        assert!(!is_trusted_successful_run(
+            &run("main", Some("failure"), Some("o/r")),
+            "main"
+        ));
+        assert!(!is_trusted_successful_run(
+            &run("main", None, Some("o/r")),
+            "main"
+        ));
+        assert!(!is_trusted_successful_run(
+            &run("main", Some("success"), Some("fork/r")),
+            "main"
+        ));
+        assert!(!is_trusted_successful_run(
+            &run("main", Some("success"), None),
+            "main"
+        ));
+        let mut no_base = run("main", Some("success"), Some("o/r"));
+        no_base.repository = None;
+        assert!(!is_trusted_successful_run(&no_base, "main"));
+    }
+
     #[test]
     fn unfiltered_tag_fallback_keeps_only_successful_runs_of_that_tag() {
-        let runs: WorkflowRunsResponse = serde_json::from_str(
-            r#"{"workflow_runs": [
-                {"id": 5, "created_at": "", "head_branch": "v3.4.0", "conclusion": "failure"},
-                {"id": 4, "created_at": "", "head_branch": "dev", "conclusion": "success"},
-                {"id": 3, "created_at": "", "head_branch": "v3.4.0", "conclusion": "success"},
-                {"id": 2, "created_at": "", "head_branch": "v3.4.0", "conclusion": null},
-                {"id": 1, "created_at": "", "head_branch": "v3.4.0", "conclusion": "success"}
-            ]}"#,
-        )
-        .unwrap();
+        let run = |id: u32, branch: &str, conclusion: &str, head: &str| {
+            format!(
+                r#"{{"id": {id}, "created_at": "", "head_branch": "{branch}", "conclusion": {conclusion},
+                    "repository": {{"full_name": "o/r"}}, "head_repository": {{"full_name": "{head}"}}}}"#
+            )
+        };
+        let json = format!(
+            r#"{{"workflow_runs": [{}, {}, {}, {}, {}, {}]}}"#,
+            run(6, "v3.4.0", r#""success""#, "fork/r"),
+            run(5, "v3.4.0", r#""failure""#, "o/r"),
+            run(4, "dev", r#""success""#, "o/r"),
+            run(3, "v3.4.0", r#""success""#, "o/r"),
+            run(2, "v3.4.0", "null", "o/r"),
+            run(1, "v3.4.0", r#""success""#, "o/r"),
+        );
+        let runs: WorkflowRunsResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(successful_tag_runs(runs.workflow_runs, "v3.4.0"), [3, 1]);
     }
 
@@ -596,7 +705,7 @@ mod tests {
             r#""created_at":"2026-09-14T06:25:31Z""#,
             r#""expires_at":"2026-12-13T06:25:31Z""#,
         ] {
-            let json = format!(r#"{{"artifacts":[{{"name":"manager",{dates}}}]}}"#);
+            let json = format!(r#"{{"artifacts":[{{"id":1,"name":"manager",{dates}}}]}}"#);
             assert!(serde_json::from_str::<ArtifactsResponse>(&json).is_err());
         }
     }
@@ -607,6 +716,7 @@ mod tests {
             .unwrap()
             .with_timezone(&chrono::Utc);
         let mut artifact = WorkflowArtifact {
+            id: 1,
             name: "manager".into(),
             digest: None,
             expired: false,
