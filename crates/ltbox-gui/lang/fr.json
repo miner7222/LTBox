@@ -990,7 +990,7 @@
   "provider_ksu_next": "KernelSU Next",
   "provider_ksu_next_desc": "Fork de KernelSU activement maintenu, par rifsxd",
   "provider_magisk": "Magisk",
-  "provider_magisk_desc": "The Magic Mask for Android, par topjohnwu",
+  "provider_magisk_desc": "Le masque magique pour Android, par topjohnwu",
   "provider_magisk_forks": "Fichiers locaux",
   "provider_magisk_forks_desc": "Utiliser un APK Magisk local",
   "provider_sukisu": "SukiSU Ultra",
