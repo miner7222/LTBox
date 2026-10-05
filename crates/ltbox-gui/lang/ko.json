@@ -615,6 +615,7 @@
   "live_flash_efisp_flash_failed": "efisp 플래싱에 실패했지만({error}) 시스템 재부팅은 계속합니다.",
   "live_flash_efisp_flashed": "efisp 플래싱 완료",
   "live_flash_efisp_force_auto": "efisp/GBL 대상이 감지되어 롤백 보호 우회를 자동으로 강제 전환합니다.",
+  "live_flash_efisp_from_package": "펌웨어 패키지에 efisp가 포함되어 있어 GBL을 따로 내려받아 쓰지 않습니다.",
   "live_flash_fastboot_timeout": "재부팅을 요청했지만 {seconds}초 안에 Fastboot 모드가 감지되지 않아 부트로더 변수 없이 계속합니다.",
   "live_flash_files_count": ".x 파일: {x_count}개, rawprogram XML: {xml_count}개",
   "live_flash_firmware_folder": "펌웨어 폴더: {path}",

@@ -615,6 +615,7 @@
   "live_flash_efisp_flash_failed": "Échec du flash d’efisp ({error}) — poursuite vers la réinitialisation du système",
   "live_flash_efisp_flashed": "efisp flashé",
   "live_flash_efisp_force_auto": "Cible efisp/GBL détectée — contournement de la protection anti-rollback forcé sur Auto.",
+  "live_flash_efisp_from_package": "Le paquet du firmware contient efisp ; téléchargement et écriture séparés du GBL ignorés",
   "live_flash_fastboot_timeout": "`adb reboot bootloader` a réussi, mais l’appareil n’est pas passé en mode Fastboot en {seconds} s — poursuite sans les variables du bootloader",
   "live_flash_files_count": "Nombre de fichiers .x : {x_count} ; nombre de XML rawprogram : {xml_count}",
   "live_flash_firmware_folder": "Dossier du firmware : {path}",

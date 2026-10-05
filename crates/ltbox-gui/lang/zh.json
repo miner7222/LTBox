@@ -615,6 +615,7 @@
   "live_flash_efisp_flash_failed": "efisp 刷写失败（{error}）——仍将继续重启到系统",
   "live_flash_efisp_flashed": "efisp 刷写完成",
   "live_flash_efisp_force_auto": "检测到 efisp/GBL 目标——回滚保护绕过强制为自动。",
+  "live_flash_efisp_from_package": "固件包已包含 efisp，跳过单独下载和写入 GBL",
   "live_flash_fastboot_timeout": "adb reboot bootloader 返回成功，但在 {seconds} 秒内未出现 Fastboot——将在无引导加载程序变量的情况下继续",
   "live_flash_files_count": ".x 文件数：{x_count}；rawprogram XML 数：{xml_count}",
   "live_flash_firmware_folder": "固件目录：{path}",

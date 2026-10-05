@@ -615,6 +615,7 @@
   "live_flash_efisp_flash_failed": "Не удалось прошить efisp ({error}) — продолжаем перезагрузку в систему",
   "live_flash_efisp_flashed": "efisp прошит",
   "live_flash_efisp_force_auto": "Обнаружена цель efisp/GBL — обход защиты от отката принудительно переведён в авто.",
+  "live_flash_efisp_from_package": "Пакет прошивки содержит efisp — отдельная загрузка и запись GBL пропущены",
   "live_flash_fastboot_timeout": "Команда `adb reboot bootloader` выполнена, но устройство не перешло в режим Fastboot за {seconds} с — продолжение без переменных загрузчика",
   "live_flash_files_count": ".x файлов: {x_count}, rawprogram XML: {xml_count}",
   "live_flash_firmware_folder": "Папка прошивки: {path}",

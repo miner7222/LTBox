@@ -615,6 +615,7 @@
   "live_flash_efisp_flash_failed": "efisp のフラッシュに失敗しました（{error}）。システムへの再起動は続行します",
   "live_flash_efisp_flashed": "efisp がフラッシュされました",
   "live_flash_efisp_force_auto": "efisp/GBL 対象が検出されました — ロールバック保護のバイパスを自動に強制します。",
+  "live_flash_efisp_from_package": "ファームウェアパッケージに efisp が含まれているため、GBL の個別ダウンロードと書き込みをスキップします",
   "live_flash_fastboot_timeout": "adb reboot bootloader は成功しましたが、{seconds} 秒以内に Fastboot が現れませんでした — ブートローダー変数なしで続行します",
   "live_flash_files_count": ".x ファイル：{x_count} 個、rawprogram XML：{xml_count} 個",
   "live_flash_firmware_folder": "ファームウェアフォルダー：{path}",

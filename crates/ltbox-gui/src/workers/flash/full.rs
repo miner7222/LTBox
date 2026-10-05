@@ -1484,7 +1484,25 @@ pub(crate) fn flash_worker(
         no_efisp_load,
         canoe_arb_need,
     );
-    if target_is_canoe && !no_efisp_load && (efisp_arb_need || cfg.modify_region) {
+    // When LTBox itself re-signs the chain (`canoe_arb_need`), only the pinned
+    // `_arb` GBL is known to trust it, so that GBL is still downloaded and
+    // written after rawprogram, overriding any packaged efisp image.
+    let package_supplies_efisp = package_supplies_efisp(
+        target_is_canoe,
+        no_efisp_load,
+        canoe_arb_need,
+        package_ships_efisp(&raw_xmls),
+    );
+    if package_supplies_efisp {
+        // Say so only where LTBox would otherwise have written or erased efisp.
+        if efisp_arb_need || cfg.modify_region || cfg.wipe {
+            live!(
+                log,
+                "[Flash] {}",
+                ltbox_core::i18n::tr("live_flash_efisp_from_package")
+            );
+        }
+    } else if target_is_canoe && !no_efisp_load && (efisp_arb_need || cfg.modify_region) {
         // TB323FU's AVB fingerprint carries no region token; read the region
         // from the firmware vendor_boot's `product_region` DTB marker instead.
         let staged =
@@ -1611,7 +1629,7 @@ pub(crate) fn flash_worker(
     // variant on a region-provisioning wipe (best-effort).
     // With no EFI fetched, a same-region wipe strips efisp;
     // every other mode leaves it untouched.
-    if target_is_canoe && !no_efisp_load {
+    if target_is_canoe && !no_efisp_load && !package_supplies_efisp {
         let efisp_lun = ltbox_core::partition_lun::lun_for_partition("efisp").unwrap_or(4);
         match &efisp_efi {
             Some(efi) => {
@@ -1944,6 +1962,67 @@ fn validate_canoe_rawprogram(
     Ok(())
 }
 
+/// True when a rawprogram XML programs a non-empty, existing image into
+/// `efisp`, so rawprogram itself provisions the partition. Any read/parse
+/// failure or unsafe path for an entry counts as not shipped, and so does any
+/// `<erase label="efisp">`: rawprogram runs entries in order, so an erase can
+/// leave the partition empty after the program.
+fn package_ships_efisp(xmls: &[std::path::PathBuf]) -> bool {
+    let mut programs = false;
+    for xml in xmls {
+        let Some(dir) = xml.parent() else {
+            continue;
+        };
+        let Ok(content) = ltbox_core::xml::read(xml) else {
+            continue;
+        };
+        let Ok(doc) = ltbox_core::xml::parse(&content) else {
+            continue;
+        };
+        for node in doc.descendants() {
+            if node.attribute("label").unwrap_or("").trim() != "efisp" {
+                continue;
+            }
+            let kind = node.tag_name().name();
+            if kind.eq_ignore_ascii_case("erase") {
+                return false;
+            }
+            if kind.eq_ignore_ascii_case("program") && efisp_program_ships_image(dir, node) {
+                programs = true;
+            }
+        }
+    }
+    programs
+}
+
+/// Whether one `<program label="efisp">` entry writes a real image.
+fn efisp_program_ships_image(dir: &std::path::Path, node: roxmltree::Node<'_, '_>) -> bool {
+    let file = node.attribute("filename").unwrap_or("").trim();
+    let sectors = node
+        .attribute("num_partition_sectors")
+        .unwrap_or("0")
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    if file.is_empty() || sectors == 0 {
+        return false;
+    }
+    ltbox_core::safe_path::safe_join(dir, file).is_ok_and(|path| path.is_file())
+}
+
+/// Skip the separate GBL download/write and the efisp erase when the firmware
+/// package already provisions efisp through rawprogram. Not applicable when
+/// LTBox re-signs the chain itself: only the pinned `_arb` GBL is known to
+/// trust that chain.
+fn package_supplies_efisp(
+    target_is_canoe: bool,
+    no_efisp_load: bool,
+    ltbox_resigns_chain: bool,
+    package_ships_efisp: bool,
+) -> bool {
+    target_is_canoe && !no_efisp_load && !ltbox_resigns_chain && package_ships_efisp
+}
+
 fn firmware_rollback_indices(fw_dir: &std::path::Path) -> Result<RollbackIndices, String> {
     let index = |name: &str| {
         ltbox_patch::avb::extract_image_avb_info(&fw_dir.join(format!("{name}.img")))
@@ -2010,6 +2089,67 @@ mod tests {
         ] {
             assert!(!super::requires_arb_efisp(fp, Testkey, false, false));
         }
+    }
+
+    #[test]
+    fn package_ships_efisp_requires_a_real_program_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("efisp.img"), b"gbl").unwrap();
+        let mut n = 0;
+        let mut xml = |body: &str| {
+            n += 1;
+            let path = dir.path().join(format!("rawprogram{n}.xml"));
+            std::fs::write(&path, format!("<data>{body}</data>")).unwrap();
+            path
+        };
+        let ships = |p: &std::path::PathBuf| super::package_ships_efisp(std::slice::from_ref(p));
+
+        let good =
+            xml(r#"<program label="efisp" filename="efisp.img" num_partition_sectors="768"/>"#);
+        assert!(ships(&good));
+        assert!(!ships(&xml(
+            r#"<program label="efisp" filename="" num_partition_sectors="768"/>"#
+        )));
+        assert!(!ships(&xml(
+            r#"<program label="efisp" filename="efisp.img" num_partition_sectors="0"/>"#
+        )));
+        assert!(!ships(&xml(
+            r#"<program label="efisp" filename="missing.img" num_partition_sectors="768"/>"#
+        )));
+        assert!(!ships(&xml(
+            r#"<program label="efisp_b" filename="efisp.img" num_partition_sectors="768"/>"#
+        )));
+        assert!(!ships(&xml(
+            r#"<program label="xefisp" filename="efisp.img" num_partition_sectors="768"/>"#
+        )));
+        assert!(!ships(&xml(
+            r#"<erase label="efisp" filename="efisp.img" num_partition_sectors="768"/>"#
+        )));
+        let other =
+            xml(r#"<program label="abl_a" filename="efisp.img" num_partition_sectors="1"/>"#);
+        assert!(!ships(&other));
+        assert!(!ships(&xml(
+            r#"<program label="efisp" filename="../efisp.img" num_partition_sectors="768"/>"#
+        )));
+        assert!(!super::package_ships_efisp(&[dir
+            .path()
+            .join("absent.xml")]));
+        assert!(super::package_ships_efisp(&[other.clone(), good.clone()]));
+        // An efisp erase anywhere can leave the partition empty after the program.
+        assert!(!ships(&xml(
+            r#"<program label="efisp" filename="efisp.img" num_partition_sectors="768"/><erase label="efisp" num_partition_sectors="768"/>"#
+        )));
+        let erase = xml(r#"<erase label="efisp" num_partition_sectors="768"/>"#);
+        assert!(!super::package_ships_efisp(&[good, erase]));
+    }
+
+    #[test]
+    fn package_supplies_efisp_only_without_ltbox_resigning() {
+        assert!(super::package_supplies_efisp(true, false, false, true));
+        assert!(!super::package_supplies_efisp(false, false, false, true));
+        assert!(!super::package_supplies_efisp(true, true, false, true));
+        assert!(!super::package_supplies_efisp(true, false, true, true));
+        assert!(!super::package_supplies_efisp(true, false, false, false));
     }
 
     #[test]

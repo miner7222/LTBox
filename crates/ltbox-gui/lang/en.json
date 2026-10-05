@@ -615,6 +615,7 @@
   "live_flash_efisp_flash_failed": "efisp flash failed ({error}) — continuing to system reset",
   "live_flash_efisp_flashed": "efisp flashed",
   "live_flash_efisp_force_auto": "efisp/GBL target detected — rollback protection bypass forced to Auto.",
+  "live_flash_efisp_from_package": "Firmware package ships efisp; skipping the separate GBL download and write",
   "live_flash_fastboot_timeout": "`adb reboot bootloader` succeeded, but the device did not enter Fastboot mode within {seconds}s — continuing without bootloader variables",
   "live_flash_files_count": ".x file count: {x_count}; rawprogram XML count: {xml_count}",
   "live_flash_firmware_folder": "Firmware folder: {path}",
