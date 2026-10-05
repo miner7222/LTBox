@@ -44,6 +44,8 @@ ureq = { version = "3", features = ["json"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 # Release self-update archives use gzip-compressed tarballs on Linux/macOS.
 flate2 = "1"
+# Strict base64 decoding (KonaBess export URIs).
+base64 = "0.22"
 tar = { version = "0.4", default-features = false }
 # Zstd (decompress ported-ROM `*.img.zst` payloads, e.g. `super.img.zst`).
 # Already linked transitively via kptools, so this adds no new C build surface.

@@ -3295,7 +3295,9 @@ name = "ltbox-patch"
 version = "3.3.3"
 dependencies = [
  "avbtool-rs",
+ "base64 0.22.1",
  "digest 0.11.3",
+ "flate2",
  "fs-err",
  "getrandom 0.4.3",
  "kptools",

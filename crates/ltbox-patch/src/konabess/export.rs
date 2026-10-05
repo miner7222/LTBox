@@ -1,10 +1,12 @@
 //! KonaBess URI and machine-generated DTS-like frequency-table parsing.
 
-use std::{
-    collections::BTreeMap,
-    io::{Cursor, Read},
-};
+use std::{collections::BTreeMap, io::Read};
 
+use base64::{
+    Engine as _, alphabet,
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+};
+use flate2::bufread::GzDecoder;
 use ltbox_core::Result;
 use serde::Deserialize;
 
@@ -370,148 +372,45 @@ pub fn parse_export(input: &str) -> Result<KonaBessExport> {
 }
 
 fn decode_base64(input: &str) -> Result<Vec<u8>> {
-    if !input.len().is_multiple_of(4) {
-        return Err(error("base64 payload length is not a multiple of four"));
-    }
-    let mut output = Vec::with_capacity(input.len() / 4 * 3);
-    for (block_index, block) in input.as_bytes().chunks_exact(4).enumerate() {
-        let is_last = block_index + 1 == input.len() / 4;
-        let padding = match (block[2], block[3]) {
-            (b'=', b'=') => 2,
-            (_, b'=') => 1,
-            (b'=', _) => return Err(error("invalid base64 padding")),
-            _ => 0,
-        };
-        if padding != 0 && !is_last {
-            return Err(error("base64 padding is only valid in the final block"));
-        }
-
-        let a = base64_value(block[0])?;
-        let b = base64_value(block[1])?;
-        let c = if padding == 2 {
-            0
-        } else {
-            base64_value(block[2])?
-        };
-        let d = if padding == 0 {
-            base64_value(block[3])?
-        } else {
-            0
-        };
-        if (padding == 2 && b & 0x0f != 0) || (padding == 1 && c & 0x03 != 0) {
-            return Err(error("base64 payload has non-zero padding bits"));
-        }
-
-        output.push((a << 2) | (b >> 4));
-        if padding < 2 {
-            output.push((b << 4) | (c >> 2));
-        }
-        if padding == 0 {
-            output.push((c << 6) | d);
-        }
-    }
-    Ok(output)
-}
-
-fn base64_value(byte: u8) -> Result<u8> {
-    match byte {
-        b'A'..=b'Z' => Ok(byte - b'A'),
-        b'a'..=b'z' => Ok(byte - b'a' + 26),
-        b'0'..=b'9' => Ok(byte - b'0' + 52),
-        b'+' => Ok(62),
-        b'/' => Ok(63),
-        _ => Err(error(format!("invalid base64 character 0x{byte:02x}"))),
-    }
+    // Standard alphabet, canonical padding required, no non-zero trailing bits.
+    // Whitespace is not skipped: callers trim the whole URI beforehand.
+    const STRICT: GeneralPurpose = GeneralPurpose::new(
+        &alphabet::STANDARD,
+        GeneralPurposeConfig::new()
+            .with_decode_padding_mode(DecodePaddingMode::RequireCanonical)
+            .with_decode_allow_trailing_bits(false),
+    );
+    STRICT
+        .decode(input)
+        .map_err(|e| error(format!("invalid base64 payload: {e}")))
 }
 
 fn decode_gzip(input: &[u8]) -> Result<Vec<u8>> {
     if input.len() < 18 || input[..3] != [0x1f, 0x8b, 8] {
         return Err(error("payload is not a gzip stream"));
     }
-    let flags = input[3];
-    if flags & 0xe0 != 0 {
+    if input[3] & 0xe0 != 0 {
         return Err(error("gzip header uses reserved flags"));
     }
-    let footer_start = input.len() - 8;
-    let mut position = 10usize;
-    if flags & 0x04 != 0 {
-        let length_bytes = input
-            .get(position..position + 2)
-            .ok_or_else(|| error("truncated gzip extra header"))?;
-        let length = usize::from(u16::from_le_bytes([length_bytes[0], length_bytes[1]]));
-        position = position
-            .checked_add(2 + length)
-            .ok_or_else(|| error("gzip header length overflow"))?;
-    }
-    if flags & 0x08 != 0 {
-        position = skip_gzip_c_string(input, position, footer_start, "file name")?;
-    }
-    if flags & 0x10 != 0 {
-        position = skip_gzip_c_string(input, position, footer_start, "comment")?;
-    }
-    if flags & 0x02 != 0 {
-        position = position
-            .checked_add(2)
-            .ok_or_else(|| error("gzip header length overflow"))?;
-    }
-    if position > footer_start {
-        return Err(error("truncated gzip header"));
-    }
 
-    let compressed = &input[position..footer_start];
-    let crc = &input[footer_start..footer_start + 4];
-    let size = &input[footer_start + 4..];
-    let expected_size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]) as usize;
-    if expected_size > MAX_EXPORT_JSON_SIZE {
+    // `bufread::GzDecoder` parses the header and verifies CRC32 and ISIZE. It
+    // decodes a single member and leaves any bytes after it in the slice, which
+    // lets the caller reject trailing data instead of ignoring it.
+    let mut decoder = GzDecoder::new(input);
+    let mut output = Vec::new();
+    (&mut decoder)
+        .take(MAX_EXPORT_JSON_SIZE as u64 + 1)
+        .read_to_end(&mut output)
+        .map_err(|e| error(format!("cannot decompress gzip payload: {e}")))?;
+    if output.len() > MAX_EXPORT_JSON_SIZE {
         return Err(error(format!(
             "decompressed export exceeds {MAX_EXPORT_JSON_SIZE} bytes"
         )));
     }
-    let compressed_size =
-        u32::try_from(compressed.len()).map_err(|_| error("compressed export is too large"))?;
-
-    // `zip` is already a patch-crate dependency. A ZIP local entry carries the
-    // same raw DEFLATE stream, CRC32, and uncompressed size as gzip, so a tiny
-    // synthetic local header lets its checked in-process decoder handle gzip
-    // without adding another compression dependency or invoking a tool.
-    let mut local_entry = Vec::with_capacity(31 + compressed.len());
-    local_entry.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
-    local_entry.extend_from_slice(&20u16.to_le_bytes());
-    local_entry.extend_from_slice(&0u16.to_le_bytes());
-    local_entry.extend_from_slice(&8u16.to_le_bytes());
-    local_entry.extend_from_slice(&0u16.to_le_bytes());
-    local_entry.extend_from_slice(&0u16.to_le_bytes());
-    local_entry.extend_from_slice(crc);
-    local_entry.extend_from_slice(&compressed_size.to_le_bytes());
-    local_entry.extend_from_slice(&(expected_size as u32).to_le_bytes());
-    local_entry.extend_from_slice(&1u16.to_le_bytes());
-    local_entry.extend_from_slice(&0u16.to_le_bytes());
-    local_entry.push(b'x');
-    local_entry.extend_from_slice(compressed);
-
-    let mut cursor = Cursor::new(local_entry);
-    let mut entry = zip::read::read_zipfile_from_stream(&mut cursor)
-        .map_err(|e| error(format!("cannot decompress gzip payload: {e}")))?
-        .ok_or_else(|| error("gzip payload did not contain a DEFLATE stream"))?;
-    let mut output = Vec::with_capacity(expected_size);
-    entry
-        .read_to_end(&mut output)
-        .map_err(|e| error(format!("cannot decompress gzip payload: {e}")))?;
-    if output.len() != expected_size {
-        return Err(error(format!(
-            "gzip size mismatch: header says {expected_size}, decoded {}",
-            output.len()
-        )));
+    if !decoder.get_ref().is_empty() {
+        return Err(error("gzip payload has trailing data"));
     }
     Ok(output)
-}
-
-fn skip_gzip_c_string(input: &[u8], start: usize, limit: usize, field: &str) -> Result<usize> {
-    let relative = input
-        .get(start..limit)
-        .and_then(|bytes| bytes.iter().position(|&byte| byte == 0))
-        .ok_or_else(|| error(format!("unterminated gzip {field}")))?;
-    Ok(start + relative + 1)
 }
 
 fn parse_frequency_table(input: &str) -> Result<GpuTable> {
@@ -763,6 +662,99 @@ mod tests {
     fn rejects_malformed_export() {
         let error = parse_export("konabess://not-base64").unwrap_err();
         assert!(error.to_string().contains("base64"));
+    }
+
+    #[test]
+    fn base64_is_strict() {
+        assert_eq!(decode_base64("QUJD").unwrap(), b"ABC");
+        assert_eq!(decode_base64("QUI=").unwrap(), b"AB");
+        assert_eq!(decode_base64("QQ==").unwrap(), b"A");
+        // Missing padding, whitespace, URL-safe alphabet, and padding inside the stream.
+        assert!(decode_base64("QUI").is_err());
+        assert!(
+            decode_base64(
+                "QUJD
+"
+            )
+            .is_err()
+        );
+        assert!(decode_base64("QU JD").is_err());
+        assert!(decode_base64("QU-_").is_err());
+        assert!(decode_base64("QQ==QUJD").is_err());
+        // Non-zero trailing bits before padding.
+        assert!(decode_base64("QR==").is_err());
+        assert!(decode_base64("QUJ=").is_err());
+    }
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        use flate2::{Compression, write::GzEncoder};
+        use std::io::Write;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn gzip_round_trips_and_rejects_corruption() {
+        let packed = gzip(b"hello konabess");
+        assert_eq!(decode_gzip(&packed).unwrap(), b"hello konabess");
+
+        let mut reserved = packed.clone();
+        reserved[3] |= 0x20;
+        assert!(
+            decode_gzip(&reserved)
+                .unwrap_err()
+                .to_string()
+                .contains("reserved flags")
+        );
+
+        let mut not_gzip = packed.clone();
+        not_gzip[0] = 0;
+        assert!(
+            decode_gzip(&not_gzip)
+                .unwrap_err()
+                .to_string()
+                .contains("not a gzip stream")
+        );
+
+        let mut bad_crc = packed.clone();
+        let crc_at = bad_crc.len() - 8;
+        bad_crc[crc_at] ^= 0xff;
+        assert!(decode_gzip(&bad_crc).is_err());
+
+        let mut bad_size = packed.clone();
+        let size_at = bad_size.len() - 4;
+        bad_size[size_at] ^= 0x01;
+        assert!(decode_gzip(&bad_size).is_err());
+
+        assert!(decode_gzip(&packed[..packed.len() - 3]).is_err());
+
+        let mut trailing = packed.clone();
+        trailing.extend_from_slice(b"junk");
+        assert!(
+            decode_gzip(&trailing)
+                .unwrap_err()
+                .to_string()
+                .contains("trailing data")
+        );
+
+        let mut second_member = packed.clone();
+        second_member.extend_from_slice(&packed);
+        assert!(decode_gzip(&second_member).is_err());
+    }
+
+    #[test]
+    fn gzip_enforces_the_decompressed_size_cap() {
+        let at_cap = gzip(&vec![0u8; MAX_EXPORT_JSON_SIZE]);
+        assert_eq!(decode_gzip(&at_cap).unwrap().len(), MAX_EXPORT_JSON_SIZE);
+
+        let over_cap = gzip(&vec![0u8; MAX_EXPORT_JSON_SIZE + 1]);
+        assert!(
+            decode_gzip(&over_cap)
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds")
+        );
     }
 
     #[test]
