@@ -288,7 +288,7 @@ pub(crate) fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Re
             tag = EFISP_GBL_RELEASE_TAG
         )
     })?;
-    let actual = crate::file_hash::sha256_hex_file(path).map_err(|error| error.to_string())?;
+    let actual = ltbox_core::crypto::sha256_file_hex(path).map_err(|error| error.to_string())?;
     if actual != expected {
         return Err(tr_args!(
             "err_efisp_hash_mismatch",

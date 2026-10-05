@@ -3,41 +3,27 @@
 use crate::*;
 
 /// Format a unix timestamp (seconds) as `YYYY-MM-DD HH:MM:SS UTC`.
-/// Pure stdlib, independent of the local-time backup naming. Uses Howard Hinnant's civil-from-days
-/// algorithm so the proleptic Gregorian conversion stays correct
-/// across leap years and century boundaries without a calendar table.
+/// Independent of the local-time backup naming. A value outside chrono's
+/// representable range falls back to the bare decimal seconds.
 pub(crate) fn format_unix_timestamp_utc(ts: u64) -> String {
-    let days = (ts / 86_400) as i64;
-    let rem = (ts % 86_400) as u32;
-    let h = rem / 3600;
-    let m = (rem % 3600) / 60;
-    let s = rem % 60;
-    let (y, mo, d) = civil_from_days(days);
-    format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
+    match unix_to_datetime(ts) {
+        Some(datetime) => datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        None => ts.to_string(),
+    }
 }
 
 /// Date-only rendering of a rollback index (`YYYY-MM-DD`, UTC). The
 /// rollback-index popup cycles through this as its most human form —
 /// the time-of-day component carries no meaning for a rollback floor.
 pub(crate) fn format_unix_date_utc(ts: u64) -> String {
-    let (y, mo, d) = civil_from_days((ts / 86_400) as i64);
-    format!("{y:04}-{mo:02}-{d:02}")
+    match unix_to_datetime(ts) {
+        Some(datetime) => datetime.format("%Y-%m-%d").to_string(),
+        None => ts.to_string(),
+    }
 }
 
-/// Howard Hinnant `civil_from_days`: (days since 1970-01-01) →
-/// `(year, month, day)` in the proleptic Gregorian calendar.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+fn unix_to_datetime(ts: u64) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::from_timestamp(i64::try_from(ts).ok()?, 0)
 }
 
 /// Whether the rollback floors can be read over fastboot instead of needing
@@ -203,6 +189,28 @@ fn dump_slot_rollback_indices(
 #[cfg(test)]
 mod query_tests {
     use super::*;
+    use crate::poll_state::civil_from_days_ordinal;
+
+    #[test]
+    fn unix_timestamps_format_as_utc_and_dates_round_trip() {
+        assert_eq!(format_unix_timestamp_utc(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(
+            format_unix_timestamp_utc(951_782_400 + 86_399),
+            "2000-02-29 23:59:59 UTC"
+        );
+        assert_eq!(
+            format_unix_timestamp_utc(4_102_444_800),
+            "2100-01-01 00:00:00 UTC"
+        );
+        assert_eq!(format_unix_date_utc(1_700_000_000), "2023-11-14");
+        assert_eq!(format_unix_timestamp_utc(u64::MAX), u64::MAX.to_string());
+        assert_eq!(civil_from_days_ordinal(2000, 2, 29), Some(11_016));
+        assert_eq!(civil_from_days_ordinal(1969, 12, 31), Some(-1));
+        assert_eq!(civil_from_days_ordinal(2100, 2, 29), None);
+        assert_eq!(civil_from_days_ordinal(2023, 13, 1), None);
+        assert_eq!(civil_from_days_ordinal(2023, 0, 1), None);
+    }
+
     #[test]
     fn only_known_fastboot_models_use_stored_floors() {
         for model in ["TB321FU", "TB520FU"] {

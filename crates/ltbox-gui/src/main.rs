@@ -26,7 +26,6 @@ mod demo_logs;
 mod device_name;
 mod device_queries;
 mod device_snapshot;
-mod file_hash;
 mod focus_button;
 mod layout_constraints;
 mod loader;

@@ -5,7 +5,7 @@
 //! validated. Only then is a same-filesystem replacement prepared beside the
 //! installed program and passed to the small, injected swap state machine.
 
-use crate::file_hash::sha256_hex_file;
+use ltbox_core::crypto::sha256_file_hex;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
@@ -712,7 +712,7 @@ pub(crate) fn install_release_and_restart(tag: String) -> Result<(), SelfUpdateF
                 SelfUpdateFailure::new(SelfUpdateFailureKind::HashMismatch, error)
             })
         })?;
-    let actual = sha256_hex_file(&archive_path).map_err(|error| {
+    let actual = sha256_file_hex(&archive_path).map_err(|error| {
         cleanup_downloads(&archive_path, &checksum_path);
         SelfUpdateFailure::new(SelfUpdateFailureKind::HashMismatch, error.to_string())
     })?;
@@ -915,7 +915,7 @@ mod tests {
                 let expected = parse_sha256_sidecar(
                     &fs::read_to_string(&checksum_path).map_err(|error| error.to_string())?,
                 )?;
-                let actual = sha256_hex_file(&archive_path).map_err(|error| error.to_string())?;
+                let actual = sha256_file_hex(&archive_path).map_err(|error| error.to_string())?;
                 if actual != expected {
                     return Err(format!(
                         "SHA-256 mismatch: expected {expected}, downloaded {actual}"

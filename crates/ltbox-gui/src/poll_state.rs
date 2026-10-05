@@ -201,33 +201,14 @@ impl RollbackValueFormat {
     }
 }
 
-/// Convert a proleptic Gregorian UTC date to days since the Unix epoch
-/// using the inverse of `civil_from_days`. Returns `None` for impossible
-/// dates such as February 30.
+/// Convert a proleptic Gregorian UTC date to days since the Unix epoch.
+/// Returns `None` for impossible dates such as February 30.
 pub(crate) fn civil_from_days_ordinal(year: i32, month: u32, day: u32) -> Option<i64> {
-    const DAYS_IN_MONTH: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let mut days_in_month = DAYS_IN_MONTH;
-    if leap_year {
-        days_in_month[1] = 29;
-    }
-    let month_index = usize::try_from(month.checked_sub(1)?).ok()?;
-    if day > days_in_month[month_index] {
-        return None;
-    }
-
-    let adjusted_year = if month <= 2 { year - 1 } else { year };
-    let era = if adjusted_year >= 0 {
-        adjusted_year
-    } else {
-        adjusted_year - 399
-    } / 400;
-    let era = i64::from(era);
-    let year_of_era = i64::from(adjusted_year) - era * 400;
-    let month_shifted = i64::from(if month > 2 { month - 3 } else { month + 9 });
-    let day_of_year = (153 * month_shifted + 2) / 5 + i64::from(day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    Some(era * 146_097 + day_of_era - 719_468)
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    Some(
+        date.signed_duration_since(chrono::DateTime::UNIX_EPOCH.date_naive())
+            .num_days(),
+    )
 }
 
 /// Current Unix timestamp in whole seconds.

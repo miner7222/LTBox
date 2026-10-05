@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 
 use fs_err as fs;
-use sha2::{Digest, Sha256};
 
 use ltbox_core::downloader::download_to_file;
 use ltbox_core::github::{GitHubClient, WorkflowArtifact};
@@ -453,33 +452,13 @@ fn compare_artifact_digest(
     }
 }
 
-fn sha256_hex_file(path: &Path) -> Result<String> {
-    use std::io::Read;
-
-    let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
-}
-
 fn verify_nightly_artifact_zip(
     path: &Path,
     artifact_name: &str,
     reported_digest: Option<&str>,
     log: &mut Vec<String>,
 ) -> Result<()> {
-    let actual = sha256_hex_file(path)?;
+    let actual = ltbox_core::crypto::sha256_file_hex(path)?;
     match compare_artifact_digest(reported_digest, &actual) {
         Ok(ArtifactDigestStatus::Verified) => Ok(()),
         Ok(ArtifactDigestStatus::Skipped) => {
