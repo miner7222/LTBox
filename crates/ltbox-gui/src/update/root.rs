@@ -189,7 +189,7 @@ impl App {
                         Provider::KernelSU => RootProvider::KernelSU,
                         Provider::KernelSUNext => RootProvider::KernelSUNext,
                         Provider::SukiSU => RootProvider::SukiSU,
-                        Provider::ReSukiSU => RootProvider::ReSukiSU,
+                        Provider::BakaSU => RootProvider::BakaSU,
                         Provider::APatch => RootProvider::APatch,
                         Provider::FolkPatch => RootProvider::FolkPatch,
                     };
@@ -681,10 +681,10 @@ mod tests {
     }
 
     #[test]
-    fn resukisu_keeps_release_channel_when_switching_provider() {
+    fn bakasu_keeps_release_channel_when_switching_provider() {
         let mut app = App::default();
         app.root.version = Some(VerChoice::Stable);
-        let _ = app.update_root(RootMsg::RootProvider(Provider::ReSukiSU));
+        let _ = app.update_root(RootMsg::RootProvider(Provider::BakaSU));
         assert_eq!(app.root.version, Some(VerChoice::Stable));
     }
 

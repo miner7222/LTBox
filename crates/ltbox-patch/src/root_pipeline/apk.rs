@@ -30,7 +30,7 @@ pub(super) fn ksu_manager_stable_preferences(provider: RootProvider) -> &'static
         RootProvider::KernelSUNext => &["-spoofed", "-release.apk"],
         RootProvider::SukiSU => &["-spoofed", "-release.apk", "_releases.apk"],
         // Device ABI, not host ABI: LTBox targets ARM64 Android devices.
-        RootProvider::ReSukiSU => &["-arm64-v8a-release.apk", "-universal-release.apk"],
+        RootProvider::BakaSU => &["-arm64-v8a-release.apk", "-universal-release.apk"],
         _ => &[],
     }
 }
@@ -48,9 +48,9 @@ pub(super) fn ksu_manager_nightly_preferences(provider: RootProvider) -> &'stati
         // signalled intent — keep spoofed first so future runs pick it up
         // without code changes.
         RootProvider::SukiSU => &["manager-spoofed", "manager"],
-        // ReSukiSU emits four variants; user preference is
+        // BakaSU emits four variants; user preference is
         // release > debug, spoofed > plain, checked in that order.
-        RootProvider::ReSukiSU => &[
+        RootProvider::BakaSU => &[
             "Spoofed-Manager-release",
             "Manager-release",
             "Spoofed-Manager-debug",
@@ -177,7 +177,7 @@ pub(super) fn extract_first_apk_from_zip(
     })?;
     // Pick `arm64-v8a` over generic / debug / x86 variants when the
     // container ships multiple split APKs (release ZIPs from KSU
-    // family + ReSukiSU look like that). Falls back to first non-debug
+    // family + BakaSU look like that). Falls back to first non-debug
     // APK, then the first APK at all.
     let member_names: Vec<String> = archive
         .file_names()
@@ -251,9 +251,9 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn resukisu_release_prefers_arm64_and_falls_back_to_universal() {
+    fn bakasu_release_prefers_arm64_and_falls_back_to_universal() {
         use super::{RootProvider, ksu_manager_stable_preferences};
-        let preferences = ksu_manager_stable_preferences(RootProvider::ReSukiSU);
+        let preferences = ksu_manager_stable_preferences(RootProvider::BakaSU);
         let mut assets: Vec<(String, String)> = [
             "ReSukiSU_v4.2.0-rc2_35144-x86_64-release.apk",
             "ReSukiSU_v4.2.0-rc2_35144-universal-release.apk",

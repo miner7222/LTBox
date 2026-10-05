@@ -205,7 +205,7 @@ pub(crate) fn root_worker(
             Provider::KernelSU => RootProvider::KernelSU,
             Provider::KernelSUNext => RootProvider::KernelSUNext,
             Provider::SukiSU => RootProvider::SukiSU,
-            Provider::ReSukiSU => RootProvider::ReSukiSU,
+            Provider::BakaSU => RootProvider::BakaSU,
             Provider::APatch => RootProvider::APatch,
             Provider::FolkPatch => RootProvider::FolkPatch,
         }

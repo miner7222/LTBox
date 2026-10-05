@@ -1,4 +1,4 @@
-//! KernelSU-family (KernelSU / KSU-Next / SukiSU / ReSukiSU) manager APK,
+//! KernelSU-family (KernelSU / KSU-Next / SukiSU / BakaSU) manager APK,
 //! kernel `.ko`, and `ksuinit` payload acquisition.
 //!
 //! Also hosts the manager-APK orchestration entry point
@@ -1131,7 +1131,7 @@ mod tests {
     #[test]
     fn ksu_nightly_artifact_selection_picks_new_lkm_naming() {
         // Real artifact list emitted by KernelSU / KSU-Next / SukiSU /
-        // ReSukiSU nightlies — bare `<branch>-<kver>-lkm` wrapper, distinct
+        // BakaSU nightlies — bare `<branch>-<kver>-lkm` wrapper, distinct
         // from the legacy `*_kernelsu.ko` filename this matcher also accepts.
         let artifacts = vec![
             "manager".to_string(),
@@ -1296,8 +1296,8 @@ mod tests {
     #[test]
     fn tag_runs_are_chosen_by_the_payload_they_carry() {
         let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        // ReSukiSU v4.2.0-rc3: the Lints Check run for the tag has no
-        // artifacts; the build run carries the module and ksuinit.
+        // BakaSU v4.2.0-rc3 (released as ReSukiSU): the Lints Check run for the
+        // tag has no artifacts; the build run carries the module and ksuinit.
         let lint = names(&[]);
         let build = names(&[
             "ksud-aarch64-linux-android",
@@ -1368,7 +1368,7 @@ mod tests {
             RootProvider::KernelSU,
             RootProvider::KernelSUNext,
             RootProvider::SukiSU,
-            RootProvider::ReSukiSU,
+            RootProvider::BakaSU,
         ] {
             let workflows = crate::root_pipeline::provider_release_workflows(provider);
             assert_eq!(workflows.first(), Some(&"release.yml"), "{provider:?}");
@@ -1432,7 +1432,7 @@ mod tests {
             (RootProvider::KernelSU, "tiann/KernelSU"),
             (RootProvider::KernelSUNext, "KernelSU-Next/KernelSU-Next"),
             (RootProvider::SukiSU, "SukiSU-Ultra/SukiSU-Ultra"),
-            (RootProvider::ReSukiSU, "ReSukiSU/ReSukiSU"),
+            (RootProvider::BakaSU, "Baka-SU/BakaSU"),
         ];
 
         let mut report: Vec<(String, String)> = Vec::new();
@@ -1583,7 +1583,7 @@ mod tests {
     /// Nightly counterpart to `lkm_payload_download_smoke` — exercises
     /// `download_ksu_payload_nightly` so the per-kernel `.ko` artifact
     /// selection + ksuinit extraction get checked against every
-    /// provider's actual nightly run, including ReSukiSU.
+    /// provider's actual nightly run, including BakaSU.
     ///
     ///     cargo test -p ltbox-patch --lib -- --ignored --nocapture lkm_payload_nightly_download_smoke
     #[test]
@@ -1594,7 +1594,7 @@ mod tests {
             (RootProvider::KernelSU, "tiann/KernelSU"),
             (RootProvider::KernelSUNext, "KernelSU-Next/KernelSU-Next"),
             (RootProvider::SukiSU, "SukiSU-Ultra/SukiSU-Ultra"),
-            (RootProvider::ReSukiSU, "ReSukiSU/ReSukiSU"),
+            (RootProvider::BakaSU, "Baka-SU/BakaSU"),
         ];
 
         let mut report: Vec<(String, String)> = Vec::new();

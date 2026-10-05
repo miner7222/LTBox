@@ -54,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [Magisk, KernelSU, KernelSUNext, SukiSU, ReSukiSU, APatch, FolkPatch, Skroot]
+        provider: [Magisk, KernelSU, KernelSUNext, SukiSU, BakaSU, APatch, FolkPatch, Skroot]
     steps:
       - uses: actions/download-artifact@v8
         with:

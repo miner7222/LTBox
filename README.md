@@ -60,7 +60,7 @@ The interface supports **English, Korean, Simplified Chinese, Russian, Japanese,
 
 ### Root providers
 
-Supported integrations include **Magisk, KernelSU, KernelSU Next, SukiSU Ultra, ReSukiSU, APatch, FolkPatch, and SKRoot Lite**. Availability depends on the device and provider.
+Supported integrations include **Magisk, KernelSU, KernelSU Next, SukiSU Ultra, BakaSU, APatch, FolkPatch, and SKRoot Lite**. Availability depends on the device and provider.
 
 ### Advanced tools
 

@@ -60,7 +60,7 @@ scoop install ltbox
 
 ### Root 方案
 
-支持 **Magisk、KernelSU、KernelSU Next、SukiSU Ultra、ReSukiSU、APatch、FolkPatch 和 SKRoot Lite**。可用性取决于设备和所选方案。
+支持 **Magisk、KernelSU、KernelSU Next、SukiSU Ultra、BakaSU、APatch、FolkPatch 和 SKRoot Lite**。可用性取决于设备和所选方案。
 
 ### 高级工具
 

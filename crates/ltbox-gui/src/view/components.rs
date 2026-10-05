@@ -1268,7 +1268,7 @@ impl Provider {
             Self::KernelSU => include_bytes!("../../assets/icons/kernelsu.svg"),
             Self::KernelSUNext => include_bytes!("../../assets/icons/kernelsu_next.svg"),
             Self::SukiSU => include_bytes!("../../assets/icons/sukisu.svg"),
-            Self::ReSukiSU => include_bytes!("../../assets/icons/sukisu.svg"),
+            Self::BakaSU => include_bytes!("../../assets/icons/bakasu.svg"),
             Self::APatch => include_bytes!("../../assets/icons/apatch.svg"),
             Self::FolkPatch => include_bytes!("../../assets/icons/folkpatch.svg"),
         };

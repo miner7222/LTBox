@@ -89,7 +89,7 @@ pub enum RootProvider {
     KernelSU,
     KernelSUNext,
     SukiSU,
-    ReSukiSU,
+    BakaSU,
     APatch,
     FolkPatch,
     Skroot,
@@ -268,7 +268,7 @@ pub fn provider_workflow(provider: RootProvider) -> Option<(&'static str, &'stat
         RootProvider::KernelSU => ("build-manager.yml", "main"),
         RootProvider::KernelSUNext => ("build-manager-ci.yml", "dev"),
         RootProvider::SukiSU => ("build-manager.yml", "main"),
-        RootProvider::ReSukiSU => ("build-manager.yml", "main"),
+        RootProvider::BakaSU => ("build-manager.yml", "main"),
         RootProvider::APatch => ("build.yml", "main"),
         RootProvider::FolkPatch => ("build.yml", "main"),
         RootProvider::Skroot => return None,
@@ -278,11 +278,11 @@ pub fn provider_workflow(provider: RootProvider) -> Option<(&'static str, &'stat
 /// Workflows that build a KernelSU-family provider's **release tags**, in
 /// preference order. Tagged payloads come from these runs only, never from a
 /// nightly. `release.yml` is the tag pipeline for every provider here; the
-/// build workflow is a fallback for tags it also builds (ReSukiSU does, the
+/// build workflow is a fallback for tags it also builds (BakaSU does, the
 /// KernelSU-Next `-ci` workflow does not).
 pub fn provider_release_workflows(provider: RootProvider) -> &'static [&'static str] {
     match provider {
-        RootProvider::KernelSU | RootProvider::SukiSU | RootProvider::ReSukiSU => {
+        RootProvider::KernelSU | RootProvider::SukiSU | RootProvider::BakaSU => {
             &["release.yml", "build-manager.yml"]
         }
         RootProvider::KernelSUNext => &["release.yml", "build-manager-ci.yml"],
@@ -430,7 +430,9 @@ pub fn provider_repo(provider: RootProvider) -> Option<&'static str> {
         // redirects but its release assets aren't mirrored, so pin the new slug.
         RootProvider::KernelSUNext => "KernelSU-Next/KernelSU-Next",
         RootProvider::SukiSU => "SukiSU-Ultra/SukiSU-Ultra",
-        RootProvider::ReSukiSU => "ReSukiSU/ReSukiSU",
+        // Formerly `ReSukiSU/ReSukiSU`. GitHub redirects the old slug, but
+        // nightly.link does not, so artifact downloads need the new one.
+        RootProvider::BakaSU => "Baka-SU/BakaSU",
         RootProvider::APatch => "bmax121/APatch",
         RootProvider::FolkPatch => "LyraVoid/FolkPatch",
         RootProvider::Skroot => "abcz316/SKRoot-linuxKernelRoot",
@@ -994,7 +996,7 @@ mod root_target_tests {
             (RootProvider::KernelSU, RootFamily::KernelSU),
             (RootProvider::KernelSUNext, RootFamily::KernelSU),
             (RootProvider::SukiSU, RootFamily::KernelSU),
-            (RootProvider::ReSukiSU, RootFamily::KernelSU),
+            (RootProvider::BakaSU, RootFamily::KernelSU),
             (RootProvider::APatch, RootFamily::APatch),
             (RootProvider::FolkPatch, RootFamily::APatch),
             (RootProvider::Skroot, RootFamily::Skroot),

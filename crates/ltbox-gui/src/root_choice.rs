@@ -36,7 +36,7 @@ impl Family {
                 Provider::KernelSU,
                 Provider::KernelSUNext,
                 Provider::SukiSU,
-                Provider::ReSukiSU,
+                Provider::BakaSU,
                 Provider::KernelSULocal,
             ],
             Self::APatch => &[Provider::APatch, Provider::FolkPatch],
@@ -52,7 +52,7 @@ pub(crate) enum Provider {
     KernelSU,
     KernelSUNext,
     SukiSU,
-    ReSukiSU,
+    BakaSU,
     APatch,
     FolkPatch,
 }
@@ -64,7 +64,7 @@ impl Provider {
             Self::KernelSU => "provider_ksu",
             Self::KernelSUNext => "provider_ksu_next",
             Self::SukiSU => "provider_sukisu",
-            Self::ReSukiSU => "provider_resukisu",
+            Self::BakaSU => "provider_bakasu",
             Self::APatch => "provider_apatch",
             Self::FolkPatch => "provider_folkpatch",
         }
@@ -77,7 +77,7 @@ impl Provider {
             Self::KernelSU => Some("provider_ksu_desc"),
             Self::KernelSUNext => Some("provider_ksu_next_desc"),
             Self::SukiSU => Some("provider_sukisu_desc"),
-            Self::ReSukiSU => Some("provider_resukisu_desc"),
+            Self::BakaSU => Some("provider_bakasu_desc"),
             Self::APatch => Some("provider_apatch_desc"),
             Self::FolkPatch => Some("provider_folkpatch_desc"),
         }

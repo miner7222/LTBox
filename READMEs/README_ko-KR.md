@@ -60,7 +60,7 @@ USB 설정을 마친 뒤 태블릿을 연결하고 사이드바에서 작업을 
 
 ### 루트 제공자
 
-**Magisk, KernelSU, KernelSU Next, SukiSU Ultra, ReSukiSU, APatch, FolkPatch, SKRoot Lite**를 지원합니다. 사용 가능 여부는 기기와 제공자에 따라 다릅니다.
+**Magisk, KernelSU, KernelSU Next, SukiSU Ultra, BakaSU, APatch, FolkPatch, SKRoot Lite**를 지원합니다. 사용 가능 여부는 기기와 제공자에 따라 다릅니다.
 
 ### 고급 도구
 
