@@ -42,6 +42,47 @@ fn exploit_gate_kind(
     }
 }
 
+/// What a vendor_boot fingerprint settles about the image's profile.
+struct ImageIdentity {
+    /// Profile deciding the exploit route; `None` when no fingerprint is
+    /// available or it names no model and the detected model is not known.
+    capabilities: Option<&'static ltbox_core::model::ModelCapabilities>,
+    /// Set when the fingerprint names no known model and the detected model's
+    /// profile stands in for it.
+    unidentified_as: Option<&'static str>,
+}
+
+/// Resolve the profile for an image dumped from the connected device. A
+/// fingerprint naming no known model cannot contradict the device, so a known
+/// detected model's profile is used instead; a fingerprint naming a model keeps
+/// its own profile, preferring a GBL one as before.
+fn image_identity(fingerprint: Option<&str>, device_model: &str) -> ImageIdentity {
+    use ltbox_core::model::{
+        capabilities, fingerprint_capabilities, fingerprint_names_known_model, known_model,
+    };
+    match fingerprint {
+        None => ImageIdentity {
+            capabilities: None,
+            unidentified_as: None,
+        },
+        Some(fp) if !fingerprint_names_known_model(fp) => {
+            let model = known_model(device_model);
+            ImageIdentity {
+                capabilities: model.map(capabilities),
+                unidentified_as: model,
+            }
+        }
+        Some(fp) => {
+            let mut profiles = fingerprint_capabilities(fp);
+            let first = profiles.next();
+            ImageIdentity {
+                capabilities: profiles.find(|p| p.root_uses_gbl).or(first),
+                unidentified_as: None,
+            }
+        }
+    }
+}
+
 trait KonaBessInspectionBackend {
     fn resolve_active_slot(&mut self, log: &mut Vec<String>) -> Result<String, String>;
     fn resolve_probable_dtb_index(&mut self, log: &mut Vec<String>) -> Option<usize>;
@@ -139,11 +180,19 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
         let fingerprint = ltbox_patch::avb::extract_image_avb_info(vendor_boot)
             .ok()
             .and_then(|info| ltbox_patch::avb::build_fingerprint(&info));
-        let image_capabilities = fingerprint.as_deref().and_then(|fp| {
-            let mut profiles = ltbox_core::model::fingerprint_capabilities(fp);
-            let first = profiles.next();
-            profiles.find(|p| p.root_uses_gbl).or(first)
-        });
+        let identity = image_identity(fingerprint.as_deref(), self.device_model);
+        if let (Some(model), Some(fp)) = (identity.unidentified_as, fingerprint.as_deref()) {
+            live!(
+                log,
+                "[KonaBess] {}",
+                tr_args!(
+                    "live_image_fingerprint_unidentified",
+                    fingerprint = fp,
+                    model = model
+                )
+            );
+        }
+        let image_capabilities = identity.capabilities;
         let unsupported = (!ltbox_core::model::capabilities(self.device_model).konabess)
             .then_some(self.device_model)
             .or_else(|| {
@@ -291,6 +340,7 @@ fn execute_inspection<B: KonaBessInspectionBackend>(
             backup_dir,
             slot_suffix,
             probable_dtb_index,
+            device_model: paths.device_model.clone(),
         },
         candidates,
     ))
@@ -609,11 +659,27 @@ pub(crate) fn konabess_flash_worker(
     {
         return Err(tr_args!("model_unsupported", model = model));
     }
-    // The fingerprint selects the route; execute_flash separately verifies
-    // the inspection ABL and the current session ABL before trusting it.
-    let gbl_verified = prepared_fingerprint
-        .as_deref()
-        .is_some_and(|fp| ltbox_core::model::fingerprint_capabilities(fp).any(|p| p.root_uses_gbl));
+    // The fingerprint selects the route (the detected model's profile when it
+    // names none); execute_flash separately verifies the inspection ABL and
+    // the current session ABL before trusting it.
+    let identity = image_identity(prepared_fingerprint.as_deref(), &prepared.device_model);
+    if let (Some(model), Some(fp)) = (identity.unidentified_as, prepared_fingerprint.as_deref()) {
+        if !ltbox_core::model::capabilities(model).konabess {
+            return Err(tr_args!("model_unsupported", model = model));
+        }
+        live!(
+            log,
+            "[KonaBess] {}",
+            tr_args!(
+                "live_image_fingerprint_unidentified",
+                fingerprint = fp,
+                model = model
+            )
+        );
+    }
+    let gbl_verified = identity
+        .capabilities
+        .is_some_and(|profile| profile.root_uses_gbl);
     let mut backend = FlashDeviceBackend {
         loader: &loader,
         session: None,
@@ -879,6 +945,7 @@ mod tests {
             backup_dir: root.join("backup_konabess"),
             slot_suffix: "_b".into(),
             probable_dtb_index: Some(2),
+            device_model: "test-model".into(),
             work_dir,
         }
     }
@@ -902,6 +969,32 @@ mod tests {
         assert!(crate::efisp_is_empty(&[0; 32]));
         assert!(!crate::efisp_is_empty(&[0, 0, 1, 0]));
         assert!(validate_signing_key(Some("fixed-or-unknown")).is_err());
+    }
+
+    #[test]
+    fn image_identity_falls_back_to_a_known_detected_model_only() {
+        let baldur = "Lenovo/lineage_baldur/baldur:17/CP2A/eng:userdebug/test-keys";
+        let unknown = "Lenovo/lineage_foo/foo:17/CP2A/eng:userdebug/test-keys";
+        let tb323fu = ltbox_core::model::capabilities("TB323FU");
+
+        // A codename identifies the image itself; no fallback is involved.
+        let identity = image_identity(Some(baldur), "");
+        assert_eq!(identity.capabilities, Some(tb323fu));
+        assert_eq!(identity.unidentified_as, None);
+
+        // No known model in the fingerprint: the detected TB323FU decides,
+        // which keeps the efisp/GBL exploit route.
+        let identity = image_identity(Some(unknown), "TB323FU");
+        assert!(identity.capabilities.is_some_and(|p| p.root_uses_gbl));
+        assert_eq!(identity.unidentified_as, Some("TB323FU"));
+
+        // Without a known detected model there is no profile to stand in.
+        for device in ["", "Legion Y700"] {
+            let identity = image_identity(Some(unknown), device);
+            assert_eq!(identity.capabilities, None, "{device:?}");
+            assert_eq!(identity.unidentified_as, None, "{device:?}");
+        }
+        assert_eq!(image_identity(None, "TB323FU").capabilities, None);
     }
 
     #[test]

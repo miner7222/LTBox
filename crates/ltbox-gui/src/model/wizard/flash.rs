@@ -129,7 +129,14 @@ impl FirmwareIdentity {
 
     pub(crate) fn from_avb_info(info: &ltbox_patch::avb::AvbImageInfo) -> Self {
         let fingerprint = ltbox_patch::avb::build_fingerprint(info);
-        let model_token = fingerprint.as_deref().and_then(fingerprint_model_token);
+        // A known model (or the codename a custom ROM uses for it) wins over
+        // the product-name split, so a codename reports its canonical model.
+        let model_token = fingerprint.as_deref().and_then(|fp| {
+            ltbox_core::model::fingerprint_models(fp)
+                .next()
+                .map(str::to_owned)
+                .or_else(|| fingerprint_model_token(fp))
+        });
         Self {
             key_class: ltbox_patch::key_map::classify_pubkey(info.public_key_sha1.as_deref()),
             efisp_load: ltbox_patch::efisp_load::EfispLoad::Undetermined,

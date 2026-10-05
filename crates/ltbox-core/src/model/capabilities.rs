@@ -152,6 +152,21 @@ const XIAOXIN_PRO13: ModelCapabilities = ModelCapabilities {
     ..GENERIC
 };
 
+/// Device codenames that custom ROMs put in build fingerprints in place of the
+/// model token, as `(codename, canonical model)`. A ROM built for TB323FU
+/// reports `lineage_baldur/baldur` rather than `TB323FU`, so the model token
+/// alone cannot identify it. Matching uses the same alphanumeric-boundary rule
+/// as the model tokens.
+const CODENAMES: [(&str, &str); 7] = [
+    ("asphalt", "TB320FC"),
+    ("kirby", "TB321FU"),
+    ("elden", "TB322FC"),
+    ("baldur", "TB323FU"),
+    ("wuji", "TB324ZC"),
+    ("lapis", "TB520FU"),
+    ("topaz", "TB710FU"),
+];
+
 const PROFILES: [(&str, &ModelCapabilities); 11] = [
     (SUPPORTED_MODELS[0], &TB320FC),
     (SUPPORTED_MODELS[1], &TB321FU),
@@ -165,6 +180,37 @@ const PROFILES: [(&str, &ModelCapabilities); 11] = [
     (SUPPORTED_MODELS[9], &GENERIC),
     (LAVIE_TAB_9QHD1_MODEL, &TB320FC),
 ];
+
+/// Whether a fingerprint names the codename of model `model`.
+pub(super) fn codename_names_model(fp: &str, model: &str) -> bool {
+    CODENAMES
+        .iter()
+        .any(|(codename, canonical)| *canonical == model && token_match(fp, codename))
+}
+
+/// Whether a fingerprint names a profile, by model token or by codename.
+fn names_profile(fp: &str, name: &str) -> bool {
+    token_match(fp, name) || codename_names_model(fp, name)
+}
+
+/// Canonical name of a known model, ignoring ASCII case and spaces (so a
+/// `ro.product.model` read as `TB 320FC` resolves). `None` for an empty or
+/// unrecognized name; unlike [`capabilities`] there is no generic fallback.
+pub fn known_model(name: &str) -> Option<&'static str> {
+    let name = name.replace(' ', "");
+    if name.is_empty() {
+        return None;
+    }
+    PROFILES
+        .iter()
+        .find(|(profile, _)| profile.eq_ignore_ascii_case(&name))
+        .map(|(profile, _)| *profile)
+}
+
+/// Whether a fingerprint names at least one known model, by token or codename.
+pub fn fingerprint_names_known_model(fp: &str) -> bool {
+    fingerprint_models(fp).next().is_some()
+}
 
 /// Resolve an exact model name, ignoring ASCII case, or use the generic profile.
 ///
@@ -190,17 +236,17 @@ pub fn capabilities_from_fingerprint(fp: &str) -> Option<&'static ModelCapabilit
 pub fn fingerprint_capabilities(fp: &str) -> impl Iterator<Item = &'static ModelCapabilities> + '_ {
     PROFILES
         .iter()
-        .filter(move |(name, _)| token_match(fp, name))
+        .filter(move |(name, _)| names_profile(fp, name))
         .map(|(_, profile)| *profile)
 }
 
-/// Model names explicitly named in a fingerprint, in [`fingerprint_capabilities`]
-/// order. Use these to name the model in a message instead of inferring it from
-/// a profile's fields.
+/// Model names explicitly named in a fingerprint (canonical names, never
+/// codenames), in [`fingerprint_capabilities`] order. Use these to name the
+/// model in a message instead of inferring it from a profile's fields.
 pub fn fingerprint_models(fp: &str) -> impl Iterator<Item = &'static str> + '_ {
     PROFILES
         .iter()
-        .filter(move |(name, _)| token_match(fp, name))
+        .filter(move |(name, _)| names_profile(fp, name))
         .map(|(name, _)| *name)
 }
 
@@ -251,6 +297,75 @@ mod tests {
         let names: Vec<_> = fingerprint_models("Lenovo/TB390FU/TB390FU:15/build").collect();
         assert_eq!(names, ["TB390FU"]);
         assert_eq!(fingerprint_models("Lenovo/TB324ZCextra/x:15").count(), 0);
+    }
+
+    const BALDUR_FP: &str =
+        "Lenovo/lineage_baldur/baldur:17/CP2A.260605.016/eng.androi:userdebug/test-keys";
+
+    #[test]
+    fn codename_fingerprint_resolves_to_its_model() {
+        assert_eq!(capabilities_from_fingerprint(BALDUR_FP), Some(&TB323FU));
+        let names: Vec<_> = fingerprint_models(BALDUR_FP).collect();
+        assert_eq!(names, ["TB323FU"]);
+        // Token and codename together yield the model once.
+        let both = "Lenovo/TB323FU/baldur:17/build";
+        assert_eq!(fingerprint_models(both).collect::<Vec<_>>(), ["TB323FU"]);
+        assert_eq!(fingerprint_capabilities(both).count(), 1);
+        assert_eq!(
+            fingerprint_model_lacking(BALDUR_FP, |c| c.rescue),
+            Some("TB323FU")
+        );
+        assert_eq!(fingerprint_model_lacking(BALDUR_FP, |c| c.root), None);
+    }
+
+    #[test]
+    fn every_codename_resolves_to_its_own_profile() {
+        for (codename, model) in CODENAMES {
+            let fp = format!("Lenovo/lineage_{codename}/{codename}:17/build:userdebug/test-keys");
+            assert_eq!(fingerprint_models(&fp).collect::<Vec<_>>(), [model], "{fp}");
+            assert_eq!(
+                capabilities_from_fingerprint(&fp),
+                Some(capabilities(model)),
+                "{fp}"
+            );
+            assert_eq!(known_model(model), Some(model), "{model}");
+        }
+    }
+
+    #[test]
+    fn codenames_keep_alphanumeric_boundaries() {
+        for fp in [
+            "Lenovo/baldurx/baldurx:17/build",
+            "Lenovo/xbaldur/xbaldur:17/build",
+            "Lenovo/Baldur/Baldur:17/build",
+        ] {
+            assert_eq!(capabilities_from_fingerprint(fp), None, "{fp}");
+            assert!(!fingerprint_names_known_model(fp), "{fp}");
+        }
+    }
+
+    #[test]
+    fn fingerprint_names_known_model_covers_tokens_and_codenames() {
+        assert!(fingerprint_names_known_model(
+            "Lenovo/TB323FU/TB323FU:16/build"
+        ));
+        assert!(fingerprint_names_known_model(BALDUR_FP));
+        assert!(!fingerprint_names_known_model(
+            "Lenovo/lineage_foo/foo:17/CP2A/eng:userdebug/test-keys"
+        ));
+        assert!(!fingerprint_names_known_model(""));
+    }
+
+    #[test]
+    fn known_model_resolves_canonical_names_only() {
+        assert_eq!(known_model("tb323fu"), Some("TB323FU"));
+        assert_eq!(known_model("TB323FU"), Some("TB323FU"));
+        assert_eq!(known_model("lavietab9qhd1"), Some("LAVIETab9QHD1"));
+        assert_eq!(known_model("LAVIE Tab 9QHD1"), Some("LAVIETab9QHD1"));
+        assert_eq!(known_model(" "), None);
+        assert_eq!(known_model(""), None);
+        assert_eq!(known_model("Legion Y700"), None);
+        assert_eq!(known_model("baldur"), None);
     }
 
     #[test]

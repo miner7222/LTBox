@@ -644,6 +644,7 @@
   "live_flashparts_scan_start": "正在扫描分区",
   "live_flashphys_flashing": "刷写 LUN {lun} ← {file}",
   "live_flashphys_lun_failed": "LUN {lun} 失败：{error}",
+  "live_image_fingerprint_unidentified": "构建指纹未包含已知机型（{fingerprint}）——按检测到的机型 {model} 继续",
   "live_image_flash_completed": "镜像刷写完成",
   "live_manual_reboot_edl_wait": "请手动将设备重启到 EDL（9008）模式。LTBox 会继续等待。",
   "live_no_adb_device_found": "未找到 ADB 设备",

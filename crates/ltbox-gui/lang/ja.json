@@ -644,6 +644,7 @@
   "live_flashparts_scan_start": "パーティションをスキャン中",
   "live_flashphys_flashing": "LUN {lun} をフラッシュ中 ← {file}",
   "live_flashphys_lun_failed": "LUN {lun} が失敗しました：{error}",
+  "live_image_fingerprint_unidentified": "ビルドフィンガープリントに既知のモデル名がありません（{fingerprint}）— 検出したモデル {model} として続行します",
   "live_image_flash_completed": "イメージのフラッシュが完了しました",
   "live_manual_reboot_edl_wait": "手動でデバイスをEDL (9008) モードに再起動してください。LTBoxは待機し続けます。",
   "live_no_adb_device_found": "ADBデバイスが見つかりません",

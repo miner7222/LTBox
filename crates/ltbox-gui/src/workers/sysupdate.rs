@@ -340,8 +340,15 @@ pub(crate) fn sysupdate_worker(
                         if let Some(error) = ltbox_patch::avb::build_fingerprint(&info)
                             .as_deref()
                             .and_then(|fp| {
-                                ltbox_core::model::fingerprint_models(fp)
-                                    .find_map(rescue_capability_error)
+                                if ltbox_core::model::fingerprint_names_known_model(fp) {
+                                    ltbox_core::model::fingerprint_models(fp)
+                                        .find_map(rescue_capability_error)
+                                } else {
+                                    // A fingerprint that names no model cannot
+                                    // vouch for one: gate on the detected model.
+                                    ltbox_core::model::known_model(&device_model)
+                                        .and_then(rescue_capability_error)
+                                }
                             })
                         {
                             session.reset_tolerant(&mut log);
@@ -354,6 +361,20 @@ pub(crate) fn sysupdate_worker(
                                     log,
                                     "[Rescue] {}",
                                     ltbox_core::i18n::tr("live_rescue_model_check_ok")
+                                );
+                            }
+                            ModelValidation::Unidentified {
+                                fingerprint,
+                                device_model,
+                            } => {
+                                ltbox_core::live!(
+                                    log,
+                                    "[Rescue] {}",
+                                    tr_args!(
+                                        "live_image_fingerprint_unidentified",
+                                        fingerprint = fingerprint,
+                                        model = device_model
+                                    )
                                 );
                             }
                             ModelValidation::Missing => {

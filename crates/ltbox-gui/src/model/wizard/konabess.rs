@@ -20,6 +20,8 @@ pub(crate) struct KonaBessPrepared {
     pub(crate) slot_suffix: String,
     /// Android's best-effort `ro.boot.dtb_idx` hint, captured before EDL.
     pub(crate) probable_dtb_index: Option<usize>,
+    /// Model detected over ADB/Fastboot before EDL, which wipes it.
+    pub(crate) device_model: String,
 }
 
 /// KonaBess wizard state. The prepared workspace is populated only after the
@@ -599,6 +601,7 @@ mod konabess_tests {
             backup_dir: "backup".into(),
             slot_suffix: "_a".into(),
             probable_dtb_index: None,
+            device_model: "TB323FU".into(),
         }
     }
 
@@ -1153,6 +1156,7 @@ mod konabess_tests {
                 backup_dir: root.path().join("backup"),
                 slot_suffix: "_a".into(),
                 probable_dtb_index: None,
+                device_model: "TB323FU".into(),
                 work_dir: work_dir.clone(),
             }),
             candidates: vec![candidate(2, Some("sun"), Some(700_000_000))],

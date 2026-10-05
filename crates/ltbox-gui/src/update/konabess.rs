@@ -383,6 +383,7 @@ mod tests {
             backup_dir: root.join("backup_konabess"),
             slot_suffix: "_b".into(),
             probable_dtb_index,
+            device_model: "TB323FU".into(),
             work_dir,
         }
     }

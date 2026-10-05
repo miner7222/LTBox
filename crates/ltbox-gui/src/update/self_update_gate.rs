@@ -149,6 +149,7 @@ mod tests {
             backup_dir: Default::default(),
             slot_suffix: "_a".into(),
             probable_dtb_index: None,
+            device_model: "TB323FU".into(),
         });
         // Do not depend on the latest poll's connection status.
         assert_eq!(app.update(Message::InstallSelfUpdate).units(), 0);

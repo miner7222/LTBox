@@ -4,7 +4,7 @@ mod capabilities;
 pub use capabilities::{
     ModelCapabilities, RollbackPolicy, SUPPORTED_MODELS, capabilities,
     capabilities_from_fingerprint, fingerprint_capabilities, fingerprint_model_lacking,
-    fingerprint_models,
+    fingerprint_models, fingerprint_names_known_model, known_model,
 };
 
 /// Model token reported by Legion Tab Y700 (2023) firmware.
@@ -49,20 +49,22 @@ pub fn is_xiaoxin_pro13_model(model: &str) -> bool {
 ///
 /// Matches keep alphanumeric word boundaries so a future suffixed model cannot
 /// collide. The TB320FC ↔ LAVIE Tab 9QHD1 pair and the Xiaoxin Pro 13 SKU
-/// group are the equivalences handled here.
+/// group are the equivalences handled here. A fingerprint also names a model
+/// through the codename a custom ROM uses in its place (`baldur` → TB323FU;
+/// the full table is `CODENAMES` in `capabilities.rs`).
 pub fn fingerprint_model_match(haystack: &str, model: &str) -> bool {
-    if token_match(haystack, model) {
+    let names =
+        |m: &str| token_match(haystack, m) || capabilities::codename_names_model(haystack, m);
+    if names(model) {
         return true;
     }
 
     if model == TB320FC_MODEL {
-        token_match(haystack, LAVIE_TAB_9QHD1_MODEL)
+        names(LAVIE_TAB_9QHD1_MODEL)
     } else if model == LAVIE_TAB_9QHD1_MODEL {
-        token_match(haystack, TB320FC_MODEL)
+        names(TB320FC_MODEL)
     } else if XIAOXIN_PRO13_MODELS.contains(&model) {
-        XIAOXIN_PRO13_MODELS
-            .iter()
-            .any(|m| token_match(haystack, m))
+        XIAOXIN_PRO13_MODELS.iter().any(|m| names(m))
     } else {
         false
     }
@@ -133,6 +135,28 @@ mod tests {
         assert!(is_xiaoxin_pro13_model(TB376FC_MODEL));
         assert!(is_xiaoxin_pro13_model(TB390FU_MODEL));
         assert!(is_xiaoxin_pro13_model(TB391FC_MODEL));
+    }
+
+    #[test]
+    fn codename_fingerprint_matches_its_model_only() {
+        let baldur =
+            "Lenovo/lineage_baldur/baldur:17/CP2A.260605.016/eng.androi:userdebug/test-keys";
+        assert!(fingerprint_model_match(baldur, "TB323FU"));
+        assert!(!fingerprint_model_match(baldur, "TB320FC"));
+        assert!(!fingerprint_model_match(baldur, "TB324ZC"));
+        // Codenames inherit the model's equivalences.
+        let asphalt = "Lenovo/lineage_asphalt/asphalt:17/build:userdebug/test-keys";
+        assert!(fingerprint_model_match(asphalt, TB320FC_MODEL));
+        assert!(fingerprint_model_match(asphalt, LAVIE_TAB_9QHD1_MODEL));
+        assert!(!fingerprint_model_match(asphalt, "TB323FU"));
+        assert!(!fingerprint_model_match(
+            "Lenovo/baldurx/baldurx:17/b",
+            "TB323FU"
+        ));
+        assert!(!fingerprint_model_match(
+            "Lenovo/xbaldur/xbaldur:17/b",
+            "TB323FU"
+        ));
     }
 
     #[test]

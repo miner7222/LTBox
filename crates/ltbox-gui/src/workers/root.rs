@@ -47,6 +47,66 @@ fn fingerprint_matches_detected_model(fingerprint: &str, device_model: &str) -> 
     fingerprint_token_match(fingerprint, device_model)
 }
 
+/// What the dumped root image's fingerprint settles for the rest of the run.
+#[derive(Debug, PartialEq, Eq)]
+struct DumpedRootImage {
+    /// Rooting takes the GBL route.
+    uses_gbl: bool,
+    /// The fingerprint named no known model, so the run continues as this
+    /// detected model. `None` when the fingerprint identified the image.
+    unidentified_as: Option<&'static str>,
+}
+
+/// Decide whether the image dumped from the device may be rooted, and by which
+/// route. A fingerprint naming a known model is checked against the support
+/// table and the detected model as always. One naming no known model cannot
+/// contradict the device, so a known detected model's profile decides instead;
+/// with no known detected model it is rejected as a mismatch.
+fn check_dumped_root_image(
+    fingerprint: &str,
+    device_model: &str,
+    is_gki_route: bool,
+) -> Result<DumpedRootImage, String> {
+    use ltbox_core::model::{
+        capabilities, fingerprint_capabilities, fingerprint_model_lacking,
+        fingerprint_names_known_model, known_model,
+    };
+    if !fingerprint_names_known_model(fingerprint) {
+        let Some(model) = known_model(device_model) else {
+            return Err(tr_args!(
+                "live_rescue_model_mismatch_abort",
+                device = device_model,
+                fingerprint = fingerprint
+            ));
+        };
+        let profile = capabilities(model);
+        if !profile.root || (is_gki_route && !profile.gki_root) {
+            return Err(tr_args!("model_unsupported", model = device_model));
+        }
+        return Ok(DumpedRootImage {
+            uses_gbl: profile.root_uses_gbl,
+            unidentified_as: Some(model),
+        });
+    }
+    if let Some(model) = fingerprint_model_lacking(fingerprint, |capabilities| capabilities.root) {
+        return Err(tr_args!("model_unsupported", model = model));
+    }
+    if is_gki_route && fingerprint_capabilities(fingerprint).any(|c| !c.gki_root) {
+        return Err(tr_args!("model_unsupported", model = device_model));
+    }
+    if !fingerprint_matches_detected_model(fingerprint, device_model) {
+        return Err(tr_args!(
+            "live_rescue_model_mismatch_abort",
+            device = device_model,
+            fingerprint = fingerprint
+        ));
+    }
+    Ok(DumpedRootImage {
+        uses_gbl: fingerprint_capabilities(fingerprint).any(|c| c.root_uses_gbl),
+        unidentified_as: None,
+    })
+}
+
 /// The provider/version pair the pipeline runs with.
 ///
 /// Three routes reach the confirm step without the user ever seeing a version
@@ -449,25 +509,20 @@ pub(crate) fn root_worker(
                             image = root_image_name
                         )
                     })?;
-                let image_capabilities =
-                    || ltbox_core::model::fingerprint_capabilities(&root_image_fingerprint);
-                if let Some(model) = ltbox_core::model::fingerprint_model_lacking(
-                    &root_image_fingerprint,
-                    |capabilities| capabilities.root,
-                ) {
-                    return Err(tr_args!("model_unsupported", model = model));
+                let dumped =
+                    check_dumped_root_image(&root_image_fingerprint, &device_model, is_gki_route)?;
+                if let Some(model) = dumped.unidentified_as {
+                    live!(
+                        log,
+                        "[Root] {}",
+                        tr_args!(
+                            "live_image_fingerprint_unidentified",
+                            fingerprint = root_image_fingerprint,
+                            model = model
+                        )
+                    );
                 }
-                if is_gki_route && image_capabilities().any(|capabilities| !capabilities.gki_root) {
-                    return Err(tr_args!("model_unsupported", model = device_model.as_str()));
-                }
-                if !fingerprint_matches_detected_model(&root_image_fingerprint, &device_model) {
-                    return Err(tr_args!(
-                        "live_rescue_model_mismatch_abort",
-                        device = device_model.as_str(),
-                        fingerprint = root_image_fingerprint
-                    ));
-                }
-                uses_gbl = image_capabilities().any(|capabilities| capabilities.root_uses_gbl);
+                uses_gbl = dumped.uses_gbl;
 
                 // vbmeta is read only when the run rebuilds it: TB323FU takes
                 // the GBL route, and every other non-TB320FC model chains the
@@ -874,6 +929,52 @@ mod tests {
         assert!(fingerprint_matches_detected_model(tb320fc, "TB320FC"));
         assert!(fingerprint_matches_detected_model(tb320fc, "LAVIETab9QHD1"));
         assert!(!fingerprint_matches_detected_model(tb323fu, "TB320FC"));
+    }
+
+    #[test]
+    fn dumped_root_image_decision_handles_codename_and_unidentified_fingerprints() {
+        let baldur = "Lenovo/lineage_baldur/baldur:17/CP2A/eng:userdebug/test-keys";
+        let foo = "Lenovo/lineage_foo/foo:17/CP2A/eng:userdebug/test-keys";
+        let tb320fc = "qti/TB320FC/TB320FC:15/build:user/release-keys";
+
+        // A codename identifies the image; the GBL route follows its profile.
+        assert_eq!(
+            check_dumped_root_image(baldur, "TB323FU", false),
+            Ok(DumpedRootImage {
+                uses_gbl: true,
+                unidentified_as: None
+            })
+        );
+        // No known model in the fingerprint: continue as the detected model.
+        assert_eq!(
+            check_dumped_root_image(foo, "TB323FU", false),
+            Ok(DumpedRootImage {
+                uses_gbl: true,
+                unidentified_as: Some("TB323FU")
+            })
+        );
+        assert_eq!(
+            check_dumped_root_image(foo, "TB321FU", true),
+            Ok(DumpedRootImage {
+                uses_gbl: false,
+                unidentified_as: Some("TB321FU")
+            })
+        );
+        // The detected model's profile still gates the route.
+        assert_eq!(
+            check_dumped_root_image(foo, "TB390FU", false),
+            Err(tr_args!("model_unsupported", model = "TB390FU"))
+        );
+        // No known detected model: rejected as today.
+        for device in ["", "Legion Y700"] {
+            assert!(
+                check_dumped_root_image(foo, device, false).is_err(),
+                "{device:?}"
+            );
+        }
+        // A fingerprint naming a different known model never falls back.
+        assert!(check_dumped_root_image(tb320fc, "TB323FU", false).is_err());
+        assert!(check_dumped_root_image(baldur, "TB320FC", false).is_err());
     }
 
     #[test]

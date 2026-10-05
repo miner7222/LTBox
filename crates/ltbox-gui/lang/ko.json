@@ -644,6 +644,7 @@
   "live_flashparts_scan_start": "파티션 스캔 중",
   "live_flashphys_flashing": "LUN {lun} 플래싱 중 ← {file}",
   "live_flashphys_lun_failed": "LUN {lun} 실패: {error}",
+  "live_image_fingerprint_unidentified": "빌드 지문에 알려진 모델명이 없어 감지된 기기 모델 {model} 기준으로 진행합니다. ({fingerprint})",
   "live_image_flash_completed": "이미지 플래싱 완료",
   "live_manual_reboot_edl_wait": "기기를 수동으로 EDL(9008) 모드로 재부팅하세요. LTBox가 계속 기다립니다.",
   "live_no_adb_device_found": "ADB 기기를 찾을 수 없음",

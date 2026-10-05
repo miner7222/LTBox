@@ -19,6 +19,7 @@ fn prepared() -> KonaBessPrepared {
         backup_dir: Default::default(),
         slot_suffix: "_a".to_string(),
         probable_dtb_index: None,
+        device_model: "TB323FU".into(),
     }
 }
 

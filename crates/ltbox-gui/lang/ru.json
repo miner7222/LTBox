@@ -644,6 +644,7 @@
   "live_flashparts_scan_start": "Сканирование разделов",
   "live_flashphys_flashing": "Прошивка LUN {lun} ← {file}",
   "live_flashphys_lun_failed": "Не удалось прошить LUN {lun}: {error}",
+  "live_image_fingerprint_unidentified": "В отпечатке сборки нет известной модели ({fingerprint}) — продолжение как для обнаруженной модели {model}",
   "live_image_flash_completed": "Образы прошиты",
   "live_manual_reboot_edl_wait": "Переведите устройство в EDL (9008) вручную. LTBox продолжит ожидание.",
   "live_no_adb_device_found": "ADB-устройство не найдено",

@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 
 use crate::avb::AvbImageInfo;
 use crate::{avb, key_map};
-use ltbox_core::{LtboxError, Result, model::fingerprint_model_match};
+use ltbox_core::{
+    LtboxError, Result,
+    model::{fingerprint_model_match, fingerprint_names_known_model, known_model},
+};
 use tracing::info;
 
 /// Outcome of validating an image against a device model.
@@ -23,6 +26,14 @@ pub enum ModelValidation {
         fingerprint: String,
         device_model: String,
     },
+    /// Fingerprint present but names no known model (a custom ROM that uses
+    /// an unrecognized codename), while `device_model` is a known model. The
+    /// fingerprint cannot contradict the device; the caller may proceed as the
+    /// detected model, and must say so.
+    Unidentified {
+        fingerprint: String,
+        device_model: String,
+    },
     /// No fingerprint property in the AVB image. Caller decides — v2
     /// logged a warning and skipped validation.
     Missing,
@@ -33,18 +44,31 @@ pub enum ModelValidation {
 /// `com.android.build.system.fingerprint`, so a vbmeta_system image works
 /// directly) and matches the device model as a bounded token.
 ///
+/// A fingerprint that names no known model is [`ModelValidation::Unidentified`]
+/// when `device_model` is a known model, and a mismatch otherwise. One that
+/// names a different known model is always a mismatch.
+///
 /// Spaces in `device_model` are stripped to tolerate
 /// `"TB 320FC"`-style reads from `ro.product.model`. The shared matcher also
 /// accepts the model token reported by LAVIE Tab 9QHD1 as TB320FC-equivalent.
 pub fn validate_device_model(info: &AvbImageInfo, device_model: &str) -> ModelValidation {
+    classify_fingerprint(avb::build_fingerprint(info), device_model)
+}
+
+fn classify_fingerprint(fingerprint: Option<String>, device_model: &str) -> ModelValidation {
     let normalized = device_model.replace(' ', "");
-    let fingerprint = avb::build_fingerprint(info);
 
     match fingerprint {
         None => ModelValidation::Missing,
         Some(fp) if normalized.is_empty() => ModelValidation::Match { fingerprint: fp },
         Some(fp) if fingerprint_model_match(&fp, &normalized) => {
             ModelValidation::Match { fingerprint: fp }
+        }
+        Some(fp) if !fingerprint_names_known_model(&fp) && known_model(&normalized).is_some() => {
+            ModelValidation::Unidentified {
+                fingerprint: fp,
+                device_model: normalized,
+            }
         }
         Some(fp) => ModelValidation::Mismatch {
             fingerprint: fp,
@@ -656,6 +680,50 @@ fn hex_str(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_fingerprint_separates_match_unidentified_and_mismatch() {
+        let stock = "Lenovo/TB323FU/TB323FU:16/BQ2A/x:user/release-keys";
+        let baldur = "Lenovo/lineage_baldur/baldur:17/CP2A/eng:userdebug/test-keys";
+        let unknown = "Lenovo/lineage_foo/foo:17/CP2A/eng:userdebug/test-keys";
+        let classify = |fp: &str, model: &str| classify_fingerprint(Some(fp.to_string()), model);
+
+        assert!(matches!(
+            classify(stock, "TB323FU"),
+            ModelValidation::Match { .. }
+        ));
+        assert!(matches!(
+            classify(baldur, "TB323FU"),
+            ModelValidation::Match { .. }
+        ));
+        // Spaces in the device model are tolerated.
+        assert!(matches!(
+            classify(unknown, "TB 323FU"),
+            ModelValidation::Unidentified { ref device_model, .. } if device_model == "TB323FU"
+        ));
+        // A fingerprint naming a different known model never falls back.
+        assert!(matches!(
+            classify(stock, "TB320FC"),
+            ModelValidation::Mismatch { .. }
+        ));
+        assert!(matches!(
+            classify(baldur, "TB320FC"),
+            ModelValidation::Mismatch { .. }
+        ));
+        // Unidentified needs a known device model.
+        assert!(matches!(
+            classify(unknown, "Legion Y700"),
+            ModelValidation::Mismatch { .. }
+        ));
+        assert!(matches!(
+            classify(unknown, ""),
+            ModelValidation::Match { .. }
+        ));
+        assert_eq!(
+            classify_fingerprint(None, "TB323FU"),
+            ModelValidation::Missing
+        );
+    }
 
     #[test]
     fn replace_in_place_works() {

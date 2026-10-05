@@ -36,16 +36,49 @@ pub struct AvbImageInfo {
 /// The Android build fingerprint embedded in an image's AVB property
 /// descriptors (`com.android.build.<part>.fingerprint`, e.g.
 /// `qti/TB323FU/...:user/release-keys`), if present. Used to identify the
-/// firmware an image belongs to. Prefers the canonical
-/// `com.android.build.system.fingerprint` (carried by vbmeta_system, the unified
-/// identity source) and falls back to any `.fingerprint` prop for images that
-/// lack it (vendor_boot / boot / init_boot) — all hold the same value.
+/// firmware an image belongs to.
+///
+/// Custom ROMs name the device codename rather than the model in most of these
+/// values, while a few (a stock vendor blob, `pvmfw`) keep the model token, so
+/// the choice prefers one that names a known model:
+/// 1. `com.android.build.system.fingerprint` (carried by vbmeta_system, the
+///    unified identity source) when it names a known model;
+/// 2. otherwise the first `.fingerprint` prop, in descriptor order, that does;
+/// 3. otherwise `com.android.build.system.fingerprint`;
+/// 4. otherwise the first `.fingerprint` prop.
+///
+/// Empty values are ignored throughout.
 pub fn build_fingerprint(info: &AvbImageInfo) -> Option<String> {
-    info.props
+    let system = info
+        .props
         .iter()
-        .find(|(k, _)| k == "com.android.build.system.fingerprint")
-        .or_else(|| info.props.iter().find(|(k, _)| k.ends_with(".fingerprint")))
-        .and_then(|(_, v)| std::str::from_utf8(v).ok())
+        .filter(|(k, _)| k == "com.android.build.system.fingerprint")
+        .find_map(|(_, v)| fingerprint_value(v));
+    if let Some(system) = &system
+        && ltbox_core::model::fingerprint_names_known_model(system)
+    {
+        return Some(system.clone());
+    }
+    let mut first = None;
+    for (_, value) in info
+        .props
+        .iter()
+        .filter(|(k, _)| k.ends_with(".fingerprint"))
+    {
+        let Some(value) = fingerprint_value(value) else {
+            continue;
+        };
+        if ltbox_core::model::fingerprint_names_known_model(&value) {
+            return Some(value);
+        }
+        first.get_or_insert(value);
+    }
+    system.or(first)
+}
+
+fn fingerprint_value(raw: &[u8]) -> Option<String> {
+    std::str::from_utf8(raw)
+        .ok()
         .map(|s| s.trim_end_matches('\0').trim().to_string())
         .filter(|s| !s.is_empty())
 }
@@ -735,6 +768,82 @@ mod tests {
                 b"16".to_vec()
             )])),
             None
+        );
+    }
+
+    #[test]
+    fn build_fingerprint_prefers_a_prop_naming_a_known_model() {
+        let info = |props: &[(&str, &str)]| AvbImageInfo {
+            partition_size: 0,
+            original_image_size: None,
+            algorithm: "SHA256_RSA4096".into(),
+            rollback_index: 0,
+            rollback_index_location: 0,
+            flags: 0,
+            partition_name: None,
+            salt: None,
+            public_key_sha1: None,
+            props: props
+                .iter()
+                .map(|(k, v)| (format!("com.android.build.{k}"), v.as_bytes().to_vec()))
+                .collect(),
+            source_image_path: PathBuf::from("vbmeta.img"),
+            hash_descriptor_algorithm: None,
+            hash_descriptor_count: 0,
+            unreproducible_descriptor_kinds: Vec::new(),
+        };
+        let baldur = "Lenovo/lineage_baldur/baldur:17/CP2A/eng:userdebug/test-keys";
+        let stock = "Lenovo/TB323FU/TB323FU:17/CP2A/x:user/release-keys";
+        let pvmfw = "qti/TB323FU/TB323FU:16/BQ2A/x:user/release-keys";
+        let unknown = "Lenovo/lineage_foo/foo:17/CP2A/eng:userdebug/test-keys";
+
+        // The system fingerprint names a model: it wins even when listed last.
+        assert_eq!(
+            build_fingerprint(&info(&[
+                ("boot.fingerprint", unknown),
+                ("system.fingerprint", stock),
+            ]))
+            .as_deref(),
+            Some(stock)
+        );
+        // System names no known model; the first prop that does is chosen.
+        assert_eq!(
+            build_fingerprint(&info(&[
+                ("system.fingerprint", unknown),
+                ("system_ext.fingerprint", unknown),
+                ("pvmfw.fingerprint", pvmfw),
+                ("dataext.fingerprint", stock),
+            ]))
+            .as_deref(),
+            Some(pvmfw)
+        );
+        // A codename counts as naming a known model.
+        assert_eq!(
+            build_fingerprint(&info(&[
+                ("system.fingerprint", unknown),
+                ("product.fingerprint", baldur),
+            ]))
+            .as_deref(),
+            Some(baldur)
+        );
+        // Nothing names a model: system, regardless of order.
+        assert_eq!(
+            build_fingerprint(&info(&[
+                ("boot.fingerprint", "other/x/x:1/b"),
+                ("system.fingerprint", unknown),
+            ]))
+            .as_deref(),
+            Some(unknown)
+        );
+        // No system prop: the first prop. Empty values are ignored.
+        assert_eq!(
+            build_fingerprint(&info(&[
+                ("boot.fingerprint", " "),
+                ("vendor.fingerprint", unknown),
+                ("dtbo.fingerprint", "other/x/x:1/b"),
+            ]))
+            .as_deref(),
+            Some(unknown)
         );
     }
 

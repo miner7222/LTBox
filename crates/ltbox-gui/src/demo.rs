@@ -421,6 +421,7 @@ fn apply_konabess_table_scene(app: &mut App) {
             backup_dir: "demo/backup".into(),
             slot_suffix: "_a".to_string(),
             probable_dtb_index: Some(3),
+            device_model: "TB323FU".into(),
         }),
         ..KonaBessWizard::default()
     };

@@ -644,6 +644,7 @@
   "live_flashparts_scan_start": "Analyse des partitions",
   "live_flashphys_flashing": "Flash du LUN {lun} ← {file}",
   "live_flashphys_lun_failed": "Échec du LUN {lun} : {error}",
+  "live_image_fingerprint_unidentified": "L’empreinte de build ne nomme aucun modèle connu ({fingerprint}) ; poursuite avec le modèle détecté {model}",
   "live_image_flash_completed": "Flash de l’image terminé",
   "live_manual_reboot_edl_wait": "Redémarrez manuellement l’appareil en mode EDL (9008). LTBox reste en attente.",
   "live_no_adb_device_found": "Aucun appareil ADB trouvé",
