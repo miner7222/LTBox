@@ -14,7 +14,6 @@ ignore = [
     "RUSTSEC-2021-0139", # ansi_term unmaintained
     "RUSTSEC-2024-0375", # atty unmaintained
     "RUSTSEC-2024-0436", # paste unmaintained
-    "RUSTSEC-2025-0141", # bincode unmaintained
     "RUSTSEC-2026-0192", # ttf-parser unmaintained (deep via iced cosmic-text; no upgrade path)
     # `rustybuzz` unmaintained (no fixed release; advisory says "No safe
     # upgrade is available"). Pulled ONLY transitively via iced's SVG path:

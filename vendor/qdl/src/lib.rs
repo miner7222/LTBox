@@ -6,7 +6,6 @@ use anyhow::Result;
 use indexmap::{Equivalent, IndexMap};
 use owo_colors::OwoColorize;
 use parsers::firehose_parser_ack_nak;
-use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::fs;
 use std::io::{Read, Write};
@@ -30,13 +29,14 @@ pub mod serial;
 pub mod types;
 #[cfg(feature = "usb")]
 pub mod usb;
+mod wire;
 
 pub const SAHARA_ID_EHOSTDL_IMG: usize = 13;
 
 const CPIO_MAGIC: &[u8; 6] = b"070701";
 
 #[repr(C)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct CpioNewcHeader {
     c_magic: [u8; 6],
     c_ino: [u8; 8],
@@ -52,6 +52,29 @@ struct CpioNewcHeader {
     c_rdevminor: [u8; 8],
     c_namesize: [u8; 8],
     c_check: [u8; 8],
+}
+
+impl CpioNewcHeader {
+    /// Decode the fixed 110-byte header; fails if `buf` is shorter.
+    fn from_bytes(buf: &[u8]) -> Result<Self> {
+        let mut r = wire::Reader::new(buf);
+        Ok(Self {
+            c_magic: r.array()?,
+            c_ino: r.array()?,
+            c_mode: r.array()?,
+            c_uid: r.array()?,
+            c_gid: r.array()?,
+            c_nlink: r.array()?,
+            c_mtime: r.array()?,
+            c_filesize: r.array()?,
+            c_devmajor: r.array()?,
+            c_devminor: r.array()?,
+            c_rdevmajor: r.array()?,
+            c_rdevminor: r.array()?,
+            c_namesize: r.array()?,
+            c_check: r.array()?,
+        })
+    }
 }
 
 fn align_up_4(n: usize) -> usize {
@@ -79,8 +102,7 @@ fn decode_programmer_archive(blob: &[u8], images: &mut Vec<Option<Vec<u8>>>) -> 
             bail!("programmer archive is truncated");
         }
 
-        let hdr =
-            bincode::deserialize::<CpioNewcHeader>(&blob[ptr..ptr + size_of::<CpioNewcHeader>()])?;
+        let hdr = CpioNewcHeader::from_bytes(&blob[ptr..ptr + size_of::<CpioNewcHeader>()])?;
         if !hdr.c_magic.equivalent(CPIO_MAGIC) {
             bail!("expected cpio header in programmer archive");
         }
@@ -1111,5 +1133,103 @@ mod program_callback_tests {
         let mut expected = original;
         expected.resize(1536, 0);
         assert_eq!(channel.payload, expected);
+    }
+}
+
+/// Golden bytes for the cpio `newc` header decode.
+#[cfg(test)]
+mod cpio_golden {
+    use super::*;
+
+    // magic "070701" followed by 13 eight-digit upper-case hex fields.
+    const HEADER: &[u8; 110] = b"07070100000001000081A40000000000000000000000010000006500001234000000080000000100000000000000000000000900000000";
+
+    fn decode_header(buf: &[u8]) -> Result<CpioNewcHeader> {
+        CpioNewcHeader::from_bytes(buf)
+    }
+
+    fn entry(name: &str, data: &[u8]) -> Vec<u8> {
+        let mut out = b"070701".to_vec();
+        for field in [
+            1u32,
+            0x81a4,
+            0,
+            0,
+            1,
+            0,
+            data.len() as u32,
+            0,
+            0,
+            0,
+            0,
+            name.len() as u32 + 1,
+            0,
+        ] {
+            out.extend(format!("{field:08X}").bytes());
+        }
+        out.extend(name.bytes());
+        out.push(0);
+        while out.len() % 4 != 0 {
+            out.push(0);
+        }
+        out.extend(data);
+        while out.len() % 4 != 0 {
+            out.push(0);
+        }
+        out
+    }
+
+    #[test]
+    fn header_decodes_golden_bytes() {
+        assert_eq!(HEADER.len(), size_of::<CpioNewcHeader>());
+        let hdr = decode_header(HEADER).unwrap();
+        assert_eq!(&hdr.c_magic, CPIO_MAGIC);
+        assert_eq!(&hdr.c_ino, b"00000001");
+        assert_eq!(&hdr.c_mode, b"000081A4");
+        assert_eq!(&hdr.c_uid, b"00000000");
+        assert_eq!(&hdr.c_gid, b"00000000");
+        assert_eq!(&hdr.c_nlink, b"00000001");
+        assert_eq!(&hdr.c_mtime, b"00000065");
+        assert_eq!(&hdr.c_filesize, b"00001234");
+        assert_eq!(&hdr.c_devmajor, b"00000008");
+        assert_eq!(&hdr.c_devminor, b"00000001");
+        assert_eq!(&hdr.c_rdevmajor, b"00000000");
+        assert_eq!(&hdr.c_rdevminor, b"00000000");
+        assert_eq!(&hdr.c_namesize, b"00000009");
+        assert_eq!(&hdr.c_check, b"00000000");
+    }
+
+    #[test]
+    fn header_rejects_short_input() {
+        assert!(decode_header(&HEADER[..109]).is_err());
+        assert!(decode_header(&[]).is_err());
+    }
+
+    #[test]
+    fn archive_decodes_into_image_slots() {
+        let mut blob = entry("13:prog_firehose.elf", b"abcde");
+        blob.extend(entry("7", b"xy"));
+        blob.extend(entry("TRAILER!!!", b""));
+
+        let mut images = Vec::new();
+        assert!(decode_programmer_archive(&blob, &mut images).unwrap());
+        assert_eq!(images.len(), 14);
+        assert_eq!(images[13].as_deref(), Some(&b"abcde"[..]));
+        assert_eq!(images[7].as_deref(), Some(&b"xy"[..]));
+        assert!(images[0].is_none());
+    }
+
+    #[test]
+    fn archive_rejects_truncation_and_bad_magic() {
+        let mut blob = entry("13", b"abcde");
+        blob.extend(entry("TRAILER!!!", b""));
+        let mut images = Vec::new();
+        assert!(decode_programmer_archive(&blob[..blob.len() - 20], &mut images).is_err());
+
+        let mut bad = blob.clone();
+        let second = entry("13", b"abcde").len();
+        bad[second..second + 6].copy_from_slice(b"070702");
+        let mut images = Vec::new();
+        assert!(decode_programmer_archive(&bad, &mut images).is_err());
     }
 }

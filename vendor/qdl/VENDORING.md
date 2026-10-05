@@ -1,5 +1,14 @@
 # Vendored `qdl`
 
+> **Local change: `bincode` removed.** Upstream `qdl` (de)serializes the Sahara
+> packet structs and the cpio `newc` header with `bincode` 1.x, which is
+> unmaintained (RUSTSEC-2025-0141; its 3.0.0 release is only a `compile_error!`).
+> LTBox replaced it with explicit little-endian encode/decode in `src/wire.rs`
+> and `src/sahara.rs` / `src/lib.rs` (`serde` and `serde_repr` went with it), and
+> bumped `xmltree` 0.11 to 0.12. Golden-byte tests in `src/sahara.rs` (`golden`)
+> and `src/lib.rs` (`cpio_golden`) pin the wire format. When re-vendoring, do
+> not reintroduce `bincode`; re-apply this change instead.
+
 This is a vendored copy of the `qdl` crate from
 [`qualcomm/qdlrs`](https://github.com/qualcomm/qdlrs) (Sahara / Firehose
 EDL transport), licensed BSD-3-Clause (see `LICENSE`).
