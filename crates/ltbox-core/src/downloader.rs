@@ -91,7 +91,6 @@ where
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp_path = sibling_partial_path(out_path);
     let mut resp = agent
         .get(url)
         .call()
@@ -103,14 +102,10 @@ where
         .and_then(|s| s.parse::<u64>().ok());
     let mut reader = resp.body_mut().as_reader();
 
-    let write_result = (|| -> Result<(u64, std::time::Instant)> {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-            .map_err(|e| {
-                LtboxError::Download(format!("create partial {}: {e}", tmp_path.display()))
-            })?;
+    let write_result = (|| -> Result<(u64, std::time::Instant, tempfile::NamedTempFile)> {
+        let mut file = create_partial_file(out_path).map_err(|e| {
+            LtboxError::Download(format!("create partial for {}: {e}", out_path.display()))
+        })?;
         let mut buf = [0u8; 64 * 1024];
         let mut downloaded: u64 = 0;
 
@@ -163,23 +158,23 @@ where
         }
 
         file.flush()?;
-        file.sync_all().map_err(|e| {
-            LtboxError::Download(format!("sync partial {}: {e}", tmp_path.display()))
+        file.as_file().sync_all().map_err(|e| {
+            LtboxError::Download(format!("sync partial {}: {e}", file.path().display()))
         })?;
-        // Drop the file handle before rename — Windows cannot replace a
-        // destination while the source still has an open writer.
-        drop(file);
-        Ok((downloaded, started_at))
+        Ok((downloaded, started_at, file))
     })();
 
     match write_result {
-        Ok((downloaded, started_at)) => {
-            if let Err(e) = replace_file(&tmp_path, out_path) {
-                let _ = std::fs::remove_file(&tmp_path);
+        Ok((downloaded, started_at, partial)) => {
+            // The sibling source keeps this on one filesystem, so persist
+            // replaces the destination atomically. If finalization fails, the
+            // destination is left untouched and the partial is removed on drop.
+            let partial_path = partial.path().to_path_buf();
+            if let Err(e) = persist_replacing(partial, out_path) {
                 return Err(LtboxError::Download(format!(
                     "finalize {} -> {}: {e}",
-                    tmp_path.display(),
-                    out_path.display()
+                    partial_path.display(),
+                    out_path.display(),
                 )));
             }
             let elapsed_s = started_at.elapsed().as_secs_f64().max(0.001);
@@ -193,38 +188,51 @@ where
             );
             Ok(())
         }
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp_path);
-            Err(e)
-        }
+        // The partial was dropped (and removed) when the write closure failed.
+        Err(e) => Err(e),
     }
 }
 
-fn sibling_partial_path(out_path: &Path) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+/// Move a finished temp file over `dest`, replacing it.
+///
+/// `NamedTempFile::persist` makes a single `MoveFileExW` attempt on Windows.
+/// `std::fs::rename` also retries an access-denied replace with POSIX rename
+/// semantics, which succeeds while another process (antivirus, the indexer)
+/// holds the old destination open with delete sharing. Use that fallback so a
+/// cached file that is merely being scanned can still be refreshed. On failure
+/// the temp file is removed and `dest` is untouched.
+pub fn persist_replacing(file: tempfile::NamedTempFile, dest: &Path) -> std::io::Result<()> {
+    match file.persist(dest) {
+        Ok(_) => Ok(()),
+        Err(e) if cfg!(windows) && e.error.kind() == std::io::ErrorKind::PermissionDenied => {
+            match std::fs::rename(e.file.path(), dest) {
+                Ok(()) => {
+                    // The temp path is gone; keep the guard from deleting it.
+                    let _ = e.file.keep();
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
+        }
+        Err(e) => Err(e.error),
+    }
+}
 
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let token = format!("{}-{nanos}-{seq}", std::process::id());
+/// Exclusively create a hidden, randomly named partial file next to
+/// `out_path` (same filesystem, so the final rename is atomic). Dropping it
+/// removes it, so every early return cleans up the partial.
+fn create_partial_file(out_path: &Path) -> std::io::Result<tempfile::NamedTempFile> {
     let file_name = out_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
-    let parent = out_path.parent().unwrap_or_else(|| Path::new("."));
-    parent.join(format!(".{file_name}.ltbox-partial-{token}"))
-}
-
-fn replace_file(tmp_path: &Path, out_path: &Path) -> std::io::Result<()> {
-    // The sibling source keeps this on one filesystem, so the platform
-    // rename primitive provides replacement semantics without exposing a
-    // delete-then-rename window. If finalization fails, the destination is
-    // left untouched and the caller removes only the partial file.
-    std::fs::rename(tmp_path, out_path)
+    let parent = out_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    tempfile::Builder::new()
+        .prefix(&format!(".{file_name}.ltbox-partial-"))
+        .tempfile_in(parent)
 }
 
 /// Download `url` to `out_path` in 64 KiB chunks. Progress is throttled to
@@ -340,13 +348,17 @@ mod tests {
     }
 
     #[test]
-    fn sibling_partial_path_is_hidden_sibling() {
-        let out = Path::new("/tmp/assets/firmware.zip");
-        let partial = sibling_partial_path(out);
-        assert_eq!(partial.parent(), out.parent());
-        let name = partial.file_name().unwrap().to_string_lossy();
+    fn partial_file_is_hidden_sibling_removed_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("firmware.zip");
+        let partial = create_partial_file(&out).unwrap();
+        let path = partial.path().to_path_buf();
+        assert_eq!(path.parent(), out.parent());
+        let name = path.file_name().unwrap().to_string_lossy();
         assert!(name.starts_with(".firmware.zip.ltbox-partial-"));
-        assert_ne!(partial, out);
+        assert_ne!(path, out);
+        drop(partial);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -419,29 +431,5 @@ mod tests {
             .filter(|n| n.contains("ltbox-partial"))
             .collect();
         assert!(leftovers.is_empty(), "partials left behind: {leftovers:?}");
-    }
-
-    #[test]
-    fn replace_file_overwrites_existing() {
-        let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("out.bin");
-        let tmp = dir.path().join("out.bin.partial");
-        std::fs::write(&dest, b"old").unwrap();
-        std::fs::write(&tmp, b"new").unwrap();
-        replace_file(&tmp, &dest).unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"new");
-        assert!(!tmp.exists());
-    }
-
-    #[test]
-    fn replace_file_error_preserves_existing_destination() {
-        let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("out.bin");
-        let missing_tmp = dir.path().join("missing.partial");
-        std::fs::write(&dest, b"keep-me").unwrap();
-
-        replace_file(&missing_tmp, &dest).expect_err("missing source must fail");
-
-        assert_eq!(std::fs::read(&dest).unwrap(), b"keep-me");
     }
 }

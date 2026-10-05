@@ -270,35 +270,29 @@ fn resolve_archive_payload(entries: &[PathBuf], kind: PayloadKind) -> Result<Pat
 }
 
 #[derive(Debug)]
-struct WorkDir(PathBuf);
+struct WorkDir(tempfile::TempDir);
 
 impl WorkDir {
+    /// Exclusive, randomly named scratch directory (0700 on Unix) removed on
+    /// drop.
     fn create() -> io::Result<Self> {
-        for _ in 0..32 {
-            let path = std::env::temp_dir().join(format!("ltbox-update-{}", unique_token()));
-            match fs::create_dir(&path) {
-                Ok(()) => return Ok(Self(path)),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
-            }
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("ltbox-update-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(fs::Permissions::from_mode(0o700));
         }
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "could not create a unique update directory",
-        ))
+        builder.tempdir().map(Self)
     }
 
     fn path(&self) -> &Path {
-        &self.0
+        self.0.path()
     }
 }
 
-impl Drop for WorkDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
+/// Unique name for a sibling path that is only reserved here and created
+/// later with `create_new`/`rename`, so it cannot be a held `tempfile` guard.
 fn unique_token() -> String {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
@@ -374,21 +368,13 @@ impl InstallTarget {
 }
 
 fn ensure_install_dir_writable(install_dir: &Path) -> io::Result<()> {
-    let probe = install_dir.join(format!(".ltbox-write-test-{}", unique_token()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&probe)?;
-        file.write_all(b"LTBox update write test")?;
-        file.sync_all()?;
-        drop(file);
-        fs::remove_file(&probe)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&probe);
-    }
-    result
+    let mut probe = tempfile::Builder::new()
+        .prefix(".ltbox-write-test-")
+        .tempfile_in(install_dir)?;
+    probe.write_all(b"LTBox update write test")?;
+    probe.as_file().sync_all()?;
+    // `close` reports a failed removal, which proves delete permission too.
+    probe.close()
 }
 
 fn sibling_artifact_path(current: &Path, marker: &str) -> io::Result<PathBuf> {

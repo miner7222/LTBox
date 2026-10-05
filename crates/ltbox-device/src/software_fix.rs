@@ -18,6 +18,13 @@ if ($null -ne $processes) {
 }
 "#;
 
+/// Escape a value for embedding inside a PowerShell single-quoted string
+/// literal (`'` -> `''`). Callers must still wrap the result in `'...'`.
+#[cfg(windows)]
+pub(crate) fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 /// Failure while explicitly closing Software Fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseError {
@@ -66,7 +73,7 @@ pub fn force_close() -> Result<(), CloseError> {
 
 #[cfg(windows)]
 mod windows {
-    use super::{FORCE_CLOSE_INNER_SCRIPT, matches_exe_basename};
+    use super::{FORCE_CLOSE_INNER_SCRIPT, escape_powershell_single_quoted, matches_exe_basename};
     use std::ffi::{OsStr, OsString};
     use std::io;
     use std::os::windows::ffi::OsStringExt;
@@ -193,11 +200,6 @@ mod windows {
             return Err("GetSystemDirectoryW returned an empty path".to_string());
         }
         Ok(PathBuf::from(path))
-    }
-
-    /// Escape a value for a PowerShell single-quoted literal.
-    fn escape_powershell_single_quoted(value: &str) -> String {
-        value.replace('\'', "''")
     }
 
     /// Build the fixed outer script that elevates and runs the embedded script.

@@ -15,8 +15,6 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ltbox_core::{live, tr_args};
 
@@ -276,73 +274,34 @@ fn install_kernel_driver(log: &mut Vec<String>) -> Result<()> {
 
 /// Owner-only scratch directory that is removed on drop.
 struct PrivateTempDir {
-    path: PathBuf,
+    dir: tempfile::TempDir,
 }
 
 impl PrivateTempDir {
     fn create(prefix: &str) -> Result<Self> {
-        let path = create_private_temp_dir(prefix)?;
-        Ok(Self { path })
+        // `tempfile` creates the directory exclusively under a random name;
+        // the mode is requested explicitly (a TempDir defaults to 0777 & umask)
+        // and `verify_private_dir` re-checks the result.
+        let prefix = format!("{prefix}_");
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(&prefix);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let dir = builder.tempdir().map_err(|e| {
+            DriverError::Io(std::io::Error::new(
+                e.kind(),
+                format!("create private temp dir: {e}"),
+            ))
+        })?;
+        verify_private_dir(dir.path())?;
+        Ok(Self { dir })
     }
 
     fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for PrivateTempDir {
-    fn drop(&mut self) {
-        cleanup(&self.path);
-    }
-}
-
-fn unique_temp_token() -> String {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    format!("{}-{nanos}-{seq}", std::process::id())
-}
-
-/// Create an exclusive, non-symlink directory under `std::env::temp_dir()`
-/// with owner-only permissions on Unix. Retries on name collision.
-fn create_private_temp_dir(prefix: &str) -> Result<PathBuf> {
-    let base = std::env::temp_dir();
-    for _ in 0..32 {
-        let path = base.join(format!("{prefix}_{}", unique_temp_token()));
-        match create_exclusive_private_dir(&path) {
-            Ok(()) => {
-                verify_private_dir(&path)?;
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                return Err(DriverError::Io(std::io::Error::new(
-                    e.kind(),
-                    format!("create private temp dir {}: {e}", path.display()),
-                )));
-            }
-        }
-    }
-    Err(DriverError::Io(std::io::Error::other(format!(
-        "exhausted unique names while creating private temp dir under {}",
-        base.display()
-    ))))
-}
-
-fn create_exclusive_private_dir(path: &Path) -> std::io::Result<()> {
-    // `create_dir` (not `create_dir_all`) is exclusive: fails if the path
-    // already exists, including as a symlink planted by another user.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().mode(0o700).create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir(path)
+        self.dir.path()
     }
 }
 
@@ -566,12 +525,6 @@ fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
     #[cfg(not(unix))]
     {
         std::fs::File::create(path)
-    }
-}
-
-fn cleanup(path: &std::path::Path) {
-    if let Err(e) = std::fs::remove_dir_all(path) {
-        tracing::debug!("failed to clean driver temp dir {}: {e}", path.display());
     }
 }
 
@@ -911,13 +864,9 @@ mod tests {
                 .is_some_and(|n| n.starts_with("ltbox_qcom_kernel_drv_test_"))
         );
 
-        // Exclusive create must refuse a pre-existing path (race resistance).
-        let conflict = create_exclusive_private_dir(&path);
-        assert!(conflict.is_err());
-        assert_eq!(
-            conflict.unwrap_err().kind(),
-            std::io::ErrorKind::AlreadyExists
-        );
+        // Two directories created with one prefix never share a path.
+        let other = PrivateTempDir::create("ltbox_qcom_kernel_drv_test").expect("second dir");
+        assert_ne!(other.path(), path);
 
         #[cfg(unix)]
         {
@@ -935,13 +884,9 @@ mod tests {
 
     #[test]
     fn private_temp_dir_rejects_non_directory_path() {
-        let base = std::env::temp_dir().join(format!(
-            "ltbox_qcom_kernel_drv_file_{}",
-            unique_temp_token()
-        ));
-        std::fs::write(&base, b"not-a-dir").expect("write decoy file");
-        let err = verify_private_dir(&base).expect_err("file must not pass dir verification");
-        let _ = std::fs::remove_file(&base);
+        let decoy = tempfile::NamedTempFile::new().expect("create decoy file");
+        let err =
+            verify_private_dir(decoy.path()).expect_err("file must not pass dir verification");
         assert!(err.to_string().contains("not a plain directory"));
     }
 
@@ -964,12 +909,13 @@ mod tests {
 
     #[test]
     fn validate_trusted_executable_rejects_user_owned_temp_file() {
-        let path =
-            std::env::temp_dir().join(format!("ltbox_trusted_exec_probe_{}", unique_temp_token()));
-        std::fs::write(&path, b"#!/bin/sh\n").expect("write probe file");
-        let err = validate_trusted_executable(&path)
+        let probe = tempfile::Builder::new()
+            .prefix("ltbox_trusted_exec_probe_")
+            .tempfile()
+            .expect("create probe file");
+        std::fs::write(probe.path(), b"#!/bin/sh\n").expect("write probe file");
+        let err = validate_trusted_executable(probe.path())
             .expect_err("user temp file must not pass trusted validation");
-        let _ = std::fs::remove_file(&path);
         let msg = err.to_string();
         assert!(
             msg.contains("outside trusted system directories")

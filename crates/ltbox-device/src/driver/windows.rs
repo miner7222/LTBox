@@ -11,7 +11,8 @@ use std::process::Command;
 
 use ltbox_core::i18n::tr;
 use ltbox_core::{live, tr_args};
-use rsa::rand_core::{OsRng, RngCore};
+
+use crate::software_fix::escape_powershell_single_quoted;
 
 use super::{
     DriverError, DriverStatus, DriverUpdate, QcomDriverMode, Result, parse_version,
@@ -73,12 +74,6 @@ fn windows_system32_dir() -> Result<PathBuf> {
         )));
     }
     Ok(path)
-}
-
-/// Escape a value for embedding inside a PowerShell single-quoted string
-/// literal (`'` -> `''`). Callers must still wrap the result in `'...'`.
-fn escape_powershell_single_quoted(s: &str) -> String {
-    s.replace('\'', "''")
 }
 
 /// Qualcomm legal entities whose code-signing certificates may sign the
@@ -741,71 +736,30 @@ fn download_with_progress(
 
 /// Owner-only scratch directory that is removed on drop.
 struct PrivateTempDir {
-    path: PathBuf,
+    dir: tempfile::TempDir,
 }
 
 impl PrivateTempDir {
+    /// Create an exclusive, non-symlink directory under `std::env::temp_dir()`
+    /// with a random name. Mirrors the Linux driver installer's private
+    /// staging helper so the elevated installer cannot race a pre-planted path.
     fn create(prefix: &str) -> Result<Self> {
-        let path = create_private_temp_dir(prefix)?;
-        Ok(Self { path })
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("{prefix}_"))
+            .tempdir()
+            .map_err(|e| {
+                DriverError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("create private temp dir: {e}"),
+                ))
+            })?;
+        verify_private_dir(dir.path())?;
+        Ok(Self { dir })
     }
 
     fn path(&self) -> &Path {
-        &self.path
+        self.dir.path()
     }
-}
-
-impl Drop for PrivateTempDir {
-    fn drop(&mut self) {
-        cleanup(&self.path);
-    }
-}
-
-/// Cryptographically random temp-name token. Callers still rely on exclusive
-/// create retries for collision safety; this keeps names private/unpredictable
-/// so a peer cannot pre-plant a path from PID/time alone.
-fn unique_temp_token() -> Result<String> {
-    let mut bytes = [0u8; 16];
-    OsRng.try_fill_bytes(&mut bytes).map_err(|e| {
-        DriverError::Io(std::io::Error::other(format!(
-            "failed to generate private temp token: {e}"
-        )))
-    })?;
-    // Hex keeps the token filesystem-safe without needing extra crates.
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
-/// Create an exclusive, non-symlink directory under `std::env::temp_dir()`.
-/// Retries on name collision. Mirrors the Linux driver installer's private
-/// staging helper so the elevated installer cannot race a pre-planted path.
-fn create_private_temp_dir(prefix: &str) -> Result<PathBuf> {
-    let base = std::env::temp_dir();
-    for _ in 0..32 {
-        let path = base.join(format!("{prefix}_{}", unique_temp_token()?));
-        match create_exclusive_private_dir(&path) {
-            Ok(()) => {
-                verify_private_dir(&path)?;
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                return Err(DriverError::Io(std::io::Error::new(
-                    e.kind(),
-                    format!("create private temp dir {}: {e}", path.display()),
-                )));
-            }
-        }
-    }
-    Err(DriverError::Io(std::io::Error::other(format!(
-        "exhausted unique names while creating private temp dir under {}",
-        base.display()
-    ))))
-}
-
-fn create_exclusive_private_dir(path: &Path) -> std::io::Result<()> {
-    // `create_dir` (not `create_dir_all`) is exclusive: fails if the path
-    // already exists, including as a symlink planted by another user.
-    std::fs::create_dir(path)
 }
 
 fn verify_private_dir(path: &Path) -> Result<()> {
@@ -822,10 +776,6 @@ fn verify_private_dir(path: &Path) -> Result<()> {
         ))));
     }
     Ok(())
-}
-
-fn cleanup(dir: &Path) {
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[cfg(test)]
@@ -1110,20 +1060,6 @@ mod tests {
     }
 
     #[test]
-    fn unique_temp_token_is_hex_and_unpredictable() {
-        let a = unique_temp_token().expect("token a");
-        let b = unique_temp_token().expect("token b");
-        assert_eq!(a.len(), 32, "16 random bytes => 32 hex chars");
-        assert_eq!(b.len(), 32);
-        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
-        assert!(b.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_ne!(a, b, "successive OS RNG tokens must not collide");
-        // Must not follow a predictable pid-time-counter shape.
-        assert!(!a.contains('-'));
-        assert!(!b.contains('-'));
-    }
-
-    #[test]
     fn private_temp_dir_is_exclusive_and_cleaned_on_drop() {
         let dir = PrivateTempDir::create("ltbox_qcom_drv_test").expect("create temp dir");
         let path = dir.path().to_path_buf();
@@ -1134,13 +1070,9 @@ mod tests {
                 .is_some_and(|n| n.starts_with("ltbox_qcom_drv_test_"))
         );
 
-        // Exclusive create must refuse a pre-existing path (race resistance).
-        let conflict = create_exclusive_private_dir(&path);
-        assert!(conflict.is_err());
-        assert_eq!(
-            conflict.unwrap_err().kind(),
-            std::io::ErrorKind::AlreadyExists
-        );
+        // Two directories created with one prefix never share a path.
+        let other = PrivateTempDir::create("ltbox_qcom_drv_test").expect("second dir");
+        assert_ne!(other.path(), path);
 
         drop(dir);
         assert!(
@@ -1151,13 +1083,9 @@ mod tests {
 
     #[test]
     fn private_temp_dir_rejects_non_directory_path() {
-        let base = std::env::temp_dir().join(format!(
-            "ltbox_qcom_drv_file_{}",
-            unique_temp_token().expect("token")
-        ));
-        std::fs::write(&base, b"not-a-dir").expect("write decoy file");
-        let err = verify_private_dir(&base).expect_err("file must not pass dir verification");
-        let _ = std::fs::remove_file(&base);
+        let decoy = tempfile::NamedTempFile::new().expect("create decoy file");
+        let err =
+            verify_private_dir(decoy.path()).expect_err("file must not pass dir verification");
         assert!(err.to_string().contains("not a plain directory"));
     }
 }

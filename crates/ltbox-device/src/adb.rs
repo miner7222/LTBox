@@ -603,32 +603,28 @@ fn write_key_atomic(path: &Path, pem: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| AdbError::Key(format!("adb key path has no parent: {}", path.display())))?;
-    let token = unique_key_temp_token();
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("adbkey");
-    let tmp_path = parent.join(format!(".{file_name}.tmp-{token}"));
 
-    let write_tmp = (|| -> Result<()> {
-        let mut file = open_new_private_file(&tmp_path)
-            .map_err(|e| AdbError::Key(format!("create temp key {}: {e}", tmp_path.display())))?;
-        file.write_all(pem)
-            .map_err(|e| AdbError::Key(format!("write temp key {}: {e}", tmp_path.display())))?;
-        file.sync_all()
-            .map_err(|e| AdbError::Key(format!("sync temp key {}: {e}", tmp_path.display())))?;
-        Ok(())
-    })();
-    if let Err(err) = write_tmp {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(err);
-    }
+    // A random, exclusively created sibling (0600 on Unix) keeps the rename on
+    // one filesystem. Dropping it on any error path removes only the temp file.
+    let mut tmp = tempfile::Builder::new()
+        .prefix(&format!(".{file_name}.tmp-"))
+        .tempfile_in(parent)
+        .map_err(|e| AdbError::Key(format!("create temp key in {}: {e}", parent.display())))?;
+    tmp.write_all(pem)
+        .map_err(|e| AdbError::Key(format!("write temp key {}: {e}", tmp.path().display())))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| AdbError::Key(format!("sync temp key {}: {e}", tmp.path().display())))?;
 
     // Another process may have published a valid key while we generated
     // ours. Prefer the already-published key over clobbering it.
     if path.exists() {
         if validate_key_file(path).is_ok() {
-            let _ = std::fs::remove_file(&tmp_path);
+            drop(tmp);
             harden_key_permissions(path)?;
             return Ok(());
         }
@@ -636,49 +632,18 @@ fn write_key_atomic(path: &Path, pem: &[u8]) -> Result<()> {
         remove_corrupt_key(path)?;
     }
 
-    std::fs::rename(&tmp_path, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
+    let tmp_display = tmp.path().display().to_string();
+    tmp.persist(path).map_err(|e| {
         AdbError::Key(format!(
-            "rename temp key {} -> {}: {e}",
-            tmp_path.display(),
-            path.display()
+            "rename temp key {tmp_display} -> {}: {}",
+            path.display(),
+            e.error
         ))
     })?;
 
     harden_key_permissions(path)?;
 
     Ok(())
-}
-
-fn open_new_private_file(path: &Path) -> std::io::Result<std::fs::File> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-    }
-}
-
-fn unique_key_temp_token() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    format!("{}-{nanos}-{seq}", std::process::id())
 }
 
 const ADB_SHELL_REFUSED: &str =
@@ -731,7 +696,7 @@ impl Default for AdbManager {
 mod tests {
     use super::{
         AdbError, ensure_key_at_path, is_adbd_dropped_after_reboot, is_sideload_shell_refusal,
-        remove_corrupt_key, unique_key_temp_token, validate_key_file, write_key_atomic,
+        remove_corrupt_key, validate_key_file, write_key_atomic,
     };
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use std::path::PathBuf;
@@ -805,12 +770,12 @@ mod tests {
     }
 
     fn temp_key_path(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ltbox-adbkey-test-dir-{}-{}",
-            label,
-            unique_key_temp_token()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp key dir");
+        // Tests remove the directory themselves, so detach it from the guard.
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("ltbox-adbkey-test-dir-{label}-"))
+            .tempdir()
+            .expect("temp key dir")
+            .keep();
         dir.join("adbkey")
     }
 

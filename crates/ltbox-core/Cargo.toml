@@ -18,6 +18,4 @@ moka = { workspace = true }
 dirs = { workspace = true }
 semver = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-
-[dev-dependencies]
 tempfile = "3"

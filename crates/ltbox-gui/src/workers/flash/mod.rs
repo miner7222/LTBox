@@ -709,13 +709,10 @@ fn decompress_zst_file(
     name: &str,
     log: &mut Vec<String>,
 ) -> std::result::Result<(), String> {
-    // `<dst>.ltbox-zst-tmp`, a sibling so the rename stays on one filesystem.
-    let tmp = {
-        let mut s = dst.as_os_str().to_owned();
-        s.push(".ltbox-zst-tmp");
-        std::path::PathBuf::from(s)
-    };
-    let result = (|| -> std::result::Result<(), String> {
+    // The temporary is a sibling of `dst` (created in its directory) so the
+    // persist/rename stays on one filesystem; it is removed on any early
+    // return when the guard drops.
+    (|| -> std::result::Result<(), String> {
         let dst_parent = dst.parent().ok_or_else(|| {
             format!(
                 "cannot determine destination directory for {}",
@@ -730,22 +727,25 @@ fn decompress_zst_file(
         let input = std::fs::File::open(src).map_err(|e| e.to_string())?;
         // `Decoder::new` wraps the reader in its own `BufReader`.
         let decoder = zstd::stream::Decoder::new(input).map_err(|e| e.to_string())?;
-        let out = std::io::BufWriter::new(std::fs::File::create(&tmp).map_err(|e| e.to_string())?);
+        let dst_name = dst
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("destination {} has no file name", dst.display()))?;
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("{dst_name}.ltbox-zst-tmp-"))
+            .tempfile_in(dst_parent)
+            .map_err(|e| e.to_string())?;
+        let out = std::io::BufWriter::new(tmp);
         let out = stream_zstd_decoder(decoder, out, name, log, output_limit)?;
         // Drain the buffer, then fsync the data BEFORE publishing the name —
         // `flush` only reaches the OS cache, so without `sync_all` a crash after
         // the rename could leave `dst` pointing at unflushed (truncated) bytes
         // that a later run would `target.exists()`-skip and then flash.
         let file = out.into_inner().map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        drop(file);
+        file.as_file().sync_all().map_err(|e| e.to_string())?;
         // Atomic publish: the final name only ever appears fully written.
-        std::fs::rename(&tmp, dst).map_err(|e| e.to_string())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+        ltbox_core::downloader::persist_replacing(file, dst).map_err(|e| e.to_string())
+    })()
 }
 
 /// Country-code partitions to dump/patch/flash for a model, from
