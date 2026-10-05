@@ -985,7 +985,7 @@
   "provider_folkpatch": "FolkPatch",
   "provider_folkpatch_desc": "LyraVoid が開発する APatch ベースのカーネルレベル root ソリューション",
   "provider_ksu": "KernelSU",
-  "provider_ksu_desc": "tiann が開発する Android 向けのカーネルベース root ソリューション",
+  "provider_ksu_desc": "tiann による Android 向けのカーネルベース root ソリューション",
   "provider_ksu_local_desc": "APK、ksuinit、kernelsu.ko を直接選択します。",
   "provider_ksu_next": "KernelSU Next",
   "provider_ksu_next_desc": "rifsxd による、積極的に保守されている KernelSU フォーク",

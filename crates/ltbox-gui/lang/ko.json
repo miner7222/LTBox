@@ -994,7 +994,7 @@
   "provider_magisk_forks": "파일 직접 선택",
   "provider_magisk_forks_desc": "로컬 Magisk APK 사용",
   "provider_sukisu": "SukiSU Ultra",
-  "provider_sukisu_desc": "ShirkNeko가 제작한 KernelSU 포크",
+  "provider_sukisu_desc": "KernelSU 포크, ShirkNeko 제작",
   "qfil_popup_copy": "복사",
   "qfil_popup_download": "다운로드",
   "qfil_popup_error": "QFIL 패키지를 불러오지 못했습니다.",
