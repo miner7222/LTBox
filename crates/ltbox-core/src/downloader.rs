@@ -330,21 +330,39 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    fn serve_bytes(body: &'static [u8]) -> String {
+    /// Serve one response declaring `content_length` but sending `body`.
+    ///
+    /// The whole request head is read before replying, and the socket is shut
+    /// down for writing and drained before it closes. Closing with unread
+    /// request bytes makes Windows send RST instead of FIN, which the client
+    /// reports as "connection forcibly closed" (os error 10054).
+    fn serve_response(body: &'static [u8], content_length: usize) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut buf = [0u8; 4096];
-            let _ = stream.read(&mut buf);
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => request.extend_from_slice(&buf[..n]),
+                }
+            }
             let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
+                "HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
             );
-            stream.write_all(header.as_bytes()).expect("header");
-            stream.write_all(body).expect("body");
+            let _ = stream.write_all(header.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            while matches!(stream.read(&mut buf), Ok(n) if n > 0) {}
         });
         format!("http://{addr}/file.bin")
+    }
+
+    fn serve_bytes(body: &'static [u8]) -> String {
+        serve_response(body, body.len())
     }
 
     #[test]
@@ -411,14 +429,11 @@ mod tests {
         let out = dir.path().join("payload.bin");
         std::fs::write(&out, b"keep-me").unwrap();
 
-        // Claim more bytes than sent; ureq/read should error when the
-        // connection closes early relative to Content-Length on some
-        // stacks, or we force failure via a closed listener path below.
-        // Use an immediate connection-refused URL after binding+dropping.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
-        let url = format!("http://{addr}/missing.bin");
+        // The body ends well short of the declared length, so the read fails
+        // after the partial file exists. The server owns its port for the
+        // whole test: a bound-then-dropped port can be taken by another test's
+        // server running in parallel, which turns "must fail" into a success.
+        let url = serve_response(b"truncated", 1 << 20);
 
         let mut log = Vec::new();
         let err = download_to_file(&url, &out, &mut log).expect_err("must fail");
