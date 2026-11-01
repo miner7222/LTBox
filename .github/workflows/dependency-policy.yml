@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@v2.87.21
+      - uses: taiki-e/install-action@v2.88.0
         with:
           tool: cargo-deny@0.19.8
       - run: cargo deny --locked check
