@@ -155,6 +155,46 @@ struct EdlStartProbe {
     rollback_floors: Option<(u64, u64)>,
 }
 
+/// How the caller leaves the session after a failed EDL-start probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EdlProbeExit {
+    /// Stay in EDL so the user can retry without a power-cycle.
+    ResetToEdl,
+    /// Xiaoxin Pro 13 without readable rollback floors: release the session
+    /// with `reset_tolerant`.
+    Tolerant,
+}
+
+/// A failed EDL-start probe. The exit is decided where the failure is known,
+/// never by comparing the translated message afterwards.
+#[derive(Debug)]
+struct EdlProbeError {
+    message: String,
+    exit: EdlProbeExit,
+}
+
+impl From<String> for EdlProbeError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            exit: EdlProbeExit::ResetToEdl,
+        }
+    }
+}
+
+/// The unreadable-floor error for a Xiaoxin target, the generic AVB error
+/// otherwise.
+fn edl_probe_floor_error(xiaoxin: bool) -> EdlProbeError {
+    if xiaoxin {
+        EdlProbeError {
+            message: ltbox_core::i18n::tr("err_flash_xiaoxin_arb_floor_unreadable"),
+            exit: EdlProbeExit::Tolerant,
+        }
+    } else {
+        ltbox_core::i18n::tr("err_flash_edl_avb_invalid").into()
+    }
+}
+
 /// Read the device model + committed rollback index on an EDL-start flash by
 /// dumping BOTH slots over the open session. The active slot is unknown in
 /// EDL-start and the inactive slot's images may not carry parseable AVB info,
@@ -168,7 +208,7 @@ fn read_edl_start_device(
     session: &mut ltbox_device::edl::EdlSession,
     firmware_fp: Option<&str>,
     log: &mut Vec<String>,
-) -> std::result::Result<EdlStartProbe, String> {
+) -> std::result::Result<EdlStartProbe, EdlProbeError> {
     let work_dir = ltbox_core::app_paths::work_dir_for("flash_edl_probe");
     let _ = std::fs::remove_dir_all(&work_dir);
     std::fs::create_dir_all(&work_dir)
@@ -198,12 +238,8 @@ fn read_edl_start_device(
         }
     }
     if device_fps.is_empty() {
-        return Err(ltbox_core::i18n::tr(
-            if firmware_fp.and_then(xiaoxin_pro13_token).is_some() {
-                "err_flash_xiaoxin_arb_floor_unreadable"
-            } else {
-                "err_flash_edl_avb_invalid"
-            },
+        return Err(edl_probe_floor_error(
+            firmware_fp.and_then(xiaoxin_pro13_token).is_some(),
         ));
     }
 
@@ -249,7 +285,7 @@ fn read_edl_start_device(
                 fingerprint = firmware_fp.unwrap_or("").to_string()
             )
         );
-        return Err(ltbox_core::i18n::tr("err_flash_model_mismatch_pre_edl"));
+        return Err(ltbox_core::i18n::tr("err_flash_model_mismatch_pre_edl").into());
     }
     ltbox_core::live!(
         log,
@@ -287,12 +323,8 @@ fn read_edl_start_device(
         let _ = std::fs::remove_file(&boot_img);
     }
     let Some(floors) = rollback_floors(boot_idx, vbs_idx) else {
-        return Err(ltbox_core::i18n::tr(
-            if capabilities(&model_token).rollback == RollbackPolicy::ReadOnly {
-                "err_flash_xiaoxin_arb_floor_unreadable"
-            } else {
-                "err_flash_edl_avb_invalid"
-            },
+        return Err(edl_probe_floor_error(
+            capabilities(&model_token).rollback == RollbackPolicy::ReadOnly,
         ));
     };
     Ok(EdlStartProbe {
@@ -1117,6 +1149,26 @@ pub(crate) use simple::simple_flash_worker;
 
 #[cfg(test)]
 mod tests {
+    /// The session exit travels with the error, so rewording the message can
+    /// no longer change whether the device stays in EDL.
+    #[test]
+    fn edl_probe_errors_carry_their_session_exit() {
+        let xiaoxin = super::edl_probe_floor_error(true);
+        assert_eq!(xiaoxin.exit, super::EdlProbeExit::Tolerant);
+        assert_eq!(
+            xiaoxin.message,
+            ltbox_core::i18n::tr("err_flash_xiaoxin_arb_floor_unreadable")
+        );
+        let generic = super::edl_probe_floor_error(false);
+        assert_eq!(generic.exit, super::EdlProbeExit::ResetToEdl);
+        assert_eq!(
+            generic.message,
+            ltbox_core::i18n::tr("err_flash_edl_avb_invalid")
+        );
+        let other: super::EdlProbeError = String::from("dump failed").into();
+        assert_eq!(other.exit, super::EdlProbeExit::ResetToEdl);
+    }
+
     #[test]
     fn read_back_comparison_catches_any_differing_byte() {
         let dir = tempfile::tempdir().unwrap();

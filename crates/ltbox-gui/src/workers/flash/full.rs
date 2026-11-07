@@ -820,12 +820,13 @@ pub(crate) fn flash_worker(
                 }
             }
             Err(e) => {
-                if e == ltbox_core::i18n::tr("err_flash_xiaoxin_arb_floor_unreadable") {
-                    session.reset_tolerant(&mut log);
-                } else {
-                    let _ = session.reset_to_edl(&mut log);
+                match e.exit {
+                    EdlProbeExit::Tolerant => session.reset_tolerant(&mut log),
+                    EdlProbeExit::ResetToEdl => {
+                        let _ = session.reset_to_edl(&mut log);
+                    }
                 }
-                return Err(e);
+                return Err(e.message);
             }
         }
     }
