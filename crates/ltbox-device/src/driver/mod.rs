@@ -382,6 +382,25 @@ mod tests {
         );
     }
 
+    /// systemd-udevd discards a whole rule, `TAG+="uaccess"` included, when
+    /// its `GROUP=` names a group the host lacks (no `plugdev` on Arch), so
+    /// the shipped rules must not name one. Issue #119.
+    #[test]
+    fn shipped_udev_rules_grant_uaccess_without_naming_a_group() {
+        let rules: Vec<String> = UDEV_RULES
+            .replace("\r\n", "\n")
+            .replace("\\\n", " ")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#') && !line.trim().is_empty())
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(rules.len(), 4, "{rules:#?}");
+        for rule in &rules {
+            assert!(rule.contains("TAG+=\"uaccess\""), "{rule}");
+            assert!(!rule.contains("GROUP="), "{rule}");
+        }
+    }
+
     #[test]
     fn packaged_udev_rules_are_present_without_an_admin_copy() {
         assert_eq!(

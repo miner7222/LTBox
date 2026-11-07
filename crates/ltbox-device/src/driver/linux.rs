@@ -16,6 +16,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use ltbox_core::github::GitHubClient;
 use ltbox_core::{live, tr_args};
 
 use super::{
@@ -28,8 +29,8 @@ use super::{
 const UDEV_ADMIN_RULES_PATH: &str = "/etc/udev/rules.d/51-ltbox-qcom.rules";
 /// Vendor-package location used by LTBox's `.deb` and `.rpm` packages.
 const UDEV_PACKAGE_RULES_PATH: &str = "/usr/lib/udev/rules.d/51-ltbox-qcom.rules";
-const KERNEL_RELEASES_API: &str =
-    "https://api.github.com/repos/qualcomm/qcom-usb-kernel-drivers/releases?per_page=10";
+/// Shared with the Windows kernel spec; Linux releases carry an `lnx` tag.
+const KERNEL_DRIVER_REPO: &str = "qualcomm/qcom-usb-kernel-drivers";
 const LINUX_TAG_NEEDLE: &str = "lnx";
 const KERNEL_DEB_PACKAGE: &str = "qud";
 const MAX_KERNEL_DRIVER_ZIP_BYTES: u64 = 256 * 1024 * 1024;
@@ -337,13 +338,11 @@ fn verify_private_dir(path: &Path) -> Result<()> {
 }
 
 fn fetch_latest_linux_kernel_release() -> Result<(String, GithubAsset)> {
-    let meta_agent = ltbox_core::downloader::build_agent();
-    let releases: Vec<GithubRelease> = meta_agent
-        .get(KERNEL_RELEASES_API)
-        .call()?
-        .body_mut()
-        .read_json()
-        .map_err(|e| DriverError::Parse(e.to_string()))?;
+    // Through GitHubClient, like the Windows lookup: its CI token, retries and
+    // cache keep shared-runner anonymous rate limits (HTTP 403) away.
+    let releases: Vec<GithubRelease> = GitHubClient::new(KERNEL_DRIVER_REPO)
+        .and_then(|client| client.releases())
+        .map_err(|error| DriverError::Http(error.to_string()))?;
 
     let release = select_latest_linux_kernel_release(releases).ok_or(DriverError::NoAsset)?;
     let tag = release.tag_name.clone();

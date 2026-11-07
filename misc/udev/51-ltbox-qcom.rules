@@ -8,11 +8,13 @@
 #   sudo udevadm control --reload
 #   sudo udevadm trigger
 #
-# Then replug the device. `TAG+="uaccess"` is the modern systemd
-# mechanism that grants ACL access to the active console user; the
-# `GROUP="plugdev", MODE="0660"` fallback covers older or non-systemd
-# distros where the user has been added to `plugdev` (Debian/Ubuntu
-# default) — Arch users may need to substitute `uucp` for serial.
+# Then replug the device. `TAG+="uaccess"` is the systemd mechanism
+# that grants ACL access to the user of the active seat session.
+# No `GROUP=` is set on purpose: systemd-udevd drops the whole rule —
+# `uaccess` included — when the named group does not exist (Arch-based
+# distros have no `plugdev`), which leaves the node root-only. For a
+# session without a seat (SSH, bare TTY, container), add your own local
+# rule with an existing group or a wider `MODE`.
 #
 # Filename starts with `51-` so it sorts after distro-shipped 50-*
 # rules (gives LTBox the last word on the matching device).
@@ -30,7 +32,7 @@
 # both ModemManager and udisks/systemd-udevd.
 SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", ATTR{idProduct}=="9008", \
     ENV{ID_MM_DEVICE_IGNORE}="1", \
-    TAG+="uaccess", MODE="0660", GROUP="plugdev"
+    TAG+="uaccess", MODE="0660"
 # Serial node — the `qcserial` in-tree kernel driver exposes
 # `/dev/ttyUSB*` for the same device; `serialport::available_ports()`
 # walks tty. Same ModemManager opt-out applies to the tty subsystem
@@ -38,7 +40,7 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", ATTR{idProduct}=="9008", \
 # on the USB parent alone isn't always enough on older systemd.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="05c6", ATTRS{idProduct}=="9008", \
     ENV{ID_MM_DEVICE_IGNORE}="1", \
-    TAG+="uaccess", MODE="0660", GROUP="plugdev"
+    TAG+="uaccess", MODE="0660"
 
 # ---- Google Android composite (ADB Recovery / sideload) -----------
 # Covers AOSP-stock recovery devices that report Google's vendor ID
@@ -48,7 +50,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="05c6", ATTRS{idProduct}=="9008", \
 # `rusb` — without this rule the desktop user can't open the bulk-in
 # / bulk-out endpoints `ADBUSBDevice` needs.
 SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", \
-    TAG+="uaccess", MODE="0660", GROUP="plugdev"
+    TAG+="uaccess", MODE="0660"
 
 # ---- Lenovo USB (ADB + Fastboot on Lenovo tablets) ----------------
 # Vendor ID 17ef covers the production device states (ADB normal /
@@ -56,4 +58,4 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", \
 # enumerate as. Same `adb_client::usb` libusb-claim grant rationale
 # applies as for 18d1 above.
 SUBSYSTEM=="usb", ATTR{idVendor}=="17ef", \
-    TAG+="uaccess", MODE="0660", GROUP="plugdev"
+    TAG+="uaccess", MODE="0660"
