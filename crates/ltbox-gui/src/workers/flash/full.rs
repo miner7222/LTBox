@@ -354,8 +354,10 @@ pub(crate) fn flash_worker(
             .into_iter()
             .flat_map(fingerprint_capabilities)
     };
-    let canoe_skip_region = device_caps.rollback == RollbackPolicy::Gbl
-        || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
+    // The efisp GBL route, not rollback policy: TB324ZC takes the same route
+    // as TB323FU without enforcing rollback protection.
+    let canoe_skip_region =
+        device_caps.root_uses_gbl || firmware_caps().any(|caps| caps.root_uses_gbl);
 
     // GBL provisioning follows only the target firmware, never device identity.
     // `target_is_canoe` was resolved before device access for ABL validation.
@@ -1163,7 +1165,14 @@ pub(crate) fn flash_worker(
         // or erase command may precede this check, including with mode Off.
         let checked = (|| {
             let firmware = firmware_rollback_indices(fw_dir)?;
-            let floors = if let Some((boot, vbmeta_system)) = edl_floors {
+            let floors = if !is_rollback_protected_model(&device_model) {
+                // TB324ZC enforces no rollback floor; only Manual targets
+                // still need the testkey/_arb chain this path cannot run.
+                RollbackIndices {
+                    boot: 0,
+                    vbmeta_system: 0,
+                }
+            } else if let Some((boot, vbmeta_system)) = edl_floors {
                 RollbackIndices {
                     boot,
                     vbmeta_system,
@@ -1237,6 +1246,18 @@ pub(crate) fn flash_worker(
                 return Err(error);
             }
         }
+    } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off
+        && target_is_canoe
+        && !is_rollback_protected_model(&device_model)
+    {
+        // TB324ZC shares the GBL route but enforces no rollback floor: no
+        // device index read, no testkey re-sign, no `_arb` GBL. Manual targets
+        // were handled above.
+        ltbox_core::live!(
+            log,
+            "[ARB] {}",
+            ltbox_core::i18n::tr("arb_detect_no_anti_rollback")
+        );
     } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off && target_is_canoe {
         // TB323FU stages the testkey chain whenever the
         // install is a downgrade, independent of region /

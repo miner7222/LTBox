@@ -222,7 +222,8 @@ pub(crate) fn current_unix_timestamp() -> Option<u64> {
 /// Rollback-protection answer for a model, or `""` when the model is
 /// unknown.
 ///
-/// `is_rollback_protected_model` is a deny-list (only TB322FC is exempt), so
+/// `is_rollback_protected_model` is a deny-list (only TB322FC and TB324ZC
+/// are exempt), so
 /// an unhandled empty model would read as protected — the Dashboard would
 /// assert "Yes" for a device it can't identify instead of falling back to
 /// the em dash every other field shows for an empty string.

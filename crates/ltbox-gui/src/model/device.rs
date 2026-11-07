@@ -19,8 +19,8 @@ pub(crate) fn root_skips_avb_postprocess(model: &str) -> bool {
 }
 
 /// Every supported Lenovo tablet enforces AVB rollback protection EXCEPT the
-/// PRC-only TB322FC. Used to decide whether a missing fastboot
-/// `stored_rollback_index` means "no ARB, skip" (TB322FC) or "ARB present but
+/// PRC-only TB322FC and TB324ZC. Used to decide whether a missing fastboot
+/// `stored_rollback_index` means "no ARB, skip" (TB322FC, TB324ZC) or "ARB present but
 /// fastboot can't report it, read it over EDL" (everything else). An unknown
 /// model is treated as protected — safer to read + honour the index than to
 /// skip and risk a rollback-rejected downgrade.
@@ -63,6 +63,13 @@ mod tests {
         assert!(is_dual_usbc_model(LAVIE_TAB_9QHD1_MODEL));
         assert!(ltbox_core::model::capabilities("TB323FU").root_uses_gbl);
         assert!(!is_dual_usbc_model("TB330FU"));
+    }
+
+    #[test]
+    fn prc_only_tb322fc_and_tb324zc_are_exempt_but_tb323fu_is_protected() {
+        assert!(!is_rollback_protected_model("TB322FC"));
+        assert!(!is_rollback_protected_model("TB324ZC"));
+        assert!(is_rollback_protected_model("TB323FU"));
     }
 
     #[test]

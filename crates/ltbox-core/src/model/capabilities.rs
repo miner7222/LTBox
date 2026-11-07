@@ -128,7 +128,8 @@ const TB323FU: ModelCapabilities = ModelCapabilities {
     ..GENERIC
 };
 /// TB324ZC — Y700 5G. Shares TB323FU's efisp/GBL route, multi-image Sahara
-/// manifest and dual USB-C ports, but ships PRC-only firmware.
+/// manifest and dual USB-C ports, but ships PRC-only firmware and, like
+/// TB322FC, does not enforce rollback protection (confirmed on hardware).
 const TB324ZC: ModelCapabilities = ModelCapabilities {
     rescue: false,
     root_uses_gbl: true,
@@ -136,7 +137,7 @@ const TB324ZC: ModelCapabilities = ModelCapabilities {
     dual_usb: true,
     prc_only: true,
     region_avb_conversion: false,
-    rollback: RollbackPolicy::Gbl,
+    rollback: RollbackPolicy::Unprotected,
     country_partitions: &["proinfo", "persist"],
     ..GENERIC
 };
@@ -264,17 +265,21 @@ mod tests {
     use super::*;
 
     /// TB324ZC shares TB323FU's exploit route and its dual USB-C hardware but
-    /// not its region, so it is pinned against that profile rather than
-    /// described twice.
+    /// not its region or its rollback protection, so it is pinned against
+    /// that profile rather than described twice.
     #[test]
-    fn tb324zc_shares_the_gbl_route_and_dual_usb_but_is_prc_only() {
+    fn tb324zc_shares_the_gbl_route_and_dual_usb_but_is_prc_only_and_unprotected() {
         let tb324zc = capabilities("TB324ZC");
         let tb323fu = capabilities("TB323FU");
 
         assert!(tb324zc.root_uses_gbl);
         assert!(tb324zc.requires_sahara_manifest);
-        assert_eq!(tb324zc.rollback, RollbackPolicy::Gbl);
-        assert!(tb324zc.rollback.is_protected());
+        // TB323FU enforces rollback protection through GBL; TB324ZC, like
+        // TB322FC, enforces none.
+        assert_eq!(tb324zc.rollback, RollbackPolicy::Unprotected);
+        assert!(!tb324zc.rollback.is_protected());
+        assert_eq!(tb323fu.rollback, RollbackPolicy::Gbl);
+        assert!(tb323fu.rollback.is_protected());
         assert!(tb324zc.gki_root);
         assert!(!tb324zc.rescue);
         assert!(!tb324zc.region_avb_conversion);
