@@ -809,12 +809,26 @@ pub fn sahara_dump_regions<T: QdlChan>(
             .to_str()?
             .to_owned();
 
-        let mut f = File::create(std::path::Path::new(&format!("ramdump/{fname}")))
+        if !is_plain_ramdump_name(&fname) {
+            bail!("Refusing ramdump region with an unsafe file name: {fname:?}");
+        }
+        let mut f = File::create(std::path::Path::new("ramdump").join(&fname))
             .with_context(|| format!("Couldn't create ramdump output file for {fname}"))?;
         sahara_dump_region(channel, entry, &mut f)?;
     }
 
     Ok(())
+}
+
+/// A device-supplied ramdump name must stay a single file inside `ramdump/`:
+/// no separators, drive prefix or `.`/`..` component.
+fn is_plain_ramdump_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
 }
 
 fn sahara_read_packet<T: Read>(channel: &mut T, verbose: bool) -> Result<SaharaPacket> {
@@ -919,6 +933,12 @@ pub fn sahara_run<T: QdlChan>(
                 }
             }
             SaharaCmd::SaharaMemDebug64 => {
+                // Only a ramdump session asked for memory-debug mode. While
+                // uploading a programmer, an unsolicited dump request would
+                // write device-chosen files on the host, so refuse it.
+                if sahara_mode != SaharaMode::MemoryDebug {
+                    bail!("Device sent an unsolicited Sahara memory-debug request");
+                }
                 if let SaharaPacketBody::Debug64Req(req) = pkt.body {
                     assert_eq!(pkt.len as usize, pktsize + mem::size_of::<Debug64Req>());
 
@@ -1434,6 +1454,18 @@ mod golden {
         assert_eq!(&entry.filename[..11], b"ddr_cs0.bin");
         assert_eq!(&entry.filename[11..], &[0u8; 9]);
         assert_eq!(size_of::<RamdumpTable64>(), unhex(RAMDUMP).len());
+    }
+
+    #[test]
+    fn ramdump_names_must_stay_inside_the_output_directory() {
+        for ok in ["DDRCS0.BIN", "OCIMEM.BIN", "md_db.elf"] {
+            assert!(is_plain_ramdump_name(ok), "{ok}");
+        }
+        for bad in [
+            "", ".", "..", "../x", "..\\x", "/etc/x", "C:x", "a/b", "a\\b", "a\nb",
+        ] {
+            assert!(!is_plain_ramdump_name(bad), "{bad:?}");
+        }
     }
 
     #[test]

@@ -35,6 +35,18 @@ carrying the minimal patches we need.
 
 ## Local patches
 
+- **Refuse unsolicited ramdumps and unsafe dump names** (`src/sahara.rs`).
+  `sahara_run` rejects `SaharaMemDebug64` unless the caller asked for
+  `SaharaMode::MemoryDebug`; LTBox only uploads programmers, so a device could
+  otherwise make the host write files it names. `sahara_dump_regions` also
+  refuses a table entry whose file name has a separator, drive prefix, control
+  character or is `.`/`..`. Tests: `ramdump_names_must_stay_inside_the_output_directory`
+  and `crates/ltbox-device/tests/qdl_hostile_device.rs`.
+- **Bound `firehose_reset` re-entry** (`src/lib.rs`). A NAK or `AttemptRestart`
+  answering the reset itself called `firehose_reset` again; a device that kept
+  refusing recursed until the stack overflowed and aborted the process. A
+  thread-local guard makes the nested attempt fail instead. Test:
+  `crates/ltbox-device/tests/qdl_hostile_device.rs`.
 - **Structured GUI operation logs** (`src/operation_log.rs`, `src/lib.rs`,
   `src/parsers.rs`, `src/sahara.rs`). An optional observer receives throttled
   storage/Sahara-dump byte counts and protocol diagnostics. When installed, it

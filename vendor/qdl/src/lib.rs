@@ -864,6 +864,24 @@ pub fn firehose_reset<T: QdlChan>(
     mode: &FirehoseResetMode,
     delay_in_sec: u32,
 ) -> anyhow::Result<()> {
+    // A NAK (`firehose_write_getack`) or `AttemptRestart` (`firehose_read`)
+    // answering this request calls `firehose_reset` again. Unguarded, a device
+    // that keeps refusing recursed until the stack overflowed and the whole
+    // process aborted. Fail the nested attempt instead.
+    thread_local! {
+        static RESET_IN_PROGRESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    struct ResetGuard;
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            RESET_IN_PROGRESS.with(|flag| flag.set(false));
+        }
+    }
+    if RESET_IN_PROGRESS.with(|flag| flag.replace(true)) {
+        bail!("Firehose refused the reset request");
+    }
+    let _guard = ResetGuard;
+
     let mut xml = firehose_xml_setup(
         "power",
         &[
