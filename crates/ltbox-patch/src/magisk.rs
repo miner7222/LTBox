@@ -1,8 +1,9 @@
 //! Magisk root patching — extracts payload from the Magisk APK and patches the
 //! selected root ramdisk via the magiskboot library (no shell-out).
 //! APK layout: `lib/arm64-v8a/libmagisk{,64}.so` → `magisk`,
-//! `libmagiskinit.so` → `magiskinit`, `libinit-ld.so` → `init-ld`,
-//! `assets/stub.apk` → `stub.apk`.
+//! `libmagiskinit.so` → `magiskinit`, `libinit-ld.so` → `init-ld`, and,
+//! through v31.0 only, `assets/stub.apk` → `stub.apk`. Magisk v31.1 removed
+//! stub embedding (upstream c86a8776c), so the stub is optional.
 
 use fs_err as fs;
 use std::path::{Path, PathBuf};
@@ -146,9 +147,16 @@ pub fn resolve_preinit_device(mountinfo: &str, encrypt_type: &str) -> Option<Str
     candidates.into_iter().next().map(|(_, _, name)| name)
 }
 
+/// Staged name of the stub APK. Present only for Magisk releases that still
+/// embed it in the ramdisk (v31.0 and older).
+const STUB_APK: &str = "stub.apk";
+
 /// Extract Magisk payload from `apk_path` into `staging_dir`, overwriting
 /// existing files.
 /// Accepts both `libmagisk.so` (newer) and `libmagisk64.so` (older) for `magisk`.
+/// `assets/stub.apk` is optional: when the APK has none, any stale staged
+/// copy is removed so [`patch_root_image`] does not embed a stub that this
+/// release's `magiskinit` no longer handles.
 pub fn extract_apk_payload(apk_path: &Path, staging_dir: &Path) -> Result<()> {
     fs::create_dir_all(staging_dir)?;
 
@@ -157,24 +165,26 @@ pub fn extract_apk_payload(apk_path: &Path, staging_dir: &Path) -> Result<()> {
     let mut zip =
         zip::ZipArchive::new(file).map_err(|e| LtboxError::Patch(format!("APK read: {e}")))?;
 
-    let mapping: &[(&[&str], &str)] = &[
+    // (candidate entries, staged name, required)
+    let mapping: &[(&[&str], &str, bool)] = &[
         (
             &["lib/arm64-v8a/libmagisk.so", "lib/arm64-v8a/libmagisk64.so"],
             "magisk",
+            true,
         ),
-        (&["lib/arm64-v8a/libmagiskinit.so"], "magiskinit"),
-        (&["lib/arm64-v8a/libinit-ld.so"], "init-ld"),
-        (&["assets/stub.apk"], "stub.apk"),
+        (&["lib/arm64-v8a/libmagiskinit.so"], "magiskinit", true),
+        (&["lib/arm64-v8a/libinit-ld.so"], "init-ld", true),
+        (&["assets/stub.apk"], STUB_APK, false),
     ];
 
-    for (candidates, dst_name) in mapping {
+    for (candidates, dst_name, required) in mapping {
+        let dst_path = staging_dir.join(dst_name);
         let mut staged = false;
         for entry_name in candidates.iter() {
             let mut entry = match zip.by_name(entry_name) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            let dst_path = staging_dir.join(dst_name);
             crate::zip_util::copy_capped(
                 &mut entry,
                 &dst_path,
@@ -184,17 +194,25 @@ pub fn extract_apk_payload(apk_path: &Path, staging_dir: &Path) -> Result<()> {
             staged = true;
             break;
         }
-        if !staged {
+        if staged {
+            continue;
+        }
+        if *required {
             return Err(LtboxError::Patch(format!(
                 "APK missing entry for {dst_name} (checked {candidates:?})"
             )));
+        }
+        match fs::remove_file(&dst_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(())
 }
 
 /// Patch the selected root image with Magisk. `work_dir` must contain the image
-/// plus the four payload files from [`extract_apk_payload`]. Writes
+/// plus the payload files from [`extract_apk_payload`]. Writes
 /// `work_dir/new-boot.img`; caller handles resign + flash.
 ///
 /// `preinit_device` → Magisk `PREINITDEVICE` config. Empty string omits
@@ -253,8 +271,13 @@ pub fn patch_root_image(
     fs::copy(&ramdisk, work_dir.join("ramdisk.cpio.orig"))?;
 
     ltbox_core::live!(log, "[Magisk] {}", tr("log_magisk_compressing_payload"));
+    // Mirror the APK's own boot_patch.sh: v31.0 and older embed the stub,
+    // v31.1+ ship no stub and their magiskinit ignores one.
+    let embed_stub = work_dir.join(STUB_APK).is_file();
     boot::compress(work_dir, "xz", "magisk", "magisk.xz")?;
-    boot::compress(work_dir, "xz", "stub.apk", "stub.xz")?;
+    if embed_stub {
+        boot::compress(work_dir, "xz", STUB_APK, "stub.xz")?;
+    }
     boot::compress(work_dir, "xz", "init-ld", "init-ld.xz")?;
 
     // Config file baked into .backup/.magisk.
@@ -275,22 +298,26 @@ pub fn patch_root_image(
     // + metadata encryption. v2 `bin/ltbox/patch/root.py` sets the
     // same env via `_get_tool_env()` before invoking magiskboot.
     ltbox_core::live!(log, "[Magisk] {}", tr("log_magisk_cpio_patch"));
-    let cpio_cmds: &[&str] = &[
+    let mut cpio_cmds: Vec<&str> = vec![
         "add 0750 init magiskinit",
         "mkdir 0750 overlay.d",
         "mkdir 0750 overlay.d/sbin",
         "add 0644 overlay.d/sbin/magisk.xz magisk.xz",
-        "add 0644 overlay.d/sbin/stub.xz stub.xz",
+    ];
+    if embed_stub {
+        cpio_cmds.push("add 0644 overlay.d/sbin/stub.xz stub.xz");
+    }
+    cpio_cmds.extend([
         "add 0644 overlay.d/sbin/init-ld.xz init-ld.xz",
         "patch",
         "backup ramdisk.cpio.orig",
         "mkdir 000 .backup",
         "add 000 .backup/.magisk config",
-    ];
+    ]);
     boot::cpio_with_env(
         work_dir,
         ramdisk_name,
-        cpio_cmds,
+        &cpio_cmds,
         &[
             ("KEEPVERITY", "true"),
             ("KEEPFORCEENCRYPT", "true"),
@@ -473,5 +500,62 @@ mod tests {
         assert_eq!(derive_encrypt_type("encrypted", "file", "true"), "metadata");
         assert_eq!(derive_encrypt_type("encrypted", "file", "false"), "file");
         assert_eq!(derive_encrypt_type("encrypted", "file", ""), "file");
+    }
+
+    fn write_apk(path: &Path, entries: &[&str]) {
+        use std::io::Write;
+        let mut archive = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        for name in entries {
+            archive
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(name.as_bytes()).unwrap();
+        }
+        archive.finish().unwrap();
+    }
+
+    const CORE_ENTRIES: [&str; 3] = [
+        "lib/arm64-v8a/libmagisk.so",
+        "lib/arm64-v8a/libmagiskinit.so",
+        "lib/arm64-v8a/libinit-ld.so",
+    ];
+
+    #[test]
+    fn stages_stub_when_the_apk_still_embeds_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let apk = temp.path().join("magisk.apk");
+        let mut entries = CORE_ENTRIES.to_vec();
+        entries.push("assets/stub.apk");
+        write_apk(&apk, &entries);
+        let staging = temp.path().join("work");
+        extract_apk_payload(&apk, &staging).unwrap();
+        for name in ["magisk", "magiskinit", "init-ld", STUB_APK] {
+            assert!(staging.join(name).is_file(), "{name} not staged");
+        }
+    }
+
+    #[test]
+    fn stubless_apk_stages_core_payload_and_drops_a_stale_stub() {
+        // Magisk v31.1+ ships no assets/stub.apk.
+        let temp = tempfile::tempdir().unwrap();
+        let apk = temp.path().join("magisk.apk");
+        write_apk(&apk, &CORE_ENTRIES);
+        let staging = temp.path().join("work");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(staging.join(STUB_APK), b"stale").unwrap();
+        extract_apk_payload(&apk, &staging).unwrap();
+        for name in ["magisk", "magiskinit", "init-ld"] {
+            assert!(staging.join(name).is_file(), "{name} not staged");
+        }
+        assert!(!staging.join(STUB_APK).exists());
+    }
+
+    #[test]
+    fn missing_core_payload_still_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let apk = temp.path().join("magisk.apk");
+        write_apk(&apk, &CORE_ENTRIES[..2]);
+        let error = extract_apk_payload(&apk, &temp.path().join("work")).unwrap_err();
+        assert!(error.to_string().contains("init-ld"), "{error}");
     }
 }
