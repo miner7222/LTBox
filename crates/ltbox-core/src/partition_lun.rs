@@ -62,20 +62,28 @@ pub fn lun_for_partition(label: &str) -> Option<u8> {
 
 /// Strip the trailing `_a` / `_b` slot suffix if present.
 pub fn strip_slot_suffix(label: &str) -> &str {
-    if label.len() < 2 {
-        return label;
-    }
-    let tail = &label[label.len() - 2..];
-    if tail.eq_ignore_ascii_case("_a") || tail.eq_ignore_ascii_case("_b") {
-        &label[..label.len() - 2]
-    } else {
-        label
-    }
+    // Byte-slicing the last two bytes panicked on a non-ASCII tail (GPT names
+    // are untrusted); `strip_suffix` only cuts at a matched ASCII suffix.
+    ["_a", "_A", "_b", "_B"]
+        .iter()
+        .find_map(|suffix| label.strip_suffix(suffix))
+        .unwrap_or(label)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_slot_suffix_handles_case_and_non_ascii_tails() {
+        assert_eq!(strip_slot_suffix("boot_a"), "boot");
+        assert_eq!(strip_slot_suffix("boot_B"), "boot");
+        assert_eq!(strip_slot_suffix("boot"), "boot");
+        assert_eq!(strip_slot_suffix("_a"), "");
+        assert_eq!(strip_slot_suffix("a"), "a");
+        assert_eq!(strip_slot_suffix("한"), "한");
+        assert_eq!(strip_slot_suffix("boot_é"), "boot_é");
+    }
 
     #[test]
     fn lun_0_partitions_resolve() {
