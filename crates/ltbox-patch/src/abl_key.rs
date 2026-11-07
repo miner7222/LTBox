@@ -6,70 +6,11 @@ use ltbox_core::LtboxError;
 use lzma_rust2::LzmaReader;
 use sha1::{Digest, Sha1};
 
-const LZMA_OFFSET: usize = 0x1078;
-const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
-const MAX_INPUT_SIZE: usize = MAX_DECOMPRESSED_SIZE * 4;
+use crate::abl_pe::{
+    self, MAX_DECOMPRESSED_SIZE, MAX_INPUT_SIZE, PeImage, TieBreak, read_u32_le, sign_extend,
+};
+
 const RSA_KEY_BITS: [u32; 3] = [2048, 4096, 8192];
-
-#[derive(Clone, Debug)]
-struct Section {
-    name: String,
-    virtual_address: u32,
-    raw_offset: usize,
-    raw_size: usize,
-    executable: bool,
-}
-
-#[derive(Debug)]
-struct PeImage {
-    data: Vec<u8>,
-    sections: Vec<Section>,
-}
-
-impl PeImage {
-    fn raw_to_rva(&self, raw_offset: usize) -> Option<i64> {
-        self.sections.iter().find_map(|section| {
-            let end = section.raw_offset.checked_add(section.raw_size)?;
-            (section.raw_offset <= raw_offset && raw_offset < end).then(|| {
-                i64::from(section.virtual_address) + (raw_offset - section.raw_offset) as i64
-            })
-        })
-    }
-
-    fn text_ranges(&self) -> Vec<(usize, usize, i64)> {
-        let named: Vec<_> = self
-            .sections
-            .iter()
-            .filter(|section| section.name == ".text")
-            .collect();
-        let executable: Vec<_> = self
-            .sections
-            .iter()
-            .filter(|section| section.executable)
-            .collect();
-        let selected = if !named.is_empty() {
-            named
-        } else if !executable.is_empty() {
-            executable
-        } else {
-            self.sections.iter().collect()
-        };
-
-        selected
-            .into_iter()
-            .filter_map(|section| {
-                if section.raw_size == 0 || section.raw_offset >= self.data.len() {
-                    return None;
-                }
-                let end = section
-                    .raw_offset
-                    .saturating_add(section.raw_size)
-                    .min(self.data.len());
-                Some((section.raw_offset, end, i64::from(section.virtual_address)))
-            })
-            .collect()
-    }
-}
 
 #[derive(Debug)]
 struct KeyBlob {
@@ -116,239 +57,33 @@ fn extract_from_bytes(raw: &[u8]) -> Result<String, LtboxError> {
     Ok(fingerprint)
 }
 
-fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
-    let bytes: [u8; 2] = data.get(offset..offset.checked_add(2)?)?.try_into().ok()?;
-    Some(u16::from_le_bytes(bytes))
-}
-
-fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    let bytes: [u8; 4] = data.get(offset..offset.checked_add(4)?)?.try_into().ok()?;
-    Some(u32::from_le_bytes(bytes))
-}
-
-fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
-    let bytes: [u8; 8] = data.get(offset..offset.checked_add(8)?)?.try_into().ok()?;
-    Some(u64::from_le_bytes(bytes))
-}
-
 fn read_u32_be(data: &[u8], offset: usize) -> Option<u32> {
     let bytes: [u8; 4] = data.get(offset..offset.checked_add(4)?)?.try_into().ok()?;
     Some(u32::from_be_bytes(bytes))
 }
 
+fn decode_complete_stream(candidate: &[u8]) -> Option<Vec<u8>> {
+    let mut reader =
+        LzmaReader::new_mem_limit(candidate, (MAX_DECOMPRESSED_SIZE / 1024) as u32, None).ok()?;
+    let mut decoded = Vec::new();
+    reader
+        .by_ref()
+        .take((MAX_DECOMPRESSED_SIZE + 1) as u64)
+        .read_to_end(&mut decoded)
+        .ok()?;
+    (64..=MAX_DECOMPRESSED_SIZE)
+        .contains(&decoded.len())
+        .then_some(decoded)
+}
+
+#[cfg(test)]
 fn lzma_decode(stream: &[u8]) -> Option<Vec<u8>> {
-    if stream.is_empty() || stream.len() > MAX_INPUT_SIZE {
-        return None;
-    }
-
-    let mut spliced = Vec::new();
-    let mut attempts = vec![stream];
-    if stream.len() >= 5 && stream.first() == Some(&0x5d) {
-        spliced.reserve(stream.len().checked_add(8)?);
-        spliced.extend_from_slice(stream.get(..5)?);
-        spliced.extend_from_slice(&[0xff; 8]);
-        spliced.extend_from_slice(stream.get(5..)?);
-        attempts.push(&spliced);
-    }
-
-    for candidate in attempts {
-        if candidate.len() < 13 {
-            continue;
-        }
-        let declared_size = read_u64_le(candidate, 5)?;
-        if declared_size != u64::MAX && declared_size > MAX_DECOMPRESSED_SIZE as u64 {
-            continue;
-        }
-
-        let mut reader =
-            match LzmaReader::new_mem_limit(candidate, (MAX_DECOMPRESSED_SIZE / 1024) as u32, None)
-            {
-                Ok(reader) => reader,
-                Err(_) => continue,
-            };
-        let mut decoded = Vec::new();
-        match reader
-            .by_ref()
-            .take((MAX_DECOMPRESSED_SIZE + 1) as u64)
-            .read_to_end(&mut decoded)
-        {
-            Ok(_) if (64..=MAX_DECOMPRESSED_SIZE).contains(&decoded.len()) => return Some(decoded),
-            _ => continue,
-        }
-    }
-    None
-}
-
-fn decompressed_layers(raw: &[u8]) -> Vec<Vec<u8>> {
-    let mut starts = Vec::new();
-    if raw.len() > LZMA_OFFSET {
-        starts.push(LZMA_OFFSET);
-    }
-    for (offset, window) in raw.windows(3).enumerate() {
-        if window == [0x5d, 0, 0] {
-            starts.push(offset);
-        }
-    }
-
-    let mut seen = HashSet::new();
-    starts
-        .into_iter()
-        .filter(|start| seen.insert(*start))
-        .filter_map(|start| lzma_decode(raw.get(start..)?))
-        .filter(|layer| !find_pe_images(layer).is_empty())
-        .collect()
-}
-
-fn find_pe_images(data: &[u8]) -> Vec<PeImage> {
-    let mut images = Vec::new();
-    let mut cursor = 0usize;
-
-    while cursor < data.len() {
-        let Some(relative_mz) = data
-            .get(cursor..)
-            .and_then(|tail| tail.windows(2).position(|window| window == b"MZ"))
-        else {
-            break;
-        };
-        let Some(mz) = cursor.checked_add(relative_mz) else {
-            break;
-        };
-        cursor = match mz.checked_add(2) {
-            Some(next) => next,
-            None => break,
-        };
-
-        let Some(dos_end) = mz.checked_add(0x40) else {
-            continue;
-        };
-        if dos_end > data.len() {
-            continue;
-        }
-        let Some(e_lfanew) = read_u32_le(data, mz + 0x3c).map(|value| value as usize) else {
-            continue;
-        };
-        let Some(pe_header) = mz.checked_add(e_lfanew) else {
-            continue;
-        };
-        let Some(pe_fixed_end) = pe_header.checked_add(24) else {
-            continue;
-        };
-        if pe_header < mz || pe_fixed_end > data.len() {
-            continue;
-        }
-        if data.get(pe_header..pe_header + 4) != Some(b"PE\0\0".as_slice()) {
-            continue;
-        }
-
-        let Some(number_of_sections) = read_u16_le(data, pe_header + 6).map(usize::from) else {
-            continue;
-        };
-        let Some(optional_size) = read_u16_le(data, pe_header + 20).map(usize::from) else {
-            continue;
-        };
-        if !(1..=96).contains(&number_of_sections) || optional_size < 0x60 {
-            continue;
-        }
-        let optional = pe_header + 24;
-        let Some(optional_end) = optional.checked_add(optional_size) else {
-            continue;
-        };
-        if optional_end > data.len() || !matches!(read_u16_le(data, optional), Some(0x10b | 0x20b))
-        {
-            continue;
-        }
-        let section_table = optional_end;
-        let Some(table_size) = number_of_sections.checked_mul(40) else {
-            continue;
-        };
-        let Some(table_end) = section_table.checked_add(table_size) else {
-            continue;
-        };
-        if table_end > data.len() {
-            continue;
-        }
-
-        let Some(size_of_headers) = read_u32_le(data, optional + 60).map(|value| value as usize)
-        else {
-            continue;
-        };
-        let mut real_size = size_of_headers.max(table_end - mz);
-        let mut sections = Vec::with_capacity(number_of_sections);
-        let mut valid = true;
-        for index in 0..number_of_sections {
-            let Some(section) = section_table.checked_add(index * 40) else {
-                valid = false;
-                break;
-            };
-            let Some(raw_size) = read_u32_le(data, section + 16).map(|value| value as usize) else {
-                valid = false;
-                break;
-            };
-            let Some(raw_offset) = read_u32_le(data, section + 20).map(|value| value as usize)
-            else {
-                valid = false;
-                break;
-            };
-            let Some(virtual_address) = read_u32_le(data, section + 12) else {
-                valid = false;
-                break;
-            };
-            let Some(characteristics) = read_u32_le(data, section + 36) else {
-                valid = false;
-                break;
-            };
-            let Some(raw_end) = raw_offset.checked_add(raw_size) else {
-                valid = false;
-                break;
-            };
-            if raw_size != 0 && raw_end > data.len() - mz {
-                valid = false;
-                break;
-            }
-            real_size = real_size.max(raw_end);
-            let Some(name_bytes) = data.get(section..section + 8) else {
-                valid = false;
-                break;
-            };
-            let name_end = name_bytes
-                .iter()
-                .position(|byte| *byte == 0)
-                .unwrap_or(name_bytes.len());
-            sections.push(Section {
-                name: String::from_utf8_lossy(&name_bytes[..name_end]).into_owned(),
-                virtual_address,
-                raw_offset,
-                raw_size,
-                executable: characteristics & 0x2000_0000 != 0,
-            });
-        }
-        let Some(image_end) = mz.checked_add(real_size) else {
-            continue;
-        };
-        if !valid || real_size == 0 || image_end > data.len() {
-            continue;
-        }
-        let Some(image_data) = data.get(mz..image_end) else {
-            continue;
-        };
-        images.push(PeImage {
-            data: image_data.to_vec(),
-            sections,
-        });
-    }
-    images
+    abl_pe::lzma_decode(stream, decode_complete_stream)
 }
 
 fn load_linuxloader(raw: &[u8]) -> Option<PeImage> {
-    let images = if raw.starts_with(b"MZ") {
-        find_pe_images(raw)
-    } else {
-        decompressed_layers(raw)
-            .iter()
-            .flat_map(|layer| find_pe_images(layer))
-            .collect()
-    };
-    images.into_iter().max_by_key(|image| image.data.len())
+    // The last of several equally large PEs wins (`Iterator::max_by_key`).
+    abl_pe::load_linuxloader(raw, decode_complete_stream, TieBreak::Last)
 }
 
 fn bit_length_be(value: &[u8]) -> usize {
@@ -430,11 +165,6 @@ fn decode_key_candidate(data: &[u8], offset: usize, bits: u32) -> Option<Vec<u8>
         return None;
     }
     Some(blob.to_vec())
-}
-
-fn sign_extend(value: u32, bits: u32) -> i64 {
-    let shift = 64 - bits;
-    ((i64::from(value)) << shift) >> shift
 }
 
 fn instruction_references(pe: &PeImage, key_start: usize, key_size: usize) -> usize {

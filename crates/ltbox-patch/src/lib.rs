@@ -5,6 +5,7 @@
 //! `ltbox-magiskboot` companion next to their executable.
 
 pub mod abl_key;
+mod abl_pe;
 pub mod apatch;
 pub mod avb;
 pub mod boot;
