@@ -296,8 +296,7 @@ impl GitHubClient {
     /// Latest five published releases, including prereleases, by publication date.
     pub fn recent_published_releases(&self) -> Result<Vec<PublishedRelease>> {
         let mut releases = Vec::new();
-        let mut page = 1;
-        loop {
+        for page in 1..=3 {
             let batch: Vec<Release> =
                 self.get_json(&format!("/releases?per_page=100&page={page}"))?;
             let finished = batch.len() < 100;
@@ -305,7 +304,6 @@ impl GitHubClient {
             if finished {
                 break;
             }
-            page += 1;
         }
         Ok(recent_releases(releases))
     }
@@ -358,8 +356,11 @@ impl GitHubClient {
         let resp: WorkflowRunsResponse = self.get_json(&format!(
             "/actions/workflows/{workflow_file}/runs?per_page=30&status=success&branch={encoded}"
         ))?;
-        if !resp.workflow_runs.is_empty() {
-            return Ok(resp.workflow_runs.into_iter().map(|r| r.id).collect());
+        // The search can also return a fork PR whose head branch reuses the tag
+        // name; such a run never supplies root payloads.
+        let runs = successful_tag_runs(resp.workflow_runs, tag);
+        if !runs.is_empty() {
+            return Ok(runs);
         }
         // The `status`/`branch` filters go through GitHub's run search, which
         // has returned nothing for a tag run that completed a week earlier
@@ -417,23 +418,7 @@ impl GitHubClient {
         branch: Option<&str>,
     ) -> Result<bool> {
         let run: WorkflowRun = self.get_json(&format!("/actions/runs/{run_id}"))?;
-        if let Some(b) = branch
-            && run.head_branch.as_deref() != Some(b)
-        {
-            return Ok(false);
-        }
-        if !workflow_file.is_empty() {
-            let expected = normalize_workflow_path(workflow_file);
-            let actual = run
-                .path
-                .as_deref()
-                .map(normalize_workflow_path)
-                .unwrap_or_default();
-            if actual != expected {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(run_matches(&run, workflow_file, branch))
     }
 
     /// Successful runs less than 90 days old that still have downloadable artifacts.
@@ -543,6 +528,27 @@ fn is_same_repo_success(run: &WorkflowRun) -> bool {
         )
 }
 
+/// A manually entered run ID passes the same provenance bar as a listed run:
+/// a successful run from the workflow's own repository, on `branch` when one
+/// is given, of `workflow_file` when one is given.
+fn run_matches(run: &WorkflowRun, workflow_file: &str, branch: Option<&str>) -> bool {
+    if !is_same_repo_success(run) {
+        return false;
+    }
+    if let Some(b) = branch
+        && run.head_branch.as_deref() != Some(b)
+    {
+        return false;
+    }
+    workflow_file.is_empty()
+        || run
+            .path
+            .as_deref()
+            .map(normalize_workflow_path)
+            .unwrap_or_default()
+            == normalize_workflow_path(workflow_file)
+}
+
 /// A successful run of `branch` whose head lives in the workflow's own
 /// repository. Fork PRs can use a head branch with the same name (`main`), so
 /// the branch name alone is not trusted.
@@ -629,6 +635,24 @@ mod tests {
                 full_name: full_name.into(),
             }),
         }
+    }
+
+    #[test]
+    fn manual_run_id_needs_same_repository_success_branch_and_workflow() {
+        let mut ok = run("main", Some("success"), Some("o/r"));
+        ok.path = Some(".github/workflows/build.yml".into());
+        assert!(run_matches(&ok, "build.yml", Some("main")));
+        assert!(run_matches(&ok, "", None));
+        assert!(!run_matches(&ok, "other.yml", Some("main")));
+        assert!(!run_matches(&ok, "build.yml", Some("dev")));
+        let mut fork = ok.clone();
+        fork.head_repository = Some(RepoRef {
+            full_name: "fork/r".into(),
+        });
+        assert!(!run_matches(&fork, "build.yml", Some("main")));
+        let mut failed = ok.clone();
+        failed.conclusion = Some("failure".into());
+        assert!(!run_matches(&failed, "build.yml", Some("main")));
     }
 
     #[test]
