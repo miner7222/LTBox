@@ -94,7 +94,6 @@ rsa = "0.9"
 
 # USB (for Fastboot).
 nusb = "0.2"
-pollster = "1"
 # Serial (for kernel-driver EDL backend discovery).
 serialport = "4"
 

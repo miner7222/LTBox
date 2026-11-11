@@ -26,6 +26,12 @@ const FASTBOOT_USB_SUBCLASS: u8 = 0x42;
 const FASTBOOT_USB_PROTOCOL: u8 = 0x03;
 
 const WAIT_SLEEP: Duration = Duration::from_secs(2);
+/// One bulk transfer. A transfer that never completes (a wedged bootloader,
+/// a half-detached cable) is cancelled instead of blocking forever, which
+/// also left the callers' own polling deadlines unable to fire.
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
+/// One command, however many INFO lines it streams.
+const COMMAND_DEADLINE: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Default, Clone)]
 pub struct FastbootVars {
@@ -48,6 +54,7 @@ pub struct FastbootDevice {
     _interface: nusb::Interface,
     ep_in: Endpoint<Bulk, In>,
     ep_out: Endpoint<Bulk, Out>,
+    poisoned: bool,
 }
 
 struct FastbootCandidate {
@@ -159,6 +166,7 @@ impl FastbootDevice {
                         _interface: interface,
                         ep_in,
                         ep_out,
+                        poisoned: false,
                     });
                 }
             }
@@ -183,24 +191,38 @@ impl FastbootDevice {
         }
     }
 
-    /// Submit `buf` on the OUT endpoint and block for completion.
+    /// Wait at most `timeout` for a Fastboot device to appear.
+    pub fn wait_for_device_within(timeout: Duration) -> Result<Self> {
+        wait_for_device_with(
+            timeout,
+            Self::open,
+            std::thread::sleep,
+            std::time::Instant::now,
+        )
+    }
+
+    /// Submit `buf` on the OUT endpoint and wait up to [`TRANSFER_TIMEOUT`].
     fn bulk_write(&mut self, buf: Vec<u8>) -> Result<()> {
-        self.ep_out.submit(Buffer::from(buf));
-        let completion = pollster::block_on(self.ep_out.next_complete());
+        ensure_transport_ready(self.poisoned)?;
+        let completion = self
+            .ep_out
+            .transfer_blocking(Buffer::from(buf), TRANSFER_TIMEOUT);
         completion
             .status
-            .map_err(|e| FastbootError::Usb(e.to_string()))?;
+            .map_err(|e| transfer_error(e, &mut self.poisoned))?;
         Ok(())
     }
 
-    /// Submit a 4 KiB read on the IN endpoint and block for completion.
-    /// Returns the initialized prefix of the filled buffer.
+    /// Submit a 4 KiB read on the IN endpoint and wait up to
+    /// [`TRANSFER_TIMEOUT`]. Returns the initialized prefix of the buffer.
     fn bulk_read(&mut self) -> Result<Vec<u8>> {
-        self.ep_in.submit(Buffer::new(4096));
-        let completion = pollster::block_on(self.ep_in.next_complete());
+        ensure_transport_ready(self.poisoned)?;
+        let completion = self
+            .ep_in
+            .transfer_blocking(Buffer::new(4096), TRANSFER_TIMEOUT);
         completion
             .status
-            .map_err(|e| FastbootError::Usb(e.to_string()))?;
+            .map_err(|e| transfer_error(e, &mut self.poisoned))?;
         let len = completion.actual_len;
         let mut out = completion.buffer.into_vec();
         out.truncate(len);
@@ -211,22 +233,17 @@ impl FastbootDevice {
     fn command(&mut self, cmd: &str) -> Result<String> {
         self.bulk_write(cmd.as_bytes().to_vec())?;
 
+        let deadline = std::time::Instant::now() + COMMAND_DEADLINE;
         loop {
+            check_deadline(deadline, cmd)?;
             let data = self.bulk_read()?;
 
-            if data.len() < 4 {
-                return Err(FastbootError::CommandFailed("Short response".into()));
-            }
-
-            let status = std::str::from_utf8(&data[..4]).unwrap_or("");
-            let payload = std::str::from_utf8(&data[4..]).unwrap_or("").trim();
-
-            match status {
-                "OKAY" => return Ok(payload.to_string()),
-                "FAIL" => return Err(FastbootError::CommandFailed(payload.to_string())),
-                "INFO" => continue,
-                "DATA" => return Ok(payload.to_string()),
-                _ => return Err(FastbootError::CommandFailed(format!("Unknown: {status}"))),
+            match classify_packet(&data)? {
+                Packet::Okay(payload) | Packet::Data(payload) => return Ok(payload.to_string()),
+                Packet::Fail(payload) => {
+                    return Err(FastbootError::CommandFailed(payload.to_string()));
+                }
+                Packet::Info(_) | Packet::Text(_) => continue,
             }
         }
     }
@@ -236,21 +253,17 @@ impl FastbootDevice {
         self.bulk_write(cmd.as_bytes().to_vec())?;
 
         let mut lines = Vec::new();
+        let deadline = std::time::Instant::now() + COMMAND_DEADLINE;
         loop {
+            check_deadline(deadline, cmd)?;
             let data = self.bulk_read()?;
-            if data.len() < 4 {
-                break;
-            }
-            let status = std::str::from_utf8(&data[..4]).unwrap_or("");
-            let payload = std::str::from_utf8(&data[4..])
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            match status {
-                "INFO" => lines.push(payload),
-                "OKAY" => break,
-                "FAIL" => return Err(FastbootError::CommandFailed(payload)),
-                _ => break,
+            match classify_packet(&data)? {
+                Packet::Info(payload) => lines.push(payload.to_string()),
+                Packet::Text(_) => continue,
+                Packet::Okay(_) | Packet::Data(_) => break,
+                Packet::Fail(payload) => {
+                    return Err(FastbootError::CommandFailed(payload.to_string()));
+                }
             }
         }
         Ok(lines)
@@ -341,6 +354,85 @@ impl FastbootDevice {
             .map(|v| v.trim().eq_ignore_ascii_case("yes"))
             .unwrap_or(false)
     }
+}
+
+fn wait_for_device_with<T>(
+    timeout: Duration,
+    mut open: impl FnMut() -> Result<T>,
+    mut sleep: impl FnMut(Duration),
+    mut now: impl FnMut() -> std::time::Instant,
+) -> Result<T> {
+    let started = now();
+    loop {
+        if now().saturating_duration_since(started) >= timeout {
+            return Err(FastbootError::DeviceNotFound);
+        }
+        match open() {
+            Err(FastbootError::DeviceNotFound) => {
+                let elapsed = now().saturating_duration_since(started);
+                sleep(WAIT_SLEEP.min(timeout.saturating_sub(elapsed)));
+            }
+            result => return result,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Packet<'a> {
+    Okay(&'a str),
+    Fail(&'a str),
+    Info(&'a str),
+    Text(&'a str),
+    Data(&'a str),
+}
+
+fn classify_packet(data: &[u8]) -> Result<Packet<'_>> {
+    if data.len() < 4 {
+        return Err(FastbootError::CommandFailed("Short response".into()));
+    }
+    let status = std::str::from_utf8(&data[..4]).unwrap_or("");
+    let payload = std::str::from_utf8(&data[4..]).unwrap_or("").trim();
+    match status {
+        "OKAY" => Ok(Packet::Okay(payload)),
+        "FAIL" => Ok(Packet::Fail(payload)),
+        "INFO" => Ok(Packet::Info(payload)),
+        "TEXT" => Ok(Packet::Text(payload)),
+        "DATA" => Ok(Packet::Data(payload)),
+        _ => Err(FastbootError::CommandFailed(format!("Unknown: {status}"))),
+    }
+}
+
+fn ensure_transport_ready(poisoned: bool) -> Result<()> {
+    if poisoned {
+        return Err(FastbootError::Usb(
+            "fastboot transport timed out earlier; reopen the device".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn transfer_error(error: nusb::transfer::TransferError, poisoned: &mut bool) -> FastbootError {
+    match error {
+        nusb::transfer::TransferError::Cancelled => {
+            *poisoned = true;
+            FastbootError::Usb(format!(
+                "no response within {} s",
+                TRANSFER_TIMEOUT.as_secs()
+            ))
+        }
+        other => FastbootError::Usb(other.to_string()),
+    }
+}
+
+/// A bootloader streaming INFO lines forever must not hold the caller.
+fn check_deadline(deadline: std::time::Instant, cmd: &str) -> Result<()> {
+    if std::time::Instant::now() >= deadline {
+        return Err(FastbootError::CommandFailed(format!(
+            "{cmd}: no OKAY/FAIL within {} s",
+            COMMAND_DEADLINE.as_secs()
+        )));
+    }
+    Ok(())
 }
 
 fn is_fastboot_interface(class: u8, subclass: u8, protocol: u8) -> bool {
@@ -503,6 +595,92 @@ mod tests {
     struct TestCandidate {
         device: u8,
         fastboot: bool,
+    }
+
+    #[test]
+    fn bounded_wait_times_out_without_sleeping_past_deadline() {
+        let now = std::cell::Cell::new(std::time::Instant::now());
+        let started = now.get();
+        let mut polls = 0;
+        let result = wait_for_device_with::<()>(
+            Duration::from_secs(5),
+            || {
+                polls += 1;
+                Err(FastbootError::DeviceNotFound)
+            },
+            |duration| now.set(now.get() + duration),
+            || now.get(),
+        );
+        assert!(matches!(result, Err(FastbootError::DeviceNotFound)));
+        assert_eq!(polls, 3);
+        assert_eq!(now.get().duration_since(started), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn bounded_wait_succeeds_after_three_polls() {
+        let now = std::cell::Cell::new(std::time::Instant::now());
+        let mut polls = 0;
+        let result = wait_for_device_with(
+            Duration::from_secs(10),
+            || {
+                polls += 1;
+                if polls == 3 {
+                    Ok(7)
+                } else {
+                    Err(FastbootError::DeviceNotFound)
+                }
+            },
+            |duration| now.set(now.get() + duration),
+            || now.get(),
+        );
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(polls, 3);
+    }
+
+    #[test]
+    fn bounded_wait_propagates_other_errors_without_sleep() {
+        let result = wait_for_device_with::<()>(
+            Duration::from_secs(10),
+            || Err(FastbootError::MultipleDevices),
+            |_| panic!("must not sleep"),
+            std::time::Instant::now,
+        );
+        assert!(matches!(result, Err(FastbootError::MultipleDevices)));
+    }
+
+    #[test]
+    fn packets_classify_all_statuses_and_reject_invalid_headers() {
+        assert_eq!(
+            classify_packet(b"OKAY value ").unwrap(),
+            Packet::Okay("value")
+        );
+        assert_eq!(classify_packet(b"FAILbad").unwrap(), Packet::Fail("bad"));
+        assert_eq!(classify_packet(b"INFOline").unwrap(), Packet::Info("line"));
+        assert_eq!(classify_packet(b"TEXTline").unwrap(), Packet::Text("line"));
+        assert_eq!(
+            classify_packet(b"DATA00000010").unwrap(),
+            Packet::Data("00000010")
+        );
+        assert!(matches!(
+            classify_packet(b"OK"),
+            Err(FastbootError::CommandFailed(_))
+        ));
+        assert!(matches!(
+            classify_packet(b"WHAT"),
+            Err(FastbootError::CommandFailed(_))
+        ));
+    }
+
+    #[test]
+    fn cancelled_transfer_poisons_transport() {
+        let mut poisoned = false;
+        assert!(ensure_transport_ready(poisoned).is_ok());
+        let _ = transfer_error(nusb::transfer::TransferError::Cancelled, &mut poisoned);
+        assert!(poisoned);
+        assert!(
+            matches!(ensure_transport_ready(poisoned), Err(FastbootError::Usb(message))
+            if message == "fastboot transport timed out earlier; reopen the device")
+        );
     }
 
     #[test]
