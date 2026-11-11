@@ -116,6 +116,25 @@ fn plan_program_node(
     if !image_path.exists() {
         return Ok(ProgramNodePlan::MissingImage { label, image_path });
     }
+    // The transfer zero-pads past EOF to `num_sectors`, so an empty file (a
+    // failed extraction, say) would quietly zero the whole partition, and a
+    // directory would only fail mid-flash. Refuse both before any write.
+    let file_len = {
+        let meta = std::fs::metadata(&image_path)?;
+        if !meta.is_file() {
+            return Err(EdlError::Session(format!(
+                "{ctx}: {} is not a regular file",
+                image_path.display()
+            )));
+        }
+        meta.len()
+    };
+    if file_len == 0 {
+        return Err(EdlError::Session(format!(
+            "{ctx}: {} is empty; refusing to write {num_sectors} zero-filled sectors",
+            image_path.display()
+        )));
+    }
 
     let mut byte_offset = 0;
     if file_sector_offset > 0 {
@@ -132,7 +151,6 @@ fn plan_program_node(
                      × sector_size {sector_size} overflows u64"
             ))
         })?;
-        let file_len = std::fs::metadata(&image_path)?.len();
         if byte_offset >= file_len {
             return Err(EdlError::Session(format!(
                 "{ctx}: file_sector_offset {file_sector_offset} \
@@ -179,6 +197,102 @@ fn plan_erase_node(node: &roxmltree::Node<'_, '_>) -> Result<Option<EraseNodePla
             .attribute("label")
             .is_some_and(|label| label.trim() == "efisp"),
     }))
+}
+
+#[derive(Debug)]
+struct ProtectedRange {
+    lun: u8,
+    start: u64,
+    num_sectors: u64,
+    label: String,
+}
+
+fn ranges_overlap(start: u64, num: u64, other_start: u64, other_num: u64) -> Result<bool> {
+    let end = start
+        .checked_add(num)
+        .ok_or_else(|| EdlError::Session("sector range overflow".into()))?;
+    let other_end = other_start
+        .checked_add(other_num)
+        .ok_or_else(|| EdlError::Session("sector range overflow".into()))?;
+    Ok(num != 0 && other_num != 0 && start < other_end && other_start < end)
+}
+
+fn collect_protected_ranges(program_xmls: &[PathBuf]) -> Result<Vec<ProtectedRange>> {
+    let mut ranges = Vec::new();
+    for path in program_xmls {
+        let content = ltbox_core::xml::read(path)?;
+        let doc = ltbox_core::xml::parse(&content).map_err(|e| {
+            EdlError::Session(format!("XML parse error in {}: {e}", path.display()))
+        })?;
+        for node in doc
+            .descendants()
+            .filter(|n| n.tag_name().name().eq_ignore_ascii_case("program"))
+        {
+            let label = node.attribute("label").unwrap_or("").trim();
+            if !EdlSession::keep_data_skip_labels(label) {
+                continue;
+            }
+            let Ok(start) = node
+                .attribute("start_sector")
+                .unwrap_or("")
+                .trim()
+                .parse::<u64>()
+            else {
+                continue;
+            };
+            require_destructive_coords(&node, "<program>")?;
+            let lun = parse_xml_attr(&node, "physical_partition_number", 0u8, "<program>")?;
+            let num_sectors = parse_xml_attr(&node, "num_partition_sectors", 0u64, "<program>")?;
+            ranges_overlap(start, num_sectors, start, num_sectors)?;
+            ranges.push(ProtectedRange {
+                lun,
+                start,
+                num_sectors,
+                label: label.to_string(),
+            });
+        }
+    }
+    Ok(ranges)
+}
+
+fn keep_data_erase_label<'a>(
+    node: &'a roxmltree::Node<'_, '_>,
+    wipe: bool,
+    ranges: &'a [ProtectedRange],
+) -> Result<Option<String>> {
+    if wipe {
+        return Ok(None);
+    }
+    let label = node.attribute("label").unwrap_or("").trim();
+    if EdlSession::keep_data_skip_labels(label) {
+        return Ok(Some(label.to_string()));
+    }
+    let Ok(start) = node
+        .attribute("start_sector")
+        .unwrap_or("")
+        .trim()
+        .parse::<u64>()
+    else {
+        return Ok(None);
+    };
+    let Some(plan) = plan_erase_node(node)? else {
+        return Ok(None);
+    };
+    for range in ranges.iter().filter(|range| range.lun == plan.lun) {
+        if ranges_overlap(
+            start,
+            plan.num_sectors as u64,
+            range.start,
+            range.num_sectors,
+        )? {
+            return Ok(Some(if label.is_empty() {
+                range.label.clone()
+            } else {
+                label.to_string()
+            }));
+        }
+    }
+    Ok(None)
 }
 
 /// Parse an XML attribute, distinguishing three cases:
@@ -400,7 +514,12 @@ impl EdlSession {
             .map(|path| plan_patch_xml(path))
             .collect::<Result<Vec<_>>>()?;
         Self::preflight_rawprogram_super_images(program_xmls)?;
-        self.preflight_rawprogram_nodes(program_xmls, !wipe, wipe, log)?;
+        let protected_ranges = if wipe {
+            Vec::new()
+        } else {
+            collect_protected_ranges(program_xmls)?
+        };
+        self.preflight_rawprogram_nodes(program_xmls, !wipe, wipe, &protected_ranges, log)?;
         register_flash_bytes(self.rawprogram_transfer_bytes(program_xmls, wipe)?);
 
         if wipe {
@@ -416,7 +535,7 @@ impl EdlSession {
                 "[EDL] {}",
                 ltbox_core::tr_args!("log_edl_flash_cmd", path = xml_path.display())
             );
-            self.flash_one_rawprogram(xml_path, wipe, log)?;
+            self.flash_one_rawprogram(xml_path, wipe, &protected_ranges, log)?;
         }
         for (xml_path, plans) in patch_xmls.iter().zip(&patch_plans) {
             // Show file name only — the full disk path was noisy and added
@@ -456,7 +575,7 @@ impl EdlSession {
             .map(|path| plan_patch_xml(path))
             .collect::<Result<Vec<_>>>()?;
         Self::preflight_rawprogram_super_images(program_xmls)?;
-        self.preflight_rawprogram_nodes(program_xmls, false, false, log)?;
+        self.preflight_rawprogram_nodes(program_xmls, false, false, &[], log)?;
         register_flash_bytes(self.rawprogram_transfer_bytes(program_xmls, true)?);
 
         for xml_path in program_xmls {
@@ -468,7 +587,7 @@ impl EdlSession {
             // `wipe = true` here only means "do not skip userdata/metadata":
             // `flash_one_rawprogram` writes every node verbatim and the
             // separate pre-erase pass is intentionally not run.
-            self.flash_one_rawprogram(xml_path, true, log)?;
+            self.flash_one_rawprogram(xml_path, true, &[], log)?;
         }
         for (xml_path, plans) in patch_xmls.iter().zip(&patch_plans) {
             let display_name = xml_path
@@ -596,6 +715,7 @@ impl EdlSession {
         &mut self,
         xml_path: &Path,
         wipe: bool,
+        protected_ranges: &[ProtectedRange],
         log: &mut Vec<String>,
     ) -> Result<()> {
         let xml_content = ltbox_core::xml::read(xml_path)?;
@@ -621,7 +741,17 @@ impl EdlSession {
                     }
                     self.flash_program_node(&node, xml_dir, log)?;
                 }
-                "erase" => self.erase_program_node(&node, log)?,
+                "erase" => {
+                    if let Some(label) = keep_data_erase_label(&node, wipe, protected_ranges)? {
+                        ltbox_core::live!(
+                            log,
+                            "[EDL] {}",
+                            ltbox_core::tr_args!("log_edl_skip_keep_data", label = label)
+                        );
+                        continue;
+                    }
+                    self.erase_program_node(&node, log)?;
+                }
                 _ => continue,
             }
         }
@@ -640,6 +770,7 @@ impl EdlSession {
         program_xmls: &[PathBuf],
         skip_keep_data: bool,
         pre_erase: bool,
+        protected_ranges: &[ProtectedRange],
         log: &mut Vec<String>,
     ) -> Result<()> {
         let sector_size = self.dev.fh_config().storage_sector_size as u64;
@@ -671,6 +802,11 @@ impl EdlSession {
                         }
                     }
                     "erase" => {
+                        if keep_data_erase_label(&node, !skip_keep_data, protected_ranges)?
+                            .is_some()
+                        {
+                            continue;
+                        }
                         if let Some(erase) = plan_erase_node(&node)? {
                             let ctx = format!("{} <erase>", xml_path.display());
                             self.guard_node_within_lun(
@@ -857,6 +993,44 @@ impl EdlSession {
 mod tests {
     use super::*;
     use crate::edl::test_support::*;
+
+    #[test]
+    fn protected_sector_overlap_is_checked_and_half_open() {
+        assert!(ranges_overlap(10, 10, 15, 2).unwrap());
+        assert!(ranges_overlap(10, 10, 0, 30).unwrap());
+        assert!(!ranges_overlap(10, 10, 20, 5).unwrap());
+        assert!(!ranges_overlap(10, 0, 5, 10).unwrap());
+        assert!(ranges_overlap(u64::MAX, 1, 0, 1).is_err());
+        assert!(ranges_overlap(0, 1, u64::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn unlabeled_erase_respects_keep_data_across_xmls() {
+        let fw = crate::edl::test_support::TempFirmwareDir::new();
+        fw.write("rawprogram0.xml", r#"<data><program label="userdata" physical_partition_number="0" start_sector="100" num_partition_sectors="20"/></data>"#);
+        let ranges = collect_protected_ranges(&[fw.path().join("rawprogram0.xml")]).unwrap();
+        let doc = ltbox_core::xml::parse(r#"<data><erase physical_partition_number="0" start_sector="90" num_partition_sectors="40"/><erase physical_partition_number="1" start_sector="90" num_partition_sectors="40"/><erase physical_partition_number="0" start_sector="NUM_DISK_SECTORS-1." num_partition_sectors="40"/></data>"#).unwrap();
+        let nodes: Vec<_> = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("erase"))
+            .collect();
+        assert_eq!(
+            keep_data_erase_label(&nodes[0], false, &ranges).unwrap(),
+            Some("userdata".into())
+        );
+        assert_eq!(
+            keep_data_erase_label(&nodes[0], true, &ranges).unwrap(),
+            None
+        );
+        assert_eq!(
+            keep_data_erase_label(&nodes[1], false, &ranges).unwrap(),
+            None
+        );
+        assert_eq!(
+            keep_data_erase_label(&nodes[2], false, &ranges).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn require_destructive_coords_demands_lun_and_start_sector() {

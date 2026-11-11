@@ -812,3 +812,61 @@ fn rawprogram_applies_disk_patches_after_programs_and_preserves_expressions() {
         assert_eq!(*events, expected, "{mode}");
     }
 }
+
+#[test]
+fn keep_data_skips_userdata_and_metadata_erases_but_wipe_sends_them() {
+    for mode in ["keep", "wipe"] {
+        let mut fixture = Fixture::new(512, false, None);
+        let dir = crate::edl::test_support::TempFirmwareDir::new();
+        let xml = dir.path().join("rawprogram.xml");
+        std::fs::write(&xml, r#"<data>
+            <erase label="userdata" physical_partition_number="4" start_sector="160" num_partition_sectors="2" />
+            <erase label="metadata_a" physical_partition_number="4" start_sector="170" num_partition_sectors="2" />
+            <erase label="cache" physical_partition_number="4" start_sector="180" num_partition_sectors="2" />
+        </data>"#).unwrap();
+        run_rawprogram(&mut fixture, mode, &[xml], &[]).unwrap();
+        let erases: Vec<_> = fixture
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Erase(start, _) => Some(*start),
+                _ => None,
+            })
+            .collect();
+        if mode == "keep" {
+            assert_eq!(erases, vec![180], "{mode}");
+        } else {
+            assert!(
+                erases.contains(&160) && erases.contains(&170) && erases.contains(&180),
+                "{mode}: {erases:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rawprogram_rejects_empty_or_non_file_images_before_any_destructive_command() {
+    for mode in ["wipe", "keep", "verbatim"] {
+        for broken in ["empty", "directory"] {
+            let mut fixture = Fixture::new(512, false, None);
+            let dir = crate::edl::test_support::TempFirmwareDir::new();
+            let first = rawprogram_fixture(dir.path());
+            match broken {
+                "empty" => std::fs::write(dir.path().join("dtbo.img"), []).unwrap(),
+                _ => std::fs::create_dir(dir.path().join("dtbo.img")).unwrap(),
+            }
+            let second = dir.path().join("later.xml");
+            std::fs::write(&second, r#"<data><program label="dtbo_a" filename="dtbo.img" physical_partition_number="4" start_sector="200" num_partition_sectors="2" /></data>"#).unwrap();
+            assert!(
+                run_rawprogram(&mut fixture, mode, &[first, second], &[]).is_err(),
+                "{mode}: {broken}"
+            );
+            assert!(
+                fixture.events.lock().unwrap().is_empty(),
+                "{mode}: {broken}: destructive I/O before validation completed"
+            );
+        }
+    }
+}

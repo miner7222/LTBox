@@ -114,7 +114,8 @@ fn validate_dp_filename_usage(raw_xmls: &[PathBuf], allow_dp_filenames: bool) ->
                     xml_path.display()
                 )));
             }
-            let image_path = xml_dir.join(filename);
+            let image_path = ltbox_core::safe_path::safe_join(xml_dir, filename)
+                .map_err(|e| EdlError::Session(e.to_string()))?;
             if !image_path.exists() {
                 return Err(EdlError::Session(format!(
                     "{} references {filename}, but {} is missing",
@@ -149,8 +150,8 @@ pub fn collect_firmware_xmls_for_flash(
     let mut rawprogram0: Option<PathBuf> = None;
     let entries = std::fs::read_dir(dir)?;
 
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for entry in entries {
+        let path = entry?.path();
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -161,10 +162,10 @@ pub fn collect_firmware_xmls_for_flash(
         }
         if lower.starts_with("rawprogram") {
             // v2 skips WIPE / zero-GPT variants.
-            if name.contains("WIPE_PARTITIONS") || name.contains("BLANK_GPT") {
+            if lower.contains("wipe_partitions") || lower.contains("blank_gpt") {
                 continue;
             }
-            if name == "rawprogram0.xml" {
+            if lower == "rawprogram0.xml" {
                 // Lenovo stock ships a persist/`_unsparse0` LUN0 variant that
                 // supersedes the plain `rawprogram0.xml`, so defer it and use it
                 // only as a fallback when no such variant exists — ported ROMs
@@ -209,6 +210,16 @@ mod tests {
     use super::*;
     use crate::edl::test_support::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn collect_firmware_xmls_handles_mixed_case() {
+        let fw = TempFirmwareDir::new();
+        fw.write("rawprogram0_wipe_partitions.xml", "<data/>");
+        fw.write("Rawprogram0.xml", "<data/>");
+        fw.write("rawprogram_unsparse0.xml", "<data/>");
+        let (raw, _) = collect_firmware_xmls_for_flash(fw.path(), false).unwrap();
+        assert_eq!(xml_names(&raw), vec!["rawprogram_unsparse0.xml"]);
+    }
 
     #[test]
     fn collect_firmware_xmls_chooses_safe_dp_variants_once() {
