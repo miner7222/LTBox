@@ -925,7 +925,9 @@ impl EdlSession {
                             name,
                             start_sector: part.starting_lba,
                             num_sectors,
-                            size_bytes: num_sectors * sector_size,
+                            size_bytes: num_sectors.checked_mul(sector_size).ok_or_else(|| {
+                                EdlError::Session("partition byte size overflow".into())
+                            })?,
                         });
                     }
                 }
@@ -993,22 +995,7 @@ impl EdlSession {
 
     /// GPT lookup by partition name.
     fn find_partition(&mut self, part_name: &str, slot: u8, lun: u8) -> Result<(u64, u64)> {
-        let mut buf = Cursor::new(Vec::<u8>::new());
-        qdl::firehose_read_storage(&mut self.dev, &mut buf, 1, slot, lun, 1)
-            .map_err(|e| EdlError::Session(format!("GPT probe failed: {e}")))?;
-        buf.rewind()?;
-        let header = gptman::GPTHeader::read_from(&mut buf)
-            .map_err(|e| EdlError::Session(format!("GPT header parse failed: {e}")))?;
-        let gpt_len = Self::gpt_read_sectors(header.first_usable_lba)?;
-        // Over-read past the GPT metadata — see `GPT_READ_TAIL_MARGIN`.
-        let read_len =
-            (gpt_len + Self::GPT_READ_TAIL_MARGIN).min(Self::MAX_GPT_METADATA_SECTORS as usize);
-        buf.rewind()?;
-        qdl::firehose_read_storage(&mut self.dev, &mut buf, read_len, slot, lun, 0)
-            .map_err(|e| EdlError::Session(format!("GPT read failed: {e}")))?;
-        buf.set_position(self.dev.fh_config().storage_sector_size as u64);
-        let gpt = gptman::GPT::read_from(&mut buf, self.dev.fh_config().storage_sector_size as u64)
-            .map_err(|e| EdlError::Session(format!("GPT parse failed: {e}")))?;
+        let gpt = self.read_gpt_for_lun(slot, lun)?;
 
         let part = gpt
             .iter()
