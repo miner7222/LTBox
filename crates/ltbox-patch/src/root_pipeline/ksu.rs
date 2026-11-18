@@ -1738,7 +1738,7 @@ mod tests {
         let providers: &[(RootProvider, &str)] = &[
             (RootProvider::KernelSU, "tiann/KernelSU"),
             (RootProvider::KernelSUNext, "KernelSU-Next/KernelSU-Next"),
-            (RootProvider::SukiSU, "SukiSU-Ultra/SukiSU-Ultra"),
+            (RootProvider::SukiSU, "SukiSU-Nova/SukiSU-Nova"),
             (RootProvider::BakaSU, "Baka-SU/BakaSU"),
         ];
 
@@ -1831,7 +1831,7 @@ mod tests {
         let providers: &[(RootProvider, &str)] = &[
             (RootProvider::KernelSU, "tiann/KernelSU"),
             (RootProvider::KernelSUNext, "KernelSU-Next/KernelSU-Next"),
-            (RootProvider::SukiSU, "SukiSU-Ultra/SukiSU-Ultra"),
+            (RootProvider::SukiSU, "SukiSU-Nova/SukiSU-Nova"),
         ];
 
         let mut report: Vec<(String, String)> = Vec::new();
@@ -1894,7 +1894,7 @@ mod tests {
         let providers: &[(RootProvider, &str)] = &[
             (RootProvider::KernelSU, "tiann/KernelSU"),
             (RootProvider::KernelSUNext, "KernelSU-Next/KernelSU-Next"),
-            (RootProvider::SukiSU, "SukiSU-Ultra/SukiSU-Ultra"),
+            (RootProvider::SukiSU, "SukiSU-Nova/SukiSU-Nova"),
             (RootProvider::BakaSU, "Baka-SU/BakaSU"),
         ];
 

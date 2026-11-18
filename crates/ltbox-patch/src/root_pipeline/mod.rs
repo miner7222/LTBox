@@ -427,9 +427,10 @@ pub fn provider_repo(provider: RootProvider) -> Option<&'static str> {
         // The old `rifsxd/KernelSU-Next` slug redirects, but its release assets
         // aren't mirrored there.
         RootProvider::KernelSUNext => "KernelSU-Next/KernelSU-Next",
-        RootProvider::SukiSU => "SukiSU-Ultra/SukiSU-Ultra",
-        // The old `ReSukiSU/ReSukiSU` slug redirects on GitHub but not on
-        // nightly.link, so artifact downloads need this one.
+        // The old `SukiSU-Ultra/SukiSU-Ultra` and `ReSukiSU/ReSukiSU` slugs
+        // redirect on GitHub but not on nightly.link, so artifact downloads
+        // need the current ones.
+        RootProvider::SukiSU => "SukiSU-Nova/SukiSU-Nova",
         RootProvider::BakaSU => "Baka-SU/BakaSU",
         RootProvider::APatch => "bmax121/APatch",
         RootProvider::FolkPatch => "LyraVoid/FolkPatch",
