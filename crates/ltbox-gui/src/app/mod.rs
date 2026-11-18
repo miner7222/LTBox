@@ -9,10 +9,9 @@ mod logging;
 mod operation;
 mod region;
 
-/// Which Advanced sub-wizard (if any) currently owns the screen. Sum
-/// type so the dedicated sub-wizards stay mutually exclusive at the type
-/// level — adding another wizard turns existing read sites into
-/// non-exhaustive `match` errors instead of silent precedence bugs.
+/// Which Advanced sub-wizard (if any) owns the screen. A sum type keeps them
+/// mutually exclusive; a new variant turns each `match` into a compile error
+/// instead of a silent precedence bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum AdvancedWizardOpen {
     #[default]
@@ -66,11 +65,10 @@ pub(crate) fn edl_entry_action(conn: ConnectionStatus) -> EdlEntryAction {
     }
 }
 
-/// Clamp a requested driver mode to what the host can actually use. Kernel mode
-/// is forced back to userspace where it is unsupported (macOS, and non-Debian
-/// Linux without `dpkg-query`), so a persisted/stale `kernel` value or a UI race
-/// can never leave the app in an unusable kernel state. Mirrors the Settings
-/// picker lock in `view::settings`.
+/// Clamp a requested driver mode to what the host supports: kernel mode falls
+/// back to userspace where unsupported (macOS, Linux without `dpkg-query`),
+/// so a stale persisted value can't leave an unusable kernel state. Mirrors
+/// the Settings picker lock in `view::settings`.
 pub(crate) fn effective_qcom_driver_mode(
     mode: ltbox_device::driver::QcomDriverMode,
 ) -> ltbox_device::driver::QcomDriverMode {
@@ -83,13 +81,13 @@ pub(crate) fn effective_qcom_driver_mode(
 
 pub(crate) struct App {
     pub(crate) window_id: Option<iced::window::Id>,
-    /// Host maximized state for the custom titlebar restore/maximize glyph.
-    /// Iced exposes this as a query, not a window event, so update/window.rs
-    /// refreshes it when the id arrives and after resize/toggle traffic.
+    /// Host maximized state for the titlebar restore/maximize glyph. Iced exposes
+    /// it as a query, not an event, so `update/window.rs` refreshes it when the id
+    /// arrives and after resize/toggle.
     pub(crate) window_maximized: bool,
     pub(crate) current_view: View,
-    /// Effective dark-mode flag — cached to keep repaint off the OS
-    /// registry. Recomputed on theme-choice change.
+    /// Cached effective dark-mode flag (keeps repaint off the OS registry);
+    /// recomputed on theme-choice change.
     pub(crate) dark_mode: bool,
     pub(crate) theme_choice: ThemeChoice,
     pub(crate) theme_seed: ThemeSeed,
@@ -118,9 +116,8 @@ pub(crate) struct App {
     /// Flash-confirm "hidden dropdown" editor: which row's option picker is
     /// open (`None` = closed). `Country` reuses `country_popup_open` instead.
     pub(crate) confirm_edit_field: Option<ConfirmField>,
-    /// Snapshot of `wf_config` taken when the confirm step is first entered.
-    /// A confirm row is rendered as "changed" (accent background + hover
-    /// caution) when its field diverges from this baseline.
+    /// Snapshot of `wf_config` taken when the confirm step is first entered;
+    /// rows that diverge from it render as changed.
     pub(crate) confirm_baseline: Option<WorkflowConfig>,
     /// Confirm-step manual rollback editor. `Some` only while open; its
     /// values become `wf_config` targets only after a valid confirm.
@@ -141,10 +138,8 @@ pub(crate) struct App {
     /// Routes `SelectCountry` back to the Advanced wizard instead of
     /// the Flash flow when PatchDevinfo opened the popup.
     pub(crate) adv_needs_country: bool,
-    /// Region-convert target picker overlay. Shown when the
-    /// `RegionConvert` wizard reaches step 1 so the user can pick
-    /// PRC or ROW as the destination explicitly instead of relying
-    /// on the prior auto-flip behaviour.
+    /// Region-convert target picker overlay (PRC or ROW), opened by
+    /// `AdvWizOpenRegionTarget`.
     pub(crate) region_target_popup_open: bool,
     /// Staging slot for the Reboot confirm popup.
     pub(crate) reboot_confirm_target: Option<RebootTarget>,
@@ -152,7 +147,6 @@ pub(crate) struct App {
     /// Kept separate from visibility so Close can hide only the dialog.
     pub(crate) reboot_wait_transition: bool,
     pub(crate) reboot_wait_dialog_open: bool,
-    // Device & operation state
     pub(crate) software_fix: software_fix::State,
     pub(crate) device: DeviceSnapshot,
     pub(crate) queries: DeviceQueries,
@@ -165,10 +159,9 @@ pub(crate) struct App {
     pub(crate) ota_changelog_editor: iced::widget::text_editor::Content,
     /// QFIL-firmware popup state. `Some((serial, state))` while open.
     pub(crate) qfil_popup: Option<(String, QfilPopupState)>,
-    /// Manual-serial prompt for region detection. `Some(buffer)` = open;
-    /// buffer holds the in-progress input. Opened by the automatic-selection
-    /// option when no
-    /// usable polled serial is available.
+    /// Manual-serial prompt for region detection. `Some(buffer)` = open with the
+    /// in-progress input; opened by the automatic-selection option when no polled
+    /// serial is usable.
     pub(crate) flash_serial_prompt: Option<String>,
     pub(crate) rollback_popup_open: bool,
     /// Shared across both rows so `boot` and `vbmeta_system` stay
@@ -183,13 +176,12 @@ pub(crate) struct App {
     pub(crate) toast_generation: u64,
     /// Compact-sidebar hover state — true when the mouse is over the rail.
     pub(crate) sidebar_expanded: bool,
-    /// Compact overlay tween progress in [0.0, 1.0].
-    /// Width = lerp(64, 232, anim); Expanded layout ignores this value.
-    /// Driven by an M3 Expressive Spatial spring (see `SidebarAnimTick`).
+    /// Compact overlay tween progress, nominally [0.0, 1.0] (the spring may
+    /// overshoot). Width = lerp(SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, anim);
+    /// Expanded layout ignores it. Driven by a spring (see `SidebarAnimTick`).
     pub(crate) sidebar_anim: f32,
-    /// Spring velocity for `sidebar_anim`. Settle requires both the
-    /// displacement to target AND the velocity to be near zero so we
-    /// don't stop the subscription mid-overshoot.
+    /// Spring velocity for `sidebar_anim`. Settling needs displacement AND velocity
+    /// near zero so the subscription doesn't stop mid-overshoot.
     pub(crate) sidebar_velocity: f32,
     pub(crate) sidebar_label_alpha: f32,
     pub(crate) sidebar_label_velocity: f32,
@@ -199,10 +191,9 @@ pub(crate) struct App {
     pub(crate) window_restore_size: (f32, f32),
     /// Last resize event, used for trailing debounce rather than throttling.
     pub(crate) window_size_last_change: std::time::Instant,
-    /// `true` while a pending window-size update hasn't been flushed
-    /// to disk. Cleared by `persist_window_size_if_due`.
+    /// `true` while a pending window-size update hasn't been flushed to disk.
+    /// Cleared by `update_persist_window_size`.
     pub(crate) window_size_dirty: bool,
-    // Device portrait derived at view time via `device_portrait()`.
     pub(crate) operation: OperationExecution,
     /// Persisted recent picks. Rendered as chips under every picker.
     pub(crate) recent_paths: settings_store::RecentPaths,
@@ -267,11 +258,10 @@ pub(crate) struct App {
     /// Friendly name captured with the model so the guide subtitle survives
     /// a disconnect while the dialog remains open.
     pub(crate) dual_usb_help_name: String,
-    /// Newest stable (`prerelease == false && draft == false`) release on
-    /// `miner7222/LTBox` whose semver is strictly greater than the
-    /// running build's. `None` either before the background probe lands
-    /// or when the running build is already at-or-ahead of the latest
-    /// stable. Populates the green sidebar "Update available" pill.
+    /// Newest stable release (not prerelease/draft) on `miner7222/LTBox` whose
+    /// semver is strictly greater than the running build's. `None` before the
+    /// probe lands or when already up to date. Drives the sidebar "Update
+    /// available" pill.
     pub(crate) update_available: Option<ltbox_core::github::StableRelease>,
     /// Package-managed install source while the update instructions dialog is
     /// open, or `Direct` while the verified self-update dialog is open.
@@ -281,10 +271,7 @@ pub(crate) struct App {
     pub(crate) dump_phys: DumpPhysWizard,
     pub(crate) flash_phys: FlashPhysWizard,
     pub(crate) simple_flash: SimpleFlashWizard,
-    /// Single sum-typed flag for the mutually-exclusive Advanced
-    /// sub-wizards. Replaces 4 parallel booleans whose `if/else if`
-    /// read sites would silently pick a precedence if two ever got
-    /// set. `match`-driven dispatch makes that bug class unreachable.
+    /// Which Advanced sub-wizard is open; see `AdvancedWizardOpen`.
     pub(crate) advanced_wizard_open: AdvancedWizardOpen,
     /// Latest live firmware flash progress snapshot for the shared exec card.
     pub(crate) flash_progress: Option<ltbox_device::edl::FlashProgress>,
@@ -310,19 +297,16 @@ pub(crate) enum LogSaveSource {
 }
 
 impl PickerTarget {
-    /// Map this routing target to the recents bucket it should store into.
-    /// `None` returns `File` defensively so callers get a valid bucket even
-    /// if they forgot to set the target — the recents entry is harmless;
-    /// the field-routing `match` in `FolderSelected` / `FileSelected` is
-    /// what actually prevents wrong writes.
+    /// Recents bucket for this routing target. `None` returns `File` so callers
+    /// always get a valid bucket; the routing `match` in `FileSelected` /
+    /// `FolderSelected` is what prevents wrong writes.
     pub(crate) fn kind(self) -> pickers::PickerKind {
         use pickers::PickerKind;
         match self {
             // Root OTA file is a unified file pick (zip or apk).
             Self::None | Self::RootFile => PickerKind::File,
-            // Firmware folders all share the "full QFIL" bucket — Unroot
-            // and Flash typically point the user at the same dump/archive
-            // they extracted from `ltbox dump full`.
+            // Firmware folders share the full-QFIL bucket: Unroot and Flash point at
+            // the same extracted firmware.
             Self::UnrootFolder | Self::FlashFolder => PickerKind::QfilFirmwareFolder,
         }
     }
@@ -408,9 +392,8 @@ impl Default for App {
             sidebar_velocity: 0.0,
             sidebar_label_alpha: 0.0,
             sidebar_label_velocity: 0.0,
-            // Use the persisted size if present, otherwise the default
-            // initial window dimensions (kept in lockstep with the
-            // values passed to `iced::window::Settings::size` in `main`).
+            // Persisted size if present, else the default initial window size `main`
+            // also uses.
             window_size: persisted
                 .window_size
                 .unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)),
@@ -466,7 +449,7 @@ impl Default for App {
 
 impl App {
     pub(crate) fn new() -> (Self, Task<Message>) {
-        // Window-id + driver check + update check all fire in parallel.
+        // Startup tasks below run in parallel.
         let app = Self::default();
         #[cfg(feature = "demo")]
         let mut app = app;
@@ -494,10 +477,9 @@ impl App {
             },
             Message::DriverCheckDone,
         );
-        // GitHub releases probe — runs once at startup. `latest_stable_release`
-        // walks `/releases?per_page=100` (not `/releases/latest`) so the
-        // result is well-defined even when the repo has only prereleases
-        // published. Network failure / parse failure → `None`, no banner.
+        // GitHub releases probe, once at startup. `latest_stable_release` scans
+        // `/releases?per_page=100` (not `/releases/latest`) so a prerelease-only repo
+        // still has a defined result. Failure yields `None`, no banner.
         let update_check = Task::perform(
             async {
                 tokio::task::spawn_blocking(check_for_update)
@@ -506,9 +488,8 @@ impl App {
             },
             Message::UpdateCheckDone,
         );
-        // GitHub-reachability probe — gates the driver install/update
-        // buttons so the user can't click into a guaranteed-to-fail
-        // download while offline.
+        // GitHub-reachability probe: gates the driver install/update buttons so
+        // they can't be clicked into a guaranteed-to-fail download offline.
         let connectivity = Task::perform(
             async {
                 tokio::task::spawn_blocking(ltbox_device::driver::probe_connectivity)
@@ -517,10 +498,8 @@ impl App {
             },
             Message::ConnectivityChecked,
         );
-        // Advisory startup probe, separate from the driver-button gate
-        // above: it splits "no link at all" from "link up, GitHub
-        // blocked" so the log can name which one the user is hitting.
-        // Nothing waits on it and nothing is gated by it.
+        // Advisory probe, separate from the driver-button gate above: splits "no
+        // link" from "GitHub blocked" for the log. Nothing waits on or is gated by it.
         let connectivity_notice = Task::perform(
             async {
                 tokio::task::spawn_blocking(ltbox_core::connectivity::probe)
@@ -532,11 +511,9 @@ impl App {
             },
             Message::StartupConnectivityProbed,
         );
-        // Qualcomm driver version check. Skipped entirely (no network call)
-        // when the user chose "don't show again" for driver updates. A
-        // silent failure (offline / GitHub down / parse) yields `None`, so
-        // no banner — distinct from the missing-driver banner, which the
-        // separate `driver_check` above always drives.
+        // Qualcomm driver version check, skipped (no network call) when the user
+        // chose "don't show again". Any failure yields `None`, no banner; the
+        // missing-driver banner is always driven by `driver_check` above.
         let driver_update_check = if app.qcom_driver_update_dismissed {
             Task::none()
         } else {
@@ -685,9 +662,8 @@ impl App {
         });
     }
 
-    /// Record `path` in the MRU list for `kind`. Persists on change so
-    /// the list survives restarts (write is cheap — small JSON, and only
-    /// triggers when the list actually moves).
+    /// Record `path` in the MRU list for `kind`; persists only when the list
+    /// changes.
     pub(crate) fn remember_recent(&mut self, kind: pickers::PickerKind, path: &str) {
         if self.recent_paths.push(kind.storage_key(), path) {
             self.persist_settings();
@@ -735,10 +711,8 @@ impl App {
                     .map(|_| Message::SidebarAnimTick),
             );
         }
-        // Listen for window resize events so the user's preferred
-        // geometry survives a restart. `event::listen_with` filters at
-        // the source so non-window events don't bubble back as
-        // `Message::Noop`.
+        // Window and keyboard events. `listen_with` filters at the source so other
+        // events don't reach `update` as `Message::Noop`.
         subs.push(iced::event::listen_with(
             |event, status, window_id| match event {
                 iced::Event::Window(iced::window::Event::Opened { .. }) => Some(Message::Window(
@@ -776,11 +750,8 @@ impl App {
         Subscription::batch(subs)
     }
 
-    /// Shared error-state body. Renders the localized header
-    /// (`error_key`), the raw upstream error text, and a Retry pill
-    /// that fires `retry_msg`. Same shape as the loading view —
-    /// pulled out of the device-info / OTA popups which had two
-    /// near-identical copies.
+    /// Shared error-state body: localized header (`error_key`), the raw upstream
+    /// error text and a Retry pill firing `retry_msg`.
     pub(crate) fn popup_error_view(
         &self,
         error_key: &str,

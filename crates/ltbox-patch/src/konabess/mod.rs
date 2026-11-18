@@ -168,10 +168,9 @@ pub fn build_konabess_avb_images_from_table_with_progress(
 }
 
 /// `gbl_verified` marks a device whose boot chain is verified by the GBL EFI on
-/// `efisp` instead of by AVB. The root pipeline already leaves the chain alone
-/// there, and the same applies here: it is what lets a Lenovo-key vbmeta
-/// through, since that key cannot be re-signed and nothing on these devices
-/// needs it to be.
+/// `efisp` instead of by AVB. As in the root pipeline, the chain is left alone
+/// there, which lets a Lenovo-key vbmeta through: that key cannot be re-signed
+/// and these devices do not need it to be.
 fn build_konabess_avb_images_from_export(
     vendor_boot_src: &Path,
     vbmeta_src: &Path,
@@ -203,10 +202,9 @@ fn build_konabess_avb_images_from_export(
         ))
     })?;
 
-    // Resolve the vbmeta key before patching or touching the output directory.
-    // A present-but-unknown key must never leave a tempting unsigned artifact.
-    // Skipped when the GBL verifies the device: no vbmeta is produced, so
-    // demanding a usable signing key would turn away a device that needs none.
+    // Resolve the vbmeta key before patching or touching the output directory,
+    // so an unknown key never leaves a tempting unsigned artifact. Skipped when
+    // the GBL verifies the device: no vbmeta is produced, so no key is needed.
     let vbmeta_rebuild = if gbl_verified {
         None
     } else {
@@ -245,9 +243,9 @@ fn build_konabess_avb_images_from_export(
         )));
     }
 
-    // Only the authenticated AVB tail is disposable. Bytes before
-    // original_image_size remain intact, so the raw rebuilder's nonzero-tail
-    // guard still rejects growth into genuine vendor data.
+    // Only the authenticated AVB tail is disposable; bytes before
+    // original_image_size stay intact, so the raw rebuilder's nonzero-tail
+    // guard still rejects growth into real vendor data.
     patchable[original_size..].fill(0);
 
     on_stage(KonaBessBuildStage::PatchVendorBoot);
@@ -263,8 +261,7 @@ fn build_konabess_avb_images_from_export(
     }
     rebuilt.truncate(rebuilt_image_size);
 
-    // All required validation, including key lookup and capacity, has now
-    // succeeded. Only from here onward may output paths be changed.
+    // Validation (key lookup, capacity) has passed; only now may output paths change.
     if output_dir.exists() {
         fs::remove_dir_all(output_dir).map_err(|e| {
             error(format!(
@@ -287,8 +284,8 @@ fn build_konabess_avb_images_from_export(
             vendor_boot_out.display()
         ))
     })?;
-    // A GBL-verified device takes the repacked image as-is, the same way the
-    // root pipeline flashes its repacked boot image without re-adding a footer.
+    // A GBL-verified device takes the repacked image as-is, like the root
+    // pipeline's repacked boot (no footer re-added).
     if !gbl_verified {
         avb::add_hash_footer(&vendor_boot_out, &vendor_boot_info, None, None)?;
     }

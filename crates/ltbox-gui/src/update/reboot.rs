@@ -78,8 +78,8 @@ impl App {
                     ));
                     return Task::none();
                 };
-                // Accept direct loader files. Legacy folder paths from
-                // older recents remain supported via resolve_loader_input.
+                // `resolve_loader_input` accepts loader files and, for older
+                // recents, folders.
                 let loader = match self.resolve_loader_input(&loader_input) {
                     Ok(p) => std::path::PathBuf::from(p),
                     Err(msg) => {

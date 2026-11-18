@@ -4,7 +4,8 @@
 /// a stock `.melf` loader or a plaintext/encrypted Sahara manifest.
 pub(crate) const LOADER_PICKER_EXTS: &[&str] = &["melf", "xml", "x"];
 
-/// User-facing choices, independent of the resolver's legacy compatibility.
+/// Extensions the loader picker offers: `.xml`/`.x` for manifest models, `.melf` for
+/// other known models, all of [`LOADER_PICKER_EXTS`] when the model is unknown.
 pub(crate) fn loader_picker_extensions(
     model_known: bool,
     manifest: bool,
@@ -18,14 +19,13 @@ pub(crate) fn loader_picker_extensions(
     }
 }
 
-/// Locate the multi-image Sahara manifest in `dir`, case-insensitively.
-/// Prefers the plaintext `qsahara_device_programmer.xml`; otherwise returns
-/// the encrypted `qsahara_device_programmer.x` form, which
-/// [`ltbox_device::edl::EdlSession::open`] decrypts at load time. `None`
-/// when neither is present.
+/// Locate the multi-image Sahara manifest in `dir`, case-insensitively. Prefers the
+/// plaintext `qsahara_device_programmer.xml`, else the encrypted `.x` form (which
+/// [`ltbox_device::edl::EdlSession::open`] decrypts at load time); `None` when neither
+/// is present.
 ///
-/// This only *locates* — it never decrypts or writes — so it is safe to
-/// call from cheap UI gates (`can_next`) without side effects.
+/// This only *locates*: it never decrypts or writes, so cheap UI gates (`can_next`)
+/// can call it without side effects.
 pub(crate) fn resolve_sahara_manifest(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let (mut plaintext, mut encrypted) = (None, None);
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -75,18 +75,16 @@ pub(crate) fn find_firmware_loader(dir: &std::path::Path) -> Option<std::path::P
     find_edl_loader(dir).or_else(|| dir.parent().and_then(find_edl_loader))
 }
 
-/// Redirect a picked firmware folder to its `image/` subfolder when that is
-/// the flashable one.
+/// Redirect a picked firmware folder to its `image/` subfolder when that is the
+/// flashable one.
 ///
-/// The extracted firmware archive is laid out as
-/// `<ROOT>/image/{rawprogram*.xml, partition images, loader}`, but LTBox
-/// flashes the `image` folder, not `<ROOT>`. Users frequently pick `<ROOT>`
-/// and hit a "not a valid firmware image folder" error, so when the selection
-/// has an immediate child directory named `image` (matched case-insensitively
-/// for case-sensitive filesystems) that ships a rawprogram pack, retarget to
-/// it. Returns `None` — leave the selection as-is — when the picked folder is
-/// itself flashable (so a valid folder that merely also contains an `image/`
-/// child is never hijacked) or when no `image` child holds a pack.
+/// An extracted firmware archive is `<ROOT>/image/{rawprogram*.xml, images, loader}`
+/// and LTBox flashes `image`, not `<ROOT>`, but users often pick `<ROOT>`. When the
+/// selection has an immediate child directory named `image` (matched
+/// case-insensitively) that ships a rawprogram pack, retarget to it. Returns `None`
+/// (keep the selection) when the picked folder is itself flashable, so a valid folder
+/// that merely contains an `image/` child is never hijacked, or when no `image` child
+/// holds a pack.
 pub(crate) fn redirect_to_image_subdir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     // Already flashable → keep it, even if it also has an `image/` child.
     if dir_has_rawprogram_pack(dir) {
@@ -151,16 +149,13 @@ pub(crate) fn model_memory_key(model: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_ascii_uppercase())
 }
 
-/// Bring a picked Sahara manifest to its plaintext form, decrypting an
-/// encrypted `.x` pick to the sibling `qsahara_device_programmer.xml`
-/// **at pick time** rather than deferring to `EdlSession::open`.
+/// Bring a picked Sahara manifest to its plaintext form, decrypting an encrypted `.x`
+/// pick to the sibling `qsahara_device_programmer.xml` **at pick time** rather than in
+/// `EdlSession::open`.
 ///
-/// Decrypting here is what makes the completeness gate below possible: the
-/// `<image>` list only becomes readable once the container is open, so a
-/// wizard cannot tell a complete loader from a half-extracted one until this
-/// has run. Non-manifest picks (`.melf` and friends) pass through untouched.
-///
-/// Returns the path to inspect/flash, or a localized error string.
+/// The completeness gate below needs the `<image>` list, which is readable only once
+/// the container is open. Non-manifest picks (`.melf` and friends) pass through
+/// untouched.
 pub(crate) fn decrypt_manifest_pick(
     path: &std::path::Path,
 ) -> std::result::Result<std::path::PathBuf, String> {
@@ -178,14 +173,12 @@ pub(crate) fn decrypt_manifest_pick(
     Ok(out)
 }
 
-/// Reject a Sahara manifest whose referenced payloads are not all sitting
-/// beside it.
+/// Reject a Sahara manifest whose referenced payloads are not all sitting beside it.
 ///
-/// A manifest names 8-ish ELF/MBN images by relative path; if the user picked
-/// one out of a partially-extracted firmware pack, every one of those reads
-/// fails inside `EdlSession::open` — i.e. after the device has already been
-/// forced into EDL. Checking at pick time keeps that failure in the file
-/// dialog, where it is recoverable.
+/// A manifest names several ELF/MBN images by relative path; picked from a
+/// partially-extracted pack, each read would fail inside `EdlSession::open`, after the
+/// device is already forced into EDL. Checking at pick time keeps the failure in the
+/// file dialog, where it is recoverable.
 ///
 /// `path` must already be plaintext (see [`decrypt_manifest_pick`]). Anything
 /// that is not a manifest is accepted unchanged.
@@ -228,11 +221,9 @@ pub(crate) fn prepare_manifest_pick(
 }
 
 pub(crate) fn is_loader_file(path: &std::path::Path) -> bool {
-    // `.xml` covers TB323FU's `qsahara_device_programmer.xml` multi-
-    // image manifest. `EdlSession::open` branches on the manifest
-    // filename (case-insensitive) — any other `.xml` file would fail
-    // there with a parse error rather than silently picking up the
-    // single-loader path.
+    // `.xml` covers the multi-image Sahara manifest (`qsahara_device_programmer.xml`).
+    // `EdlSession::open` branches on the manifest filename (case-insensitive), so any other
+    // `.xml` would fail there with a parse error rather than take the single-loader path.
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| {
@@ -244,10 +235,10 @@ pub(crate) fn is_loader_file(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether `path`'s extension is one of the single-blob loader formats
-/// (`.melf` / `.mbn` / `.elf`). Used by the TB323FU manifest-upgrade
-/// gate to decide whether to look for a sibling manifest — `.xml` is
-/// excluded so a manifest selection isn't recursively re-resolved.
+/// Whether `path`'s extension is a single-blob loader format (`.melf` / `.mbn` /
+/// `.elf`). Used by the manifest-upgrade gate for `requires_sahara_manifest` models to
+/// decide whether to look for a sibling manifest; `.xml` is excluded so a manifest
+/// pick isn't re-resolved.
 pub(crate) fn is_melf_loader(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -255,10 +246,10 @@ pub(crate) fn is_melf_loader(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// True when `path`'s extension is the EDL loader form the given model needs:
-/// Efisp/GBL-route models → `.xml` / `.x` (Sahara manifest); every other model
-/// → `.melf`.
-/// Inspects only the file's own extension, not the images a manifest references.
+/// True when `path`'s extension is the EDL loader form the model needs: manifest-route
+/// models (`uses_efisp_gbl_route`, i.e. `requires_sahara_manifest`) → `.xml` / `.x`;
+/// every other model → `.melf`. Inspects only the file's own extension, not the images
+/// a manifest references.
 pub(crate) fn loader_ext_fits_model(uses_efisp_gbl_route: bool, path: &std::path::Path) -> bool {
     let ext = path
         .extension()
@@ -341,11 +332,10 @@ mod tests {
 
     #[test]
     fn encrypted_manifest_pick_decrypts_before_judging_it() {
-        // A `.x` pick must be opened at pick time — the `<image>` list it
-        // guards is what the completeness gate reads. With a container that
-        // cannot be decrypted, the failure therefore has to be the decrypt
-        // one, not "manifest is fine" and not a deferred error at flash time.
-        // (The decrypt round trip itself is covered in `ltbox_core::crypto`.)
+        // A `.x` pick must be opened at pick time, since the `<image>` list the completeness
+        // gate reads lives inside it. With an undecryptable container the failure must be the
+        // decrypt one, not "manifest is fine" and not a deferred error at flash time. (The
+        // decrypt round trip is covered in `ltbox_core::crypto`.)
         with_english_messages();
         let dir = tempfile::tempdir().unwrap();
         let encrypted = dir
@@ -414,7 +404,7 @@ mod tests {
 
     #[test]
     fn loader_ext_fits_model_by_device() {
-        // Efisp/GBL-route models need the .xml / .x manifest.
+        // Manifest-route models need the .xml / .x manifest.
         assert!(loader_ext_fits_model(
             true,
             Path::new("x/qsahara_device_programmer.xml")

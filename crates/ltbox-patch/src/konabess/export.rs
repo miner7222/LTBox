@@ -81,9 +81,9 @@ impl GpuTableValidation {
 /// Build a new level with exactly the property names and ordering of an
 /// existing level in `group` while letting the caller choose every cell value.
 ///
-/// Using this constructor for editor row insertion prevents properties such as
-/// bus votes from being omitted accidentally. The callback receives each
-/// template property in source order and returns the cells for the new row.
+/// Editor row insertion uses this so properties such as bus votes cannot be
+/// omitted. The callback receives each template property in source order and
+/// returns the cells for the new row.
 ///
 /// # Errors
 ///
@@ -393,9 +393,8 @@ fn decode_gzip(input: &[u8]) -> Result<Vec<u8>> {
         return Err(error("gzip header uses reserved flags"));
     }
 
-    // `bufread::GzDecoder` parses the header and verifies CRC32 and ISIZE. It
-    // decodes a single member and leaves any bytes after it in the slice, which
-    // lets the caller reject trailing data instead of ignoring it.
+    // `bufread::GzDecoder` checks the header, CRC32 and ISIZE and decodes one
+    // member, leaving trailing bytes in the slice so the caller can reject them.
     let mut decoder = GzDecoder::new(input);
     let mut output = Vec::new();
     (&mut decoder)

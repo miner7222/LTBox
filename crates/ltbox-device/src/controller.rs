@@ -11,26 +11,16 @@ pub enum ControllerError {
     SlotResolve(String),
 }
 
-/// Poll ADB then Fastboot for the active slot suffix until one
-/// returns `_a` or `_b`, or the deadline expires.
+/// Poll ADB then Fastboot for the active slot suffix until one returns `_a`
+/// or `_b`, or the deadline expires.
 ///
-/// Slot is required for every flash / dump / root path: writing to
-/// the wrong slot's `boot_*` / `vbmeta_*` / `init_boot_*` partition
-/// either fails AVB on the next boot (if the device flips slots
-/// post-flash) or quietly leaves the device on the unmodified slot
-/// (if it doesn't). Defaulting to `_a` when probing fails would flash
-/// silently to the wrong slot while reporting success, so this
-/// returns a hard error instead, forcing the caller to fix the
-/// transport state before any destructive op runs.
+/// Errors instead of defaulting to `_a`: a wrong-slot write to `boot_*` /
+/// `vbmeta_*` / `init_boot_*` either fails AVB or leaves the device on the
+/// unmodified slot while reporting success.
 ///
-/// Polls both transports because the device's state mid-flow
-/// determines which one answers: ADB works in normal / recovery,
-/// Fastboot works in bootloader. EDL has no slot getvar — caller
-/// must probe BEFORE entering EDL.
-///
-/// `log` receives one human-readable line per poll attempt
-/// (suppressed via the standard `live!` macro contract — drop the
-/// `Vec` in headless callers).
+/// ADB answers in normal / recovery, Fastboot in bootloader. EDL has no
+/// slot query, so callers must probe BEFORE entering EDL. `log` gets the
+/// per-attempt lines.
 pub fn poll_active_slot(
     timeout: std::time::Duration,
     log: &mut Vec<String>,
@@ -95,8 +85,7 @@ fn poll_active_slot_with(
     let mut last_fastboot_err = String::new();
 
     while elapsed() < timeout {
-        // ADB attempt — only if device is currently in a state that
-        // accepts shell (Device or Recovery).
+        // ADB only in a shell-capable state (device or recovery).
         match probe.adb_state() {
             Ok(Some(state @ ("device" | "recovery"))) => {
                 adb_attempted = true;
@@ -131,8 +120,7 @@ fn poll_active_slot_with(
             }
         }
 
-        // Fastboot attempt — open() fails fast if the device isn't
-        // in bootloader, so no separate state probe.
+        // open() fails fast outside fastboot, so no separate state probe.
         match probe.fastboot_open() {
             Ok(()) => {
                 fastboot_attempted = true;
@@ -167,9 +155,7 @@ fn poll_active_slot_with(
         sleep();
     }
 
-    // Build a diagnostic that surfaces what was tried + the last
-    // failure mode per transport so the user knows whether to plug
-    // ADB cable, reboot to bootloader, or fix permissions.
+    // Report what was tried and each transport's last failure.
     let mut detail = String::new();
     if adb_attempted {
         detail.push_str(&tr_args!("slot_err_adb_detail", error = last_adb_err));

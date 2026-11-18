@@ -1,9 +1,8 @@
 use super::*;
 
-/// Advanced "Change Country Code": rewrite the device's country code over EDL
-/// and reset to system. Mirrors `flash_worker`'s country phase but standalone —
-/// no firmware package, only a user-picked country + EDL loader. Per model:
-/// the partitions come from the model's `ModelCapabilities::country_partitions`.
+/// Advanced "Change Country Code": rewrite the device's country code over EDL and reset to
+/// system. Mirrors `flash_worker`'s country phase without a firmware package: only a user-picked
+/// country + EDL loader. Partitions come from `ModelCapabilities::country_partitions`.
 pub(crate) fn change_country_worker(
     conn: ConnectionStatus,
     device_model: String,
@@ -59,9 +58,8 @@ pub(crate) fn change_country_worker(
         &mut log,
         Some(&phases),
     );
-    // Reset to system regardless (don't strand the device in EDL). Preserve
-    // phase 4 on a country-write failure so the failed card names the stage
-    // that actually failed instead of the cleanup reboot that followed it.
+    // Reset to system regardless (don't strand the device in EDL). On a country-write failure keep
+    // phase 4, so the failed card names the stage that failed rather than the cleanup reboot.
     if let Err(error) = outcome {
         session.reset_tolerant(&mut log);
         return Err(error);

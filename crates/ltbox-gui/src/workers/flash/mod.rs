@@ -1,6 +1,6 @@
-//! Firmware flash worker: validate the firmware folder, route to EDL,
-//! apply region / rollback / country / wipe modifications, and flash every
-//! image (incl. the TB323FU ARB-overlay path).
+//! Firmware flash worker: validate the firmware folder, route to EDL, apply region /
+//! rollback / country / wipe modifications, and flash every image (incl. the GBL ARB-overlay
+//! path).
 
 use crate::{
     ConnectionStatus, CountryPatchProgress, FirmwareIdentity, LiveLabels, PhaseReporter,
@@ -59,11 +59,10 @@ enum LenovoFirmwareDevicePolicy {
     ResignTestkey,
 }
 
-/// Decide how a Lenovo-key firmware should be handled from the device's
-/// active-slot vbmeta_system key class. vbmeta_system may use either bundled
-/// testkey size while the root vbmeta still uses testkey_rsa4096, so the exact
-/// vbmeta_system key spec must not gate the testkey re-sign path. A user-supplied
-/// testkey ABL selects that path regardless of the device key class.
+/// Decide how a Lenovo-key firmware is handled from the device's active-slot vbmeta_system key
+/// class. vbmeta_system may use either bundled testkey size while the root vbmeta uses
+/// testkey_rsa4096, so its exact spec must not gate the testkey re-sign path. A user-supplied
+/// testkey ABL selects that path regardless of the class.
 fn lenovo_firmware_device_policy(
     device_vbs_class: ltbox_patch::key_map::KeyClass,
     user_abl_supplied: bool,
@@ -108,10 +107,6 @@ fn manual_device_floors(
     })
 }
 
-/// Supported Lenovo SKUs, matched as fingerprint tokens to recover the device
-/// model from an EDL-dumped vendor_boot when fastboot/ADB never ran.
-/// LAVIE Tab 9QHD1 is represented by TB320FC because the shared matcher treats
-/// its reported token as equivalent and the recovered value is internal only.
 use ltbox_core::model::{RollbackPolicy, SUPPORTED_MODELS, capabilities, fingerprint_capabilities};
 
 fn xiaoxin_pro13_token(text: &str) -> Option<&'static str> {
@@ -146,8 +141,8 @@ struct EdlStartProbe {
     /// Device model token recovered from the vbmeta_system fingerprint, or empty
     /// when no supported SKU token matched.
     model_token: String,
-    /// Component-wise device rollback floors `(boot, vbmeta_system)` — the MAX
-    /// of each location across both slots — or `None` for the no-ARB TB322FC.
+    /// Component-wise device rollback floors `(boot, vbmeta_system)` (the MAX of each location
+    /// across both slots), or `None` for a model without rollback protection (TB322FC, TB324ZC).
     rollback_floors: Option<(u64, u64)>,
 }
 
@@ -191,15 +186,11 @@ fn edl_probe_floor_error(xiaoxin: bool) -> EdlProbeError {
     }
 }
 
-/// Read the device model + committed rollback index on an EDL-start flash by
-/// dumping BOTH slots over the open session. The active slot is unknown in
-/// EDL-start and the inactive slot's images may not carry parseable AVB info,
-/// so each partition is dumped from `_a` and `_b` and the valid side is used
-/// (the higher-index slot when both parse). Returns `Err` (the caller resets
-/// back into EDL and aborts) when neither slot yields a valid vbmeta_system,
-/// when the recovered model does not match the target firmware, or — for a
-/// rollback-protected model — when neither slot yields a valid boot +
-/// vbmeta_system pair.
+/// Read the device model and committed rollback floors on an EDL-start flash by dumping both
+/// slots (the active slot is unknown and the inactive slot's images may not parse). Returns `Err`
+/// (the caller resets back into EDL and aborts) when neither slot yields a valid vbmeta_system,
+/// the recovered model does not match the target firmware, or, for a rollback-protected model,
+/// no valid boot + vbmeta_system pair is found.
 fn read_edl_start_device(
     session: &mut ltbox_device::edl::EdlSession,
     firmware_fp: Option<&str>,
@@ -210,12 +201,9 @@ fn read_edl_start_device(
     std::fs::create_dir_all(&work_dir)
         .map_err(|e| tr_args!("err_edl_probe_work_dir_failed", error = e))?;
 
-    // 1. Model + vbmeta_system rollback index — dump vbmeta_system from BOTH
-    //    slots. It carries the device build fingerprint (system.fingerprint) AND
-    //    the per-location rollback index, so one dump identifies the model and
-    //    yields the vbmeta_system floor; vendor_boot / vbmeta need no separate
-    //    dump. A device left mid-cross-flash can have one slot on a different
-    //    SKU, so keep every fingerprint that parses.
+    // Model + vbmeta_system floor: dump vbmeta_system from both slots; it carries the build
+    // fingerprint and the per-location rollback index. A device left mid-cross-flash can have one
+    // slot on a different SKU, so keep every fingerprint that parses.
     let mut device_fps: Vec<String> = Vec::new();
     let mut vbs_idx: [Option<u64>; 2] = [None, None];
     for (i, slot) in ["_a", "_b"].into_iter().enumerate() {
@@ -239,14 +227,11 @@ fn read_edl_start_device(
         ));
     }
 
-    // Recover the model token, preferring a slot whose SKU the target firmware
-    // also names — a device left mid-cross-flash can carry a stale non-matching
-    // slot alongside the matching one. On EDL-start there is no other model
-    // source, so an unrecognized device, a firmware image with no vendor_boot
-    // fingerprint, or a genuine mismatch all abort (the caller resets back into
-    // EDL) rather than flash blind — TB323FU especially, since its ARB/region
-    // gates key off the model and would silently stay off on an unidentified
-    // device.
+    // Recover the model token, preferring a slot whose SKU the target firmware also names (a
+    // mid-cross-flash device can carry a stale slot). EDL-start has no other model source, so an
+    // unrecognized device, a firmware without a fingerprint, or a mismatch aborts (the caller resets
+    // to EDL) rather than flash blind: ARB/region gates key off the model and would silently stay
+    // off for an unidentified device.
     let mut model_token = String::new();
     'find: for fp in &device_fps {
         for m in SUPPORTED_MODELS {
@@ -289,7 +274,7 @@ fn read_edl_start_device(
         ltbox_core::i18n::tr("live_rescue_model_check_ok")
     );
 
-    // 2. TB322FC has no rollback protection — skip the index read.
+    // Models without rollback protection (TB322FC, TB324ZC) have no index to read.
     if !capabilities(&model_token).rollback.is_protected() {
         return Ok(EdlStartProbe {
             model_token,
@@ -297,12 +282,10 @@ fn read_edl_start_device(
         });
     }
 
-    // 3. Rollback floor — vbmeta_system was read above; add the boot floor by
-    //    dumping boot from both slots, then take the per-location MAX across
-    //    slots. AVB rollback indices are per-location and the two slots can hold
-    //    different images, so a single slot can underestimate one location (and
-    //    TB323FU re-signs each location to its own floor). Each location must
-    //    parse on at least one slot.
+    // Rollback floor: vbmeta_system was read above; dump boot from both slots and take the
+    // per-location MAX across slots. Indices are per-location and the slots can hold different
+    // images, so one slot can underestimate a location (GBL models re-sign each location to its
+    // own floor). Each location must parse on at least one slot.
     ltbox_core::live!(log, "[ARB] {}", ltbox_core::i18n::tr("live_arb_edl_dump"));
     let mut boot_idx: [Option<u64>; 2] = [None, None];
     for (i, slot) in ["_a", "_b"].into_iter().enumerate() {
@@ -398,18 +381,14 @@ struct DeviceVbmeta {
     vbs_floor: u64,
 }
 
-/// Read the device's active-slot key class + committed rollback floors from
-/// vbmeta_system — the unified identity source: its signer identifies the device
-/// key class, and it carries the build fingerprint + per-location rollback index,
-/// so vbmeta / vendor_boot need no separate dump here. Its exact signer is not
-/// necessarily the root vbmeta signer. The active slot is
-/// `known_active` (fastboot `current-slot`) when set; otherwise (EDL-start) it
-/// is the valid vbmeta_system side, or — when both parse — the slot with the
-/// higher vbmeta_system rollback index (ties favour `_a`). The floors are
-/// component-wise maxima of `boot` + `vbmeta_system` across BOTH slots (the
-/// device's true committed floor — a single slot can understate one location).
-/// Errors (the caller resets to the device's start mode and aborts) when no
-/// slot's vbmeta_system / floors parse.
+/// Read the device's active-slot key class and committed rollback floors from vbmeta_system,
+/// the unified identity source: its signer gives the key class (not necessarily the root vbmeta
+/// signer) and it carries the fingerprint and per-location rollback index. The active slot is
+/// `known_active` (Fastboot `current-slot`) when set; otherwise (EDL-start) the valid
+/// vbmeta_system side, or the higher vbmeta_system index when both parse (ties favour `_a`).
+/// Floors are component-wise maxima of `boot` + `vbmeta_system` across both slots, since one
+/// slot can understate a location. Errors (the caller resets to the start mode and aborts) when
+/// no slot's vbmeta_system / floors parse.
 fn read_device_vbmeta(
     session: &mut ltbox_device::edl::EdlSession,
     known_active: Option<&str>,
@@ -440,8 +419,6 @@ fn read_device_vbmeta(
             .map(|info| info.rollback_index);
     }
 
-    // Active slot: fastboot's when known; otherwise the valid vbmeta_system side,
-    // or (both valid) the higher vbmeta_system rollback index, ties favour `_a`.
     let active = match known_active {
         Some(s) => usize::from(active_slot_suffix(Some(s)) == "_b"),
         None => match (vbs_info[0].as_ref(), vbs_info[1].as_ref()) {
@@ -464,7 +441,6 @@ fn read_device_vbmeta(
     let pubkey = active_info.public_key_sha1.as_deref();
     let class = ltbox_patch::key_map::classify_pubkey(pubkey);
 
-    // Component-wise device rollback floor (max per location across both slots).
     let vbs_idx = [
         vbs_info[0].as_ref().map(|i| i.rollback_index),
         vbs_info[1].as_ref().map(|i| i.rollback_index),
@@ -501,12 +477,11 @@ fn backup_device_abl(
     Ok((lun, out))
 }
 
-/// Best-effort restore of the backed-up device `abl` onto `abl_a` for the flash
-/// error paths: once the firmware's own (Lenovo-key) abl may have been written,
-/// the original testkey abl must go back even on failure, or the device is left
-/// with a Lenovo-key bootloader on a testkey-resigned chain. Failures here are
-/// logged and swallowed — the caller is already returning an error and leaves
-/// the device in EDL for retry.
+/// Best-effort restore of the backed-up device `abl` onto `abl_a` on flash error paths: once the
+/// firmware's own (Lenovo-key) abl may have been written, the original testkey abl must go back,
+/// or the device keeps a Lenovo-key bootloader under a testkey-resigned chain. Failures are
+/// logged and swallowed; the caller is already returning an error and leaves the device in EDL
+/// for retry.
 fn restore_abl_best_effort(
     session: &mut ltbox_device::edl::EdlSession,
     abl_restore: &Option<(u8, std::path::PathBuf)>,
@@ -522,12 +497,10 @@ fn restore_abl_best_effort(
     }
 }
 
-/// Decrypt every shipped rawprogram `.x` in `fw_dir` in place, writing each to
-/// a sibling `<stem>.xml` so the catalog scan can resolve image paths. The
-/// encrypted Sahara manifest (`qsahara_device_programmer.x`) is a loader, not a
-/// flash image, so it is left for `EdlSession::open` to decrypt at load time.
-/// Logs the decrypted count and returns it. Unpacks the firmware as shipped —
-/// not a content modification.
+/// Decrypt every shipped rawprogram `.x` in `fw_dir` in place to a sibling `<stem>.xml` so the
+/// catalog scan can resolve image paths. The encrypted Sahara manifest
+/// (`qsahara_device_programmer.x`) is a loader, not a flash image; `EdlSession::open` decrypts it.
+/// Returns the decrypted count. Unpacking is not a content modification.
 fn decrypt_rawprogram_x_files(
     fw_dir: &std::path::Path,
     log: &mut Vec<String>,
@@ -574,9 +547,8 @@ fn decrypt_rawprogram_x_files(
     Ok(decrypted)
 }
 
-/// Recursively collect `*.zst` files under `dir` (bounded depth so a symlink
-/// loop can't spin), appending to `out`. A firmware tree is shallow; the depth
-/// cap is a safety net, not a real limit.
+/// Recursively collect `*.zst` files under `dir` into `out`. The depth is bounded so a symlink
+/// loop can't spin; a firmware tree is shallow.
 fn collect_zst_files(
     dir: &std::path::Path,
     depth: u32,
@@ -609,14 +581,11 @@ fn collect_zst_files(
     Ok(())
 }
 
-/// Decompress any `*.zst` partition images in place so the rawprogram
-/// references resolve. Ported ROMs ship e.g. `super.img.zst` (zstd-compressed)
-/// while the rawprogram XML names `super.img`. The scan recurses into
-/// subdirectories because a rawprogram can reference an image through a relative
-/// subdir (`images/super.img`). A `*.zst` whose decompressed target already
-/// exists is skipped, and the source `.zst` is kept (LTBox never deletes user
-/// files). Streamed — the output can be tens of GB — with periodic progress in
-/// the live log. Returns the number of files decompressed.
+/// Decompress `*.zst` partition images in place so rawprogram references resolve (a ported ROM
+/// ships `super.img.zst` while the XML names `super.img`). Recurses into subdirectories, since
+/// rawprogram can reference `images/super.img`. A `*.zst` whose target already exists is skipped;
+/// the source `.zst` is kept (LTBox never deletes user files). Streamed with periodic live-log
+/// progress, since the output can be tens of GB. Returns the number of files decompressed.
 fn decompress_zst_images(
     fw_dir: &std::path::Path,
     log: &mut Vec<String>,
@@ -628,7 +597,6 @@ fn decompress_zst_images(
     }
     let mut count = 0usize;
     for src in &zst_entries {
-        // `super.img.zst` → `super.img` (drop the trailing `.zst`).
         let target = src.with_extension("");
         if target.exists() {
             continue;
@@ -742,9 +710,8 @@ fn decompress_zst_file(
                 dst.display()
             )
         })?;
-        // Preserve enough room for LTBox, logs, and recovery files.  This is a
-        // per-output limit instead of a fixed image-size cap because firmware
-        // images legitimately span many tens of GiB.
+        // Reserve room for LTBox, logs and recovery files. The limit is per output, not a fixed
+        // image-size cap: firmware images legitimately span many tens of GiB.
         let output_limit =
             zstd_output_limit(fs4::available_space(dst_parent).map_err(|e| e.to_string())?)?;
         let input = std::fs::File::open(src).map_err(|e| e.to_string())?;
@@ -760,10 +727,9 @@ fn decompress_zst_file(
             .map_err(|e| e.to_string())?;
         let out = std::io::BufWriter::new(tmp);
         let out = stream_zstd_decoder(decoder, out, name, log, output_limit)?;
-        // Drain the buffer, then fsync the data BEFORE publishing the name —
-        // `flush` only reaches the OS cache, so without `sync_all` a crash after
-        // the rename could leave `dst` pointing at unflushed (truncated) bytes
-        // that a later run would `target.exists()`-skip and then flash.
+        // Drain the buffer and fsync BEFORE publishing the name: `flush` only reaches the OS cache, so
+        // a crash after the rename could leave `dst` pointing at truncated bytes that a later run would
+        // skip (`target.exists()`) and then flash.
         let file = out.into_inner().map_err(|e| e.to_string())?;
         file.as_file().sync_all().map_err(|e| e.to_string())?;
         // Atomic publish: the final name only ever appears fully written.
@@ -772,9 +738,8 @@ fn decompress_zst_file(
 }
 
 /// Country-code partitions to dump/patch/flash for a model, from
-/// [`ModelCapabilities::country_partitions`]. The probe-reported model names
-/// the hardware that holds the code, so it wins; the vendor_boot AVB
-/// fingerprint covers an EDL-start flash with no probed model.
+/// [`ModelCapabilities::country_partitions`]. The probe-reported model wins; the target
+/// firmware's fingerprint covers an EDL-start flash with no probed model.
 ///
 /// [`ModelCapabilities::country_partitions`]: ltbox_core::model::ModelCapabilities::country_partitions
 fn country_partitions_for(
@@ -968,10 +933,8 @@ fn run_country_change(
             detected,
         } = work;
         let patched_path = work_dir.join(format!("{label}.patched.img"));
-        // Patch the country code when the partition carries
-        // one. `persist` has no real country code (its only
-        // matches live in captured logs), so it is a no-op
-        // pass-through here — dump + backup already happened.
+        // Patch the country code when the partition carries one. `persist` has none (its only matches
+        // live in captured logs), so it passes through: dump + backup already happened.
         let mut changed = false;
         if let Some(target_code) = target_code {
             match detected {
@@ -1068,7 +1031,6 @@ fn run_country_change(
             }
         }
 
-        // Flash once if the country code changed.
         if changed {
             if let Some(phases) = phases {
                 phases.mark_writes_started();
@@ -1096,9 +1058,7 @@ fn run_country_change(
         } else if target_code.is_none() && flip_proinfo_channel && label == "proinfo" {
             country_progress.mark_flashed(label);
         } else if label == "persist" {
-            // persist carries no country code — nothing to
-            // patch; treat as handled so the run still
-            // resets to system.
+            // persist carries no country code; treat it as handled so the run still resets to system.
             country_progress.mark_flashed(label);
         } else {
             let reason = "no replacements";
@@ -1114,9 +1074,8 @@ fn run_country_change(
             country_progress.mark_failed(label, reason);
         }
     }
-    // Aggregate per-partition outcome. The caller decides severity: the
-    // post-flash phase treats it as best-effort (warn + still reset), the
-    // standalone change-country op propagates it as the operation's result.
+    // Aggregate per-partition outcome; the caller decides severity (post-flash: warn and still
+    // reset; standalone change-country: propagate it as the result).
     let outcome = country_progress.finish();
     // Surface the backup location once per run. Empty dir = every label skipped.
     if std::fs::read_dir(critical_backup)
@@ -1140,8 +1099,8 @@ pub(crate) use simple::simple_flash_worker;
 
 #[cfg(test)]
 mod tests {
-    /// The session exit travels with the error, so rewording the message can
-    /// no longer change whether the device stays in EDL.
+    /// The session exit travels with the error, so rewording the message cannot change whether the
+    /// device stays in EDL.
     #[test]
     fn edl_probe_errors_carry_their_session_exit() {
         let xiaoxin = super::edl_probe_floor_error(true);

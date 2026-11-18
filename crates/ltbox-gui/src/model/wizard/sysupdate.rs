@@ -51,20 +51,17 @@ impl RescueRegion {
 pub(crate) struct SysUpdateWizard {
     pub(crate) step: usize,
     pub(crate) action: Option<SysUpdateAction>,
-    /// Rescue: firmware folder containing loader (`xbl_s_devprg_ns.melf`).
+    /// Rescue: selected EDL loader file (`xbl_s_devprg_ns.melf`) or Sahara manifest.
     pub(crate) rescue_folder: Option<String>,
-    /// Rescue: selected target region. Set via popup between Folder and
-    /// Confirm steps. May be pre-seeded from `inferred_flash_region`
-    /// (PTSTPD `SaleArea`) before the popup opens — `rescue_region_confirmed`
-    /// tracks whether the user explicitly clicked through.
+    /// Rescue: target region, set by the popup between the loader and Confirm
+    /// steps. May be pre-seeded from `inferred_flash_region` (PTSTPD `SaleArea`);
+    /// `rescue_region_confirmed` tracks whether the user chose it.
     pub(crate) rescue_region: Option<RescueRegion>,
-    /// Rescue: region popup overlay flag. Opens on Next press from the
-    /// Folder step when the user hasn't yet confirmed a region pick.
+    /// Rescue: region popup. Opens on Next from the loader step until a region
+    /// is confirmed.
     pub(crate) rescue_region_popup_open: bool,
-    /// Rescue: true once the user has clicked a region radio in the
-    /// popup. Distinguishes a pre-seeded `rescue_region` (initial
-    /// preselect from `inferred_flash_region`) from a user-confirmed
-    /// pick — preselect alone shouldn't skip the popup.
+    /// Rescue: true once the user picks a region in the popup. A pre-seeded
+    /// `rescue_region` alone must not skip the popup.
     pub(crate) rescue_region_confirmed: bool,
 }
 
@@ -82,8 +79,7 @@ pub(crate) const SYSUPDATE_STEPS_RESCUE: &[&str] = &[
 ];
 
 impl SysUpdateWizard {
-    /// Rescue gets an extra Folder step — distinct step list keeps the
-    /// other actions (Disable/Enable) on their short 3-step flow.
+    /// Rescue has an extra loader step; Disable/Enable keep the short 3-step flow.
     pub(crate) fn steps(&self) -> &'static [&'static str] {
         if matches!(self.action, Some(SysUpdateAction::Rescue)) {
             SYSUPDATE_STEPS_RESCUE
@@ -108,7 +104,7 @@ impl Wizard for SysUpdateWizard {
     }
     fn can_next(&self) -> bool {
         if self.is_rescue() {
-            // Rescue flow: Action → Folder → Confirm → Exec.
+            // Rescue flow: Action → Loader → Confirm → Exec.
             match self.step {
                 0 => self.action.is_some(),
                 1 => self

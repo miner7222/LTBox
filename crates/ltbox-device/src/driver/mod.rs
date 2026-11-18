@@ -1,22 +1,14 @@
 //! Cross-platform device-driver / udev-rule status + installer.
 //!
-//! Used by the GUI's startup driver-check banner + the Settings
-//! "Install Drivers" action. Public surface stays the same regardless
-//! of host OS so the GUI never has to branch by `cfg!(windows)`; the
-//! platform impl picks how to interpret `Present` / `Missing` /
-//! `NotWindows` for the local OS.
-//!
-//! ## Platform impl mapping
+//! The public surface is identical on every host so the GUI never branches
+//! by `cfg`; each per-OS module decides which `DriverStatus` variants it
+//! produces.
 //!
 //! | Host    | Module                  | Strategy |
 //! |---------|-------------------------|----------|
-//! | Windows | `driver::windows`       | Mode-aware `pnputil /enum-drivers` + DriverStore probe (`qcserlib.inf` for userspace / `qcwdfser.inf` for kernel); install by downloading the selected signed per-arch Qualcomm `.exe` and launching it via UAC (`Start-Process -Verb RunAs`). The installer self-elevates, so LTBox itself does not need to run as Administrator. |
-//! | Linux   | `driver::linux`         | Userspace mode detects the LTBox udev rules at `/etc/udev/rules.d/51-ltbox-qcom.rules` and installs them through `pkexec … --install-udev`. Kernel mode probes the `qud` Debian package and installs the latest `qud_*_all.zip` release through elevated `apt-get install`. |
-//! | macOS   | `driver::unsupported`   | No-op `NotWindows` — macOS is forced to userspace mode because Qualcomm publishes no macOS kernel driver and libusb claims the device directly. |
-//!
-//! The shared `DriverStatus` / `DriverError` / `Result` types live here so
-//! the GUI never branches by `cfg`; the per-OS module decides which variants
-//! it can produce.
+//! | Windows | `driver::windows`       | Mode-aware `pnputil /enum-drivers` + DriverStore probe (`qcserlib.inf` userspace / `qcwdfser.inf` kernel); installs the signed per-arch Qualcomm `.exe` through a UAC prompt, so LTBox itself never runs elevated. |
+//! | Linux   | `driver::linux`         | Userspace mode checks the LTBox udev rules (`/etc/udev/rules.d`, else `/usr/lib/udev/rules.d`) and installs them via `pkexec … --install-udev`. Kernel mode probes the `qud` Debian package and installs the latest `qud_*_all.zip` release via `pkexec apt-get install`. |
+//! | macOS   | `driver::unsupported`   | No-op `NotWindows`: no Qualcomm kernel driver exists, so macOS is userspace-only and claims the device directly. |
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -54,13 +46,10 @@ impl QcomDriverMode {
     }
 }
 
-/// Whether the Qualcomm kernel driver mode is usable on this host. Drives both
-/// the first-run driver-mode default and the Settings UI gate (the picker is
-/// locked to userspace when this is `false`). Windows ships the signed kernel
-/// driver; Linux only automates the kernel-driver (`qud`) install on
-/// Debian-style hosts where `dpkg-query` exists, so non-Debian distros are
-/// userspace-only; macOS has no kernel driver at all. Mirrors the support gate
-/// in the Linux backend's `check_kernel_driver`.
+/// Whether the Qualcomm kernel driver mode is usable on this host; drives the
+/// first-run default and locks the Settings picker to userspace when `false`.
+/// Windows: always. Linux: only where `dpkg-query` and a trusted `apt-get`
+/// exist (same gate as `check_kernel_driver`). macOS: never.
 pub fn kernel_mode_supported() -> bool {
     #[cfg(windows)]
     {
@@ -121,11 +110,8 @@ pub enum DriverStatus {
     KernelDriverUnsupported,
 }
 
-/// Result of comparing the locally-installed Qualcomm driver version
-/// against the latest signed release on GitHub. Only produced when a
-/// driver is already present AND a strictly-newer release exists — the
-/// GUI uses its presence to decide whether to show the optional
-/// "update available" banner.
+/// Installed vs latest Qualcomm driver version; only produced when a driver
+/// is present and a strictly newer release exists (the GUI's update banner).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriverUpdate {
     /// Dotted version parsed from the selected installed driver package.
@@ -145,19 +131,16 @@ pub enum DriverError {
     Io(#[from] std::io::Error),
     #[error("Zip extraction error: {0}")]
     Zip(#[from] zip::result::ZipError),
-    /// GitHub release JSON could not be parsed.
+    /// Release data, signature check or archive contents were rejected.
     #[error("GitHub release parse error: {0}")]
     Parse(String),
     /// The latest selected Qualcomm driver release shipped no installer
     /// asset for the host architecture / package type.
     #[error("No matching driver asset found in the latest release")]
     NoAsset,
-    /// The user dismissed the elevation prompt (Windows UAC for the signed
-    /// installer, or polkit for the Linux `pkexec --install-udev` call), so
-    /// the privileged step never ran. Distinct from `InstallerFailed` so the
-    /// GUI can say "approve the prompt and try again" instead of a generic
-    /// error. Neither path needs LTBox itself to run elevated — the prompt is
-    /// the only elevation step.
+    /// The user dismissed the elevation prompt (Windows UAC or Linux polkit),
+    /// so the privileged step never ran. Distinct from `InstallerFailed` so the
+    /// GUI can ask the user to approve the prompt and retry.
     #[error("Driver install was cancelled at the elevation prompt.")]
     InstallCancelled,
     /// The selected driver installer exited with a non-zero status.
@@ -267,16 +250,12 @@ mod version_tests {
     }
 }
 
-/// Best-effort reachability probe for the GitHub host LTBox downloads driver
-/// assets from. Used to pre-disable install / update buttons (with an
-/// "internet required" tooltip) instead of letting the user click into a
-/// download that can only fail. A short timeout keeps a dead network from
-/// stalling startup; any transport / non-2xx result reads as offline.
+/// Best-effort GitHub reachability, used to pre-disable driver install /
+/// update buttons. Any transport or non-2xx result reads as offline.
 #[cfg(any(windows, target_os = "linux"))]
 fn github_reachable() -> bool {
-    // Bespoke agent: an 8s global timeout keeps a dead network from stalling
-    // startup, so this probe does not reuse the shared pooled agent (which has
-    // no global cap). It does reuse the shared user-agent string.
+    // Own agent: the shared pooled one has no global timeout, and a dead
+    // network must not stall startup.
     let agent = ureq::Agent::config_builder()
         .user_agent(ltbox_core::downloader::USER_AGENT)
         .timeout_global(Some(std::time::Duration::from_secs(8)))
@@ -299,8 +278,7 @@ pub fn probe_connectivity() -> bool {
     }
 }
 
-/// macOS has no driver download path, so do not spend startup time probing
-/// GitHub just to gate a button that will never be shown.
+/// macOS has no driver download, so there is nothing to gate.
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn probe_connectivity() -> bool {
     true
@@ -316,17 +294,14 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use self::linux::{check_driver_update, check_required_drivers, download_and_install};
 
-// macOS (and any other non-Windows, non-Linux target) has no driver / udev-rule
-// concept — a no-op stub keeps the public surface identical so the GUI never
-// branches by `cfg`.
+// Other hosts get a no-op stub with the same public surface.
 #[cfg(not(any(windows, target_os = "linux")))]
 mod unsupported;
 #[cfg(not(any(windows, target_os = "linux")))]
 pub use self::unsupported::{check_driver_update, check_required_drivers, download_and_install};
 
-/// Canonical LTBox udev rules, embedded so the Linux probe can tell an
-/// up-to-date install apart from a missing, stale, or hand-edited one. Same
-/// source file the GUI's `--install-udev` writer embeds.
+/// Canonical LTBox udev rules (the same file `--install-udev` writes), so the
+/// probe can tell a current install from a missing or stale one.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) const UDEV_RULES: &str = include_str!("../../../../misc/udev/51-ltbox-qcom.rules");
 

@@ -1,11 +1,9 @@
 //! Bounded zip-entry extraction.
 //!
-//! A zip entry's declared uncompressed size (`ZipFile::size()`) is read from
-//! the archive's local header and is attacker-controlled: a malformed or
-//! hostile archive can declare an enormous entry and OOM a
-//! `Vec::with_capacity(size)` / `read_to_end` before a single byte is read.
-//! [`copy_capped`] streams the entry straight to disk under a hard upper
-//! bound instead, mirroring the guard the GKI kernel extractor already uses.
+//! A zip entry's declared size (`ZipFile::size()`) comes from the untrusted
+//! local header, so a hostile archive could OOM a `Vec::with_capacity(size)` /
+//! `read_to_end` before any byte is read. [`copy_capped`] streams the entry to
+//! disk under a hard upper bound instead.
 
 use fs_err as fs;
 use std::io::Read;
@@ -13,19 +11,18 @@ use std::path::Path;
 
 use ltbox_core::{LtboxError, Result};
 
-/// Upper bound for any single staged zip entry — Magisk APK payload libs,
-/// KernelSU `.ko` / `ksuinit`. 200 MiB sits well above any real Android boot
-/// payload while still refusing a runaway stream from a corrupt or hostile
-/// archive. Matches the kernel cap in [`crate::gki`].
+/// Upper bound for any single staged zip entry (Magisk APK payload libs,
+/// KernelSU `.ko` / `ksuinit`): well above any real boot payload, yet it stops a
+/// runaway stream from a corrupt or hostile archive. Matches the kernel cap in
+/// [`crate::gki`].
 pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024;
 
 /// Stream `src` into `dst`, refusing once more than `max` bytes have been
 /// read. `label` names the entry in error messages. Returns the byte count
 /// written.
 ///
-/// Use this instead of `Vec::with_capacity(entry.size())` + `read_to_end`
-/// for any zip entry: `size()` comes from the untrusted archive header, so
-/// pre-sizing a buffer from it is an OOM vector.
+/// Use this instead of `Vec::with_capacity(entry.size())` + `read_to_end`;
+/// `size()` is untrusted.
 pub(crate) fn copy_capped(
     src: impl Read,
     dst: &Path,
@@ -34,9 +31,8 @@ pub(crate) fn copy_capped(
 ) -> Result<u64> {
     let mut out = fs::File::create(dst)
         .map_err(|e| LtboxError::Patch(format!("create {}: {e}", dst.display())))?;
-    // `take(max + 1)` so an exactly-`max`-byte entry streams through cleanly
-    // and only a strictly larger stream trips the cap (no boundary false
-    // positive on a payload that happens to land on the limit).
+    // `take(max + 1)` so an exactly-`max`-byte entry passes and only a larger
+    // stream trips the cap.
     let copied = std::io::copy(&mut src.take(max + 1), &mut out)
         .map_err(|e| LtboxError::Patch(format!("extract {label}: {e}")))?;
     if copied > max {

@@ -4,7 +4,7 @@
 //! (`testkey_rsa2048` / `testkey_rsa4096`). PEMs ship inside avbtool-rs.
 
 /// Stock pubkey SHA-1 → `avbtool-rs` key spec name.
-/// Keep in sync whenever Lenovo rolls the signing key (see v2.x `config.json`).
+/// Keep in sync whenever Lenovo rolls the signing key.
 const KEY_MAP: &[(&str, &str)] = &[
     (
         "2597c218aae470a130f61162feaae70afd97f011",
@@ -79,13 +79,10 @@ pub fn key_spec_for_signed_pubkey(
 
 /// The user-facing message for a signing key that cannot be resolved.
 ///
-/// The two cases have very different causes and deserve different wording. A
-/// [`KeyClass::Lenovo`] key is the ordinary one — the device is on firmware that
-/// closed the AOSP test-key hole, and no amount of retrying will change that.
-/// Anything else really is an unknown key and keeps the diagnostic.
-///
-/// Both leave `{work}` for the GUI to fill with the operation that was running;
-/// nothing at this depth knows which one it is.
+/// A [`KeyClass::Lenovo`] key means firmware that closed the AOSP test-key
+/// hole, which retrying cannot fix; any other key is reported as unknown, with
+/// the diagnostic. Both messages leave `{work}` for the GUI to fill with the
+/// running operation, which is not known at this depth.
 pub fn unresolved_signing_key_error(image: &str, pubkey_sha1: &str) -> String {
     if classify_pubkey(Some(pubkey_sha1)) == KeyClass::Lenovo {
         ltbox_core::i18n::tr("err_device_key_lenovo")

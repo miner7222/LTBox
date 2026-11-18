@@ -24,8 +24,7 @@ pub(crate) fn reboot_worker(
             t,
         ) => {
             let mut adb = ltbox_device::adb::AdbManager::new();
-            // `AdbManager::reboot` needs the serial
-            // from a prior `check_device` call.
+            // `AdbManager::reboot` needs the serial from a prior `check_device` call.
             if !adb.check_device().unwrap_or(false) {
                 return Err(tr("err_no_adb_device_replug"));
             }
@@ -78,8 +77,7 @@ pub(crate) fn reboot_worker(
             }
         }
         (ConnectionStatus::Edl, _) => {
-            // RebootTo routes EDL through
-            // RebootEdlWithLoader, never here.
+            // RebootTo routes EDL through RebootEdlWithLoader, never here.
             unreachable!("EDL reboot goes through RebootEdlWithLoader");
         }
         (ConnectionStatus::None, _) => {

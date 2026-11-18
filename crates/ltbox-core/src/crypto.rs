@@ -1,4 +1,4 @@
-//! AES-CBC decryption for .x firmware files. Matches v2 Python crypto.py.
+//! AES-CBC decryption for .x firmware files.
 //!
 //! Key: PBKDF1(SHA-256, "OSD", salt, 1000, 32). Cipher: AES-256-CBC.
 //! File: [IV:16][Salt:16][Encrypted body].
@@ -58,14 +58,9 @@ pub fn decrypt_file(input: &Path, output: &Path) -> Result<u64> {
     if plain.len() < 16 {
         return Err(LtboxError::Config("Decrypted data too small".into()));
     }
-    // Header size is i64 LE (v2 `struct.unpack("<q", ...)`). Guard against a
-    // hostile salt that produces a negative / huge size — else the `as u64`
-    // cast bit-casts to u64::MAX and the slice panics.
-    //
-    // `try_into::<[u8; 8]>` on an 8-byte slice is infallible; the earlier
-    // `plain.len() < 16` bail guarantees the subslice. Use `expect` over
-    // `unwrap` so a future refactor that weakens the bound trips on a
-    // readable message rather than a generic panic.
+    // Header size is i64 LE. Reject a negative size (hostile salt) before the
+    // `as u64` cast turns it into u64::MAX and the slice panics. The 8-byte
+    // conversion cannot fail after the `plain.len() < 16` check above.
     let header_bytes: [u8; 8] = plain
         .get(0..8)
         .ok_or_else(|| LtboxError::Config("Decrypted data too small for size header".into()))?
@@ -273,7 +268,8 @@ mod tests {
 
     #[test]
     fn huge_original_size_rejected_not_panic() {
-        // i64::MAX makes `16 + size` overflow usize; guard must return Config error.
+        // i64::MAX must fail a bounds check (truncated data, or overflow on
+        // 32-bit targets) with a Config error, not panic.
         let mut plain = Vec::new();
         plain.extend_from_slice(&i64::MAX.to_le_bytes());
         plain.extend_from_slice(SIGNATURE);

@@ -14,10 +14,10 @@ pub(crate) struct AdvWizard {
     /// User-picked target region for `RegionConvert`. Explicit target so
     /// confirm can echo it and exec can short-circuit on no-op.
     pub(crate) region_target: Option<DeviceRegion>,
-    /// `{exe_dir}/output_<action>/` — set on Confirm → Exec.
+    /// Output folder; set on Confirm → Exec.
     pub(crate) output_dir: Option<std::path::PathBuf>,
     pub(crate) arb_targets: Option<crate::ManualRollbackIndices>,
-    /// PatchArb: `(boot_rollback, vbmeta_rollback)` from picked firmware.
+    /// PatchArb: `(boot, vbmeta_system)` rollback indices from the picked firmware.
     pub(crate) arb_inspect: Option<(u64, u64)>,
 }
 
@@ -40,7 +40,7 @@ impl AdvWizard {
             return &["adv_step_source", "adv_step_info"];
         }
         if self.needs_country() {
-            // Country is chosen in a popup before the loader wizard opens.
+            // The country is chosen in a popup before this wizard opens.
             &["edl_loader_label", "flash_step_confirm", "flash_step_flash"]
         } else if self.needs_region_target() {
             &[
@@ -52,8 +52,8 @@ impl AdvWizard {
         } else if matches!(self.action, Some(AdvAction::PatchArb)) {
             &["adv_step_source", "flash_step_confirm", "flash_step_flash"]
         } else if matches!(self.action, Some(AdvAction::DetectArb)) {
-            // Model/transport determines the loader requirement. Start on
-            // the source step jumps straight to execution.
+            // The model and transport decide whether a loader is needed; Start
+            // on the source step runs directly.
             &["adv_step_source", "flash_step_flash"]
         } else {
             &["adv_step_source", "flash_step_confirm", "flash_step_flash"]
@@ -123,14 +123,9 @@ impl AdvWizard {
         }
     }
 
-    /// Recents bucket for the current action. Folder actions bin into
-    /// a source-folder category or `OutputFolder` for
-    /// dump destinations; file actions share the `File` bucket per the
-    /// unified-file-picker design.
-    ///
-    /// Kept close to [`Self::is_folder_op`] so they don't diverge -
-    /// mismatches would either orphan recents (folder op writing to
-    /// `File`) or corrupt them (file path shoved into a folder bucket).
+    /// Recents bucket for the current action: a source-folder category for
+    /// folder actions, the shared `File` bucket for file actions. Must agree
+    /// with [`Self::is_folder_op`], or recents are orphaned or corrupted.
     pub(crate) fn picker_kind(&self) -> pickers::PickerKind {
         use pickers::PickerKind;
         match self.action {
@@ -143,9 +138,8 @@ impl AdvWizard {
             | Some(AdvAction::DetectArb)
             | Some(AdvAction::PatchDevinfo)
             | Some(AdvAction::RebuildVbmeta) => PickerKind::File,
-            // Remaining actions don't open a Browse dialog on step 0
-            // (DumpPartitions/DumpPhysical/Flash* have dedicated wizards);
-            // return File defensively so storage_key() is always valid.
+            // Remaining actions have dedicated wizards and no Browse dialog on
+            // step 0; `File` keeps `storage_key()` valid.
             _ => PickerKind::File,
         }
     }

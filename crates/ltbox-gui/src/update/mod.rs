@@ -1,7 +1,5 @@
-//! Top-level `Message` dispatcher. Routes each variant to a focused
-//! `update_*` handler or handles it inline. Extracted from `main.rs`;
-//! lives in its own `impl App` block (a descendant module can still reach
-//! `App`'s private fields + methods).
+//! Top-level `Message` dispatcher: routes each variant to an `update_*`
+//! handler or handles it inline.
 
 use crate::*;
 use iced::Task;
@@ -69,9 +67,8 @@ impl App {
         let Some(release) = self.update_available.as_ref() else {
             return;
         };
-        // `open` crate dispatches via `xdg-open` (Linux) / `start` (Windows) /
-        // `open` (macOS). Failure is logged but not surfaced, matching other
-        // external links in the app.
+        // `open::that_detached` hands the URL to the host's default handler.
+        // Failure is logged, not surfaced, like other external links.
         if let Err(error) = open::that_detached(&release.html_url) {
             tracing::warn!("failed to open update URL: {error}");
         }
@@ -201,10 +198,7 @@ impl App {
             Message::AboutLicensesClose => {
                 self.about_licenses_open = false;
             }
-            // Window chrome (titlebar buttons, cursor-drag move/resize,
-            // persisted geometry) delegated to a focused handler so the
-            // monster match in `update` doesn't have to spell every
-            // variant out inline.
+            // Window chrome (titlebar buttons, drag/resize, persisted geometry) lives in `update_window`.
             Message::Window(m) => return self.update_window(m),
             Message::WindowResized(w, h) => return self.update_window_resized(w, h),
             Message::WindowMaximized(maximized) => {
@@ -220,7 +214,6 @@ impl App {
                 }
             }
             Message::PersistWindowSize => return self.update_persist_window_size(),
-            // Navigation
             Message::Noop => {}
             Message::RebootWaitDismiss => {
                 self.reboot_wait_dialog_open = false;
@@ -241,13 +234,9 @@ impl App {
                     self.konabess.reset();
                 }
                 self.current_view = v;
-                // Keep wizard state during a running op or on the
-                // exec/Done screen — sidebar bounce mid-flash must
-                // not kick back to step 0.
+                // Entry resets skip busy and in-progress wizards so a sidebar bounce keeps
+                // state and picks (and never kicks a running flash back to step 0).
                 let busy = self.operation.is_running();
-                // Skip the entry reset on the exec screen (mid-op) AND on
-                // the confirm/start screen, so a sidebar bounce returns the
-                // user to the confirm screen with their picks intact.
                 if v == View::Root
                     && !busy
                     && !self.root.is_in_exec()
@@ -261,9 +250,8 @@ impl App {
                     && !self.flash.is_on_confirm_step()
                 {
                     self.flash.reset();
-                    // Fresh entry clears any lookup still in flight from a
-                    // prior visit. Normal models remain on the region choices;
-                    // only the PRC-only SKU and deterministic demo setup skip it.
+                    // Fresh entry clears any in-flight region lookup. Normal models stay on
+                    // the region choices; only the PRC-only SKU and the demo setup skip them.
                     self.queries.region_pending = None;
                     self.flash_serial_prompt = None;
                     return self.prepare_flash_region_on_entry();
@@ -290,18 +278,10 @@ impl App {
                     self.konabess.reset();
                     self.apply_remembered_loader_to_konabess();
                 }
-                // Loader pre-fill happens on the Next-into-loader-step
-                // transition in `UnrootNext` (mirrors the Root wizard's
-                // step-5 fill + advance pattern), not on view entry — an
-                // entry-time pre-fill would make the loader step
-                // unreachable when a default is set, hiding it from
-                // anyone wanting to back-nav and pick a different
-                // loader.
-                // Advanced view: reset every sub-wizard + the generic
-                // adv wizard's action / file selection on entry, so a
-                // sidebar bounce mid-flow doesn't reopen the same
-                // sub-wizard with the previous picked path still
-                // populated. The `busy` gate covers in-flight ops.
+                // Unroot loader pre-fill happens on `UnrootNext`, not on view entry, so the
+                // loader step stays reachable for picking a different loader.
+                // Advanced view: reset every sub-wizard and the generic wizard's action and
+                // file on entry so a sidebar bounce doesn't reopen one with a stale path.
                 if v == View::Advanced && !busy && !self.advanced_in_progress() {
                     self.advanced_wizard_open = AdvancedWizardOpen::None;
                     self.adv_wizard = AdvWizard::default();
@@ -311,9 +291,8 @@ impl App {
                     self.dump_phys = DumpPhysWizard::default();
                     self.simple_flash = SimpleFlashWizard::default();
                 }
-                // Settings entry: rescan removable temp files so the cleanup
-                // button reflects current on-disk state (enabled only when
-                // there's something to clean).
+                // Settings entry: rescan removable temp files so the cleanup button
+                // reflects the disk.
                 if v == View::Settings && !self.cleaning_temp {
                     return self.scan_temp_files_task();
                 }
@@ -343,15 +322,13 @@ impl App {
             }
             Message::Settings(m) => return self.update_settings(m),
             Message::Flash(m) => return self.update_flash(m),
-            // Country code popup.
             Message::CountrySearchInput(query) => {
                 self.country_popup_search = query;
             }
             Message::SelectCountry(code) => {
-                // PRC-only models make the Flash wizard accept only `CN`.
-                // The popup grays out other entries, but a stale dispatch could
-                // still land here. Drop it — EXCEPT for the Advanced "Change
-                // Country Code" op, which allows any country on any model.
+                // PRC-only models accept only `CN` in the Flash wizard; drop a stale dispatch
+                // for any other code, except the Advanced Change Country Code op (any
+                // country, any model).
                 if self.is_prc_only() && !self.adv_needs_country && !code.eq_ignore_ascii_case("CN")
                 {
                     return Task::none();
@@ -401,7 +378,6 @@ impl App {
                     self.flash.back();
                 }
             }
-            // Region-convert target picker popup.
             Message::SelectRegionTarget(target) => {
                 self.region_target_popup_open = false;
                 self.adv_wizard.region_target = Some(target);
@@ -414,7 +390,6 @@ impl App {
             Message::Unroot(m) => return self.update_unroot(m),
             Message::Adv(m) => return self.update_adv(m),
             Message::KonaBess(m) => return self.update_konabess(m),
-            // Async results.
             Message::FileSelected(path) => {
                 if let Some(p) = path {
                     self.remember_recent(self.picker_target.kind(), &p);
@@ -457,10 +432,9 @@ impl App {
                 }
             }
             Message::OperationError(e) => {
-                // Errors raised deep in the pipeline cannot name the operation,
-                // so they leave `{work}` in the message. This is the one place
-                // an operation error is surfaced, and the last point where the
-                // running operation is still known — `fail_op` clears it.
+                // Pipeline errors cannot name the operation and leave `{work}` in the
+                // message; fill it here, the last point where the running operation is
+                // still known (`fail_op` clears it).
                 let e =
                     ltbox_core::i18n::format_template(&e, &[("work", self.busy_operation_label())]);
                 let reboot_wait_failed = self.operation.view() == Some(View::Reboot);
@@ -524,9 +498,7 @@ impl App {
                         self.apply_remembered_loader_to_konabess();
                     }
                     View::Advanced => {
-                        // "Start over" on any Advanced sub-wizard should
-                        // return to the Advanced grid, not step 0 of the
-                        // currently open sub-flow.
+                        // Return to the Advanced grid, not step 0 of the open sub-flow.
                         self.advanced_wizard_open = AdvancedWizardOpen::None;
                         self.flash_parts.reset();
                         self.dump_parts.reset();
@@ -543,23 +515,8 @@ impl App {
                 self.operation_error = None;
             }
             Message::DrainStdoutTap => {
-                // Pull from BOTH the Windows stdout pipe (`stdout_tap`,
-                // which captures third-party `println!` from qdl /
-                // magiskboot / pbr) AND our in-process live sink (every
-                // `live!` line we emit). The pipe path can stall on GUI
-                // subsystem builds — handle init order, full pipe
-                // buffer back-pressure, etc. — so the in-process sink
-                // is the safety net that guarantees our own log lines
-                // show up regardless of OS plumbing state.
-                //
-                // Dedup the combined batch with a `HashSet` instead of
-                // relying on `log_extend`'s adjacent-only dedup: each
-                // of our `live!` lines lands in BOTH sources, so naive
-                // chaining produces interleaved doubles
-                // (`[A, B, C, A, B, C]`) that the adjacent walker
-                // can't collapse. First-occurrence wins, so the tap
-                // ordering (which interleaves third-party output with
-                // ours in real chronological order) is preserved.
+                // Drain the typed live sink and the native stdout tap (third-party
+                // output from qdl / magiskboot / pbr).
                 self.drain_pending_log_streams();
                 // Snapshot live firmware-write progress only while the
                 // busy op is on the exact firmware-progress phase.
@@ -574,9 +531,8 @@ impl App {
                 }
             }
             Message::LogEditorAction(action) => {
-                // Read-only: swallow `Edit(_)`, forward selection /
-                // scroll / caret motion so drag-select + Ctrl+C work.
-                // Ctrl+C goes through the widget's key binding directly.
+                // Read-only: swallow `Edit(_)`, forward selection / scroll / caret
+                // motion so drag-select and Ctrl+C work.
                 use iced::widget::text_editor::Action;
                 if !matches!(action, Action::Edit(_)) {
                     self.log_editor.perform(action);
@@ -642,7 +598,6 @@ impl App {
             Message::ConfirmCloseSoftwareFix => return self.confirm_close_software_fix(),
             Message::CancelCloseSoftwareFix => self.software_fix.confirm_open = false,
             Message::SoftwareFixClosed(result) => return self.software_fix_closed(result),
-            // Device polling
             Message::PollDevice => {
                 if !self.can_poll_device() {
                     return Task::none();
@@ -675,11 +630,9 @@ impl App {
                                 Ok(Some("device")) | Ok(Some("recovery")) => {
                                     let raw_model =
                                         adb.get_model().ok().flatten().unwrap_or_default();
-                                    // Empty model = USB-debug OFF or
-                                    // auth pending (`adbd: error: closed`).
-                                    // Bucket under AdbUnauthorized so
-                                    // the dashboard doesn't falsely claim
-                                    // the platform is unsupported.
+                                    // Empty model = USB debugging off or auth pending (`adbd: error: closed`);
+                                    // report AdbUnauthorized so the dashboard doesn't call the platform
+                                    // unsupported.
                                     if raw_model.is_empty() {
                                         r.status = ConnectionStatus::AdbUnauthorized;
                                         return r;
@@ -726,11 +679,9 @@ impl App {
                                     // Offline / noperm / detached fall through to Fastboot/EDL.
                                 }
                             }
-                            // One open/claim only: a prior check_device()
-                            // open+drop followed by an immediate re-open can
-                            // fail transiently on Windows WinUSB and leave
-                            // Fastboot status with blank fields until a later
-                            // poll. Reuse the successful handle for get_all_vars.
+                            // Open once and reuse the handle for get_all_vars: an open+drop followed
+                            // by an immediate re-open can fail transiently on Windows WinUSB and
+                            // leave blank Fastboot fields until a later poll.
                             if let Ok(mut dev) = ltbox_device::fastboot::FastbootDevice::open() {
                                 r.status = ConnectionStatus::Fastboot;
                                 r.fastboot_userspace = dev.is_userspace();
@@ -744,13 +695,9 @@ impl App {
                                 r.storage = vars.storage_gb.unwrap_or_default();
                                 r.market_name = vars.product.unwrap_or_default();
                                 r.serial = vars.serialno.unwrap_or_default();
-                                // Bootloader mode reports the committed floors,
-                                // but the Dashboard cell stays a yes/no by model
-                                // like every other transport — a bare 10-digit
-                                // number in a "Rollback Protection" field read as
-                                // a different kind of answer than the question.
-                                // The numbers move into the rollback popup, which
-                                // can label and format them properly.
+                                // Bootloader mode reports committed floors, but the Dashboard cell stays
+                                // a model-based yes/no like every other transport; the numbers are shown
+                                // in the rollback popup.
                                 r.arb = arb_from_model(&r.model).to_string();
                                 r.rollback_floors =
                                     ltbox_patch::rollback::classify_fastboot_rollback_floors(
@@ -812,8 +759,7 @@ impl App {
             }
             Message::DeviceInfoFetched(serial, result) => {
                 if serial.is_empty() {
-                    // Worker panic fallback (`task_heavy` fallback case);
-                    // surface as error on whichever popup is open.
+                    // Worker panic fallback (`task_heavy`): show it on the open popup.
                     if let Some((s, _)) = self.device_info_popup.clone() {
                         let msg = match result {
                             Err(e) => e,
@@ -825,9 +771,8 @@ impl App {
                 }
                 match result {
                     Ok(info) => {
-                        // Cache only; the Flash wizard's Auto FAB is the
-                        // explicit entry point for SaleArea-driven region
-                        // detection, not a silent preselect from here.
+                        // Cache only; region detection is the Flash wizard's Auto FAB, not a
+                        // preselect from here.
                         self.queries.info_cache.insert(serial.clone(), info);
                         if matches!(&self.device_info_popup, Some((s, _)) if s == &serial) {
                             self.device_info_popup = Some((serial, DeviceInfoState::Ready));
@@ -864,13 +809,9 @@ impl App {
             Message::OtaOpen => {
                 self.queries.cancel_lookup(LookupKind::Ota);
                 let serial = self.device.serial.trim().to_string();
-                // Pass the untrimmed firmware id to the OTA endpoint —
-                // Lenovo's `querynewfirmware` keys against the full
-                // `ro.build.display.id` value (model prefix included),
-                // so the dashboard's display-trimmed form would silently
-                // miss every match. Fall back to the trimmed dashboard
-                // value only when the full mirror is empty (older poll
-                // result that never populated the field).
+                // Use the untrimmed firmware id: Lenovo's `querynewfirmware` keys on the
+                // full `ro.build.display.id` (model prefix included), so the trimmed
+                // dashboard form never matches. Fall back to it only if the full id is empty.
                 let firmware_id = if !self.device.firmware_full.is_empty() {
                     self.device.firmware_full.trim().to_string()
                 } else {
@@ -879,11 +820,7 @@ impl App {
                 if serial.is_empty() || firmware_id.is_empty() {
                     return Task::none();
                 }
-                // Cache hit → restore the prior result without
-                // re-issuing the upstream query. Mirrors
-                // `device_info_cache` so the popup doesn't burn a
-                // network round-trip every time the user reopens it
-                // within the same session.
+                // Cache hit: restore the prior result without a network query.
                 let key = (serial.clone(), firmware_id.clone());
                 if let Some(cached) = self.queries.ota_cache.get(&key).cloned() {
                     let new_state = match cached {
@@ -910,9 +847,8 @@ impl App {
                 return self.queries.track_lookup(LookupKind::Ota, task);
             }
             Message::OtaFetched(serial, firmware_id, result) => {
-                // Stale serial/firmware swap (device unplugged mid-fetch
-                // and the popup was closed or reopened against another
-                // device) → drop result silently.
+                // Drop results for a stale serial/firmware (popup closed or reopened
+                // for another device).
                 let still_relevant = matches!(
                     &self.ota_popup,
                     Some((s, f, _)) if s == &serial && f == &firmware_id
@@ -925,11 +861,8 @@ impl App {
                     Ok(None) => OtaPopupState::NoUpdate,
                     Err(e) => OtaPopupState::Error(e),
                 };
-                // Cache success / NoUpdate so reopening the popup
-                // doesn't re-issue the same query. Errors are not
-                // cached — a transient network failure should clear
-                // on the next open instead of sticking until the
-                // user manually retries.
+                // Cache Ready/NoUpdate only; errors are not cached so a transient
+                // network failure clears on the next open.
                 let key = (serial.clone(), firmware_id.clone());
                 match &new_state {
                     OtaPopupState::Ready(u) => {
@@ -974,18 +907,12 @@ impl App {
                 return self.queries.track_lookup(LookupKind::Ota, task);
             }
             Message::OpenUrl(url) => {
-                // Same rationale as OtaOpenDownload: hand the URL to the host's
-                // default browser rather than render an in-app webview.
+                // Hand the URL to the host's default browser, not an in-app webview.
                 if let Err(e) = open::that_detached(url) {
                     tracing::warn!("failed to open URL {url}: {e}");
                 }
             }
             Message::OtaOpenDownload(url) => {
-                // `open::that_detached` hands the URL to the host's
-                // default URL handler — Edge / Firefox / GNOME's
-                // xdg-open chain — so the user gets a real browser
-                // tab, not an in-app webview that we'd have to render
-                // and security-audit.
                 if let Err(e) = open::that_detached(&url) {
                     tracing::warn!("failed to open OTA download URL: {e}");
                 }
@@ -1116,14 +1043,10 @@ impl App {
                 let damp = -self.sidebar_velocity * damping;
                 self.sidebar_velocity += (force + damp) * DT;
                 let next = self.sidebar_anim + self.sidebar_velocity * DT;
-                // Settle: both displacement AND velocity near zero.
-                // Avoids clipping the tail of the spring response.
-                //
-                // Test the value this tick produces, not the one it started
-                // from: `subscription` stops ticking on exactly this condition
-                // evaluated against the new value, so checking the old value
-                // instead would let the rail rest a hair off zero, leaving the
-                // overlay's drawer shadow visibly stuck after the pointer left.
+                // Settle only when displacement AND velocity are near zero, tested on this
+                // tick's new value: `subscription` stops ticking on the same condition, so
+                // testing the old value would leave the rail a hair off zero and the
+                // drawer shadow stuck.
                 if (target - next).abs() < 0.001 && self.sidebar_velocity.abs() < 0.05 {
                     self.sidebar_anim = target;
                     self.sidebar_velocity = 0.0;
@@ -1197,10 +1120,8 @@ impl App {
                 self.dual_usb_help_open = false;
             }
             Message::UpdateCheckDone(result) => {
-                // `None` means "no banner" — either we're already on the
-                // latest stable, the repo has only prereleases, or the
-                // probe failed (offline / 5xx / parse). All three should
-                // render identically: nothing in the sidebar.
+                // `None` = no banner: already on the latest stable, only prereleases
+                // exist, or the probe failed.
                 self.update_available = result;
             }
             Message::OpenUpdate => {
@@ -1359,19 +1280,14 @@ impl App {
             }
             Message::InstallDriversDone(result) => {
                 self.installing_drivers = false;
-                // Drain any lines still pending in the sink/tap so the
-                // worker's terminal `live_driver_install_finished` line
-                // lands before the banner re-check fires. The worker already
-                // emits a localized completion line
-                // (`Installation finished (N/N succeeded)`); do not push a
-                // second `driver_install_done` line duplicating it.
+                // Drain pending sink/tap lines so the worker's `live_driver_install_finished`
+                // line lands before the banner re-check; the worker already logged its
+                // completion line, so push no second one.
                 let _ = self.drain_pending_log_streams();
                 match result {
                     Ok(_log) => {
-                        // Install/update just brought the driver to the
-                        // latest release, so drop any outstanding update
-                        // banner. The presence re-check below clears the
-                        // missing banner.
+                        // The driver is now at the latest release: drop any update banner. The
+                        // presence re-check below clears the missing-driver banner.
                         self.driver_update = None;
                         self.driver_restart_recommended = true;
                         return Task::perform(

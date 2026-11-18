@@ -13,9 +13,7 @@ use ltbox_core::{
 };
 use tracing::info;
 
-/// Outcome of validating an image against a device model.
-/// Matches v2 `_validate_device_model` three-way result: the fingerprint
-/// may match, mismatch, or be absent entirely (older firmware).
+/// Outcome of validating an image's fingerprint against a device model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelValidation {
     /// Fingerprint present and matches `device_model`. Safe to proceed.
@@ -34,8 +32,7 @@ pub enum ModelValidation {
         fingerprint: String,
         device_model: String,
     },
-    /// No fingerprint property in the AVB image. Caller decides — v2
-    /// logged a warning and skipped validation.
+    /// No fingerprint property in the AVB image (older firmware). The caller decides.
     Missing,
 }
 
@@ -48,9 +45,9 @@ pub enum ModelValidation {
 /// when `device_model` is a known model, and a mismatch otherwise. One that
 /// names a different known model is always a mismatch.
 ///
-/// Spaces in `device_model` are stripped to tolerate
-/// `"TB 320FC"`-style reads from `ro.product.model`. The shared matcher also
-/// accepts the model token reported by LAVIE Tab 9QHD1 as TB320FC-equivalent.
+/// Spaces in `device_model` are stripped to tolerate `"TB 320FC"`-style
+/// `ro.product.model` reads. The shared matcher also treats the LAVIE Tab 9QHD1
+/// token as TB320FC.
 pub fn validate_device_model(info: &AvbImageInfo, device_model: &str) -> ModelValidation {
     classify_fingerprint(avb::build_fingerprint(info), device_model)
 }
@@ -85,14 +82,13 @@ pub enum RegionTarget {
 }
 
 /// Detect a firmware's region from the `product_region` node in its vendor_boot
-/// device-tree. TB323FU (and others) carry no `_PRC`/`_ROW` token in the AVB
-/// fingerprint, but the DTB has an FDT node named `product_region` whose
-/// properties carry a `PRC` / `ROW` value. The flattened device-tree lays the
-/// node out as `FDT_BEGIN_NODE "product_region\0"` (padded) followed by its
-/// `FDT_PROP` entries (`token, len, nameoff, value`), so this walks that node's
-/// properties and returns the first `PRC` / `ROW` value. Occurrences of the same
-/// string in the FDT strings block are not followed by an `FDT_PROP` token, so
-/// they are skipped. Returns `None` when the marker is absent / unreadable.
+/// device-tree. Some models (e.g. TB323FU) have no `_PRC`/`_ROW` token in the
+/// AVB fingerprint, but the DTB has a `product_region` node whose properties
+/// carry a `PRC` / `ROW` value. The node is laid out as
+/// `FDT_BEGIN_NODE "product_region\0"` (padded) followed by `FDT_PROP` entries
+/// (`token, len, nameoff, value`); this walks them and returns the first
+/// `PRC` / `ROW` value. The same string in the strings block is not followed by
+/// an `FDT_PROP` token and is skipped. Returns `None` when absent or unreadable.
 pub fn detect_product_region(vendor_boot_path: &Path) -> Option<RegionTarget> {
     const FDT_PROP: u32 = 0x0000_0003;
     let data = fs::read(vendor_boot_path).ok()?;
@@ -207,12 +203,9 @@ pub enum RegionBuildStage {
 }
 
 /// Build the AVB-valid `vendor_boot.img` + `vbmeta.img` pair for region
-/// conversion.
-///
-/// This is the v3 equivalent of v2 `convert_region_images()`: copy
-/// `vendor_boot`, patch region bytes, add a new hash footer using the original
-/// AVB parameters, then rebuild `vbmeta`, refreshing matching descriptors from
-/// the patched `vendor_boot` image.
+/// conversion: copy `vendor_boot`, patch region bytes, add a new hash footer
+/// with the original AVB parameters, then rebuild `vbmeta` with descriptors
+/// refreshed from the patched `vendor_boot`.
 pub fn build_region_converted_avb_images(
     firmware_dir: &Path,
     output_dir: &Path,
@@ -311,10 +304,9 @@ pub fn build_region_converted_avb_images_with_progress(
     on_stage(RegionBuildStage::RebuildVbmeta);
     let vbmeta_info = avb::extract_image_avb_info(&vbmeta_src)?;
     let vbmeta_out = output_dir.join("vbmeta.img");
-    // `key_override` (testkey) re-signs the rebuilt vbmeta with that key rather
-    // than the firmware's own KEY_MAP key — the key2 cross-region flash passes
-    // the testkey so the converted vbmeta matches the device's root of trust.
-    // Without an override, fall back to the firmware's signing key.
+    // `key_override` (testkey) re-signs the rebuilt vbmeta instead of using the
+    // firmware's KEY_MAP key; the cross-region flash passes the testkey so the
+    // vbmeta matches the device's root of trust.
     let resolved = match key_override {
         Some(spec) => Some(spec),
         None => key_map::key_spec_for_signed_pubkey(vbmeta_info.public_key_sha1.as_deref())
@@ -324,10 +316,8 @@ pub fn build_region_converted_avb_images_with_progress(
     };
     match resolved {
         Some(key_spec) => {
-            // Keep the rebuild algorithm consistent with the signing key: a key
-            // override (cross-region testkey) may differ in size from the source
-            // vbmeta, so derive the algorithm from the override key itself —
-            // otherwise avbtool rejects the key/algorithm mismatch.
+            // An override key may differ in size from the source vbmeta's, so take
+            // the algorithm from it; avbtool rejects a key/algorithm mismatch.
             let algorithm = match key_override {
                 Some(spec) => avb::algorithm_for_key_spec(spec).ok_or_else(|| {
                     LtboxError::Avb(format!("unknown AVB algorithm for key override {spec}"))
@@ -426,32 +416,30 @@ pub const EU_COUNTRY_CODES: &[&str] = &[
     "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
 ];
 
-/// Detect country code in a binary image (devinfo/persist/oemowninfo).
-/// Scans for patterns like "CNXX", "KRXX", "CNXE" etc.
-///
-/// ext4 data-block size — the persist country file's content starts on a block.
+/// ext4 data-block size; the persist country file's content starts on a block.
 const EXT4_BLOCK: usize = 4096;
 
 /// True when a `field_only` country match at byte offset `i` (length `n`) is a
-/// real stored field rather than embedded log text. The country code is a
-/// NUL-terminated string at the START of an ext4 data block, so require a
-/// LEADING boundary — block-aligned, or a NUL immediately before (file fields
-/// are NUL-delimited) — AND a trailing NUL. Log lines such as `Update country
-/// code CNXX\n` are mid-block and `code `-prefixed, so they fail the leading
-/// test even if a trailing NUL (zero slack) happened to follow. Verified on
-/// TB520FU / TB321FU persist dumps: the real field is 4K-aligned (TB520FU also
-/// NUL-preceded, TB321FU preceded by binary), the log hits are neither.
+/// real stored field rather than embedded log text. The code is a
+/// NUL-terminated string at the start of an ext4 data block, so a match needs a
+/// leading boundary (block-aligned, or a NUL just before) and a trailing NUL.
+/// Log lines such as `Update country code CNXX\n` are mid-block and
+/// `code `-prefixed, so they fail the leading test even if a NUL follows.
+/// Seen on TB520FU / TB321FU persist dumps: the real field is 4K-aligned (TB520FU
+/// also NUL-preceded, TB321FU preceded by binary); the log hits are neither.
 fn is_country_field(data: &[u8], i: usize, n: usize) -> bool {
     let leading = i.is_multiple_of(EXT4_BLOCK) || data[i - 1] == 0; // i==0 ⇒ aligned
     let trailing = i + n == data.len() || data[i + n] == 0;
     leading && trailing
 }
 
-/// `field_only` restricts matches to a real country field — a NUL-terminated
-/// string at an ext4 block boundary (see [`is_country_field`]). `persist` is an
-/// ext4 image whose log files also contain strings like `Update country code
-/// CNXX`, so a blind scan would detect (and a blind patch would corrupt) those
-/// log entries; `field_only` matches only the real country-code file.
+/// Detect the country code in a binary image (devinfo/persist/oemowninfo) by
+/// scanning for codes like "CNXX", "KRXX", "CNXE".
+///
+/// `field_only` restricts matches to a real country field (see
+/// [`is_country_field`]). `persist` is an ext4 image whose logs also contain
+/// strings like `Update country code CNXX`, which a blind scan would detect and
+/// a blind patch would corrupt.
 pub fn detect_country_code(
     image_path: &Path,
     known_codes: &[&str],
@@ -480,10 +468,8 @@ pub fn detect_country_code(
 }
 
 /// Replace `from` with `to` (equal length) only where the match is a real
-/// country field — a NUL-terminated string at an ext4 block boundary (see
-/// [`is_country_field`]). Skips matches embedded in text (e.g. persist log lines
-/// like `Update country code CNXX\n`), so only the real country-code file is
-/// edited.
+/// country field (see [`is_country_field`]). Matches embedded in text, such as
+/// persist log lines like `Update country code CNXX\n`, are skipped.
 fn replace_country_field(data: &mut [u8], from: &[u8], to: &[u8]) -> usize {
     debug_assert_eq!(from.len(), to.len());
     let n = from.len();
@@ -527,17 +513,16 @@ pub fn patch_country_code(
     };
     let to = format!("{new_code}{new_suffix}");
 
-    // Field replacement is in-place, so the old/new patterns must be the same
-    // length. Return a recoverable error rather than panicking in
-    // `copy_from_slice` if the codes differ in length.
+    // Replacement is in place, so the codes must be the same length; error
+    // instead of panicking in `copy_from_slice`.
     if field_only && old_code.len() != new_code.len() {
         return Err(LtboxError::Patch(format!(
             "field-only country patch needs equal-length codes ({old_code} -> {new_code})"
         )));
     }
 
-    // Scan both `XE` and `XX` for old_code — stock Lenovo firmware mixes them
-    // (e.g. `FRXX` in the wild). Widen unconditionally; false positives are free.
+    // Scan both `XE` and `XX` for old_code: stock Lenovo firmware mixes them
+    // (e.g. `FRXX`).
     let mut total_count = 0usize;
     for old_suffix in ["XE", "XX"] {
         let from = format!("{old_code}{old_suffix}");
@@ -556,7 +541,7 @@ pub fn patch_country_code(
         return Ok(false);
     }
 
-    // Bail if expected suffix isn't present — better than silently shipping wrong-suffix devinfo.
+    // Bail rather than ship a devinfo with the wrong suffix.
     let written = count_occurrences(&data, to.as_bytes());
     if written == 0 {
         return Err(LtboxError::Patch(format!(
@@ -571,9 +556,8 @@ pub fn patch_country_code(
 }
 
 /// Replace the Xiaoxin Pro 13 / Idea Tab Pro Gen 2 `proinfo` channel field
-/// from `consumer` to
-/// `commercial`. The shorter source token must be NUL-delimited and have two
-/// further NUL bytes after its terminator, leaving a NUL terminator after the
+/// from `consumer` to `commercial`. The shorter token must be NUL-delimited and
+/// have two more NUL bytes after its terminator, so a NUL still follows the
 /// longer replacement. An already-`commercial` image is a successful no-op.
 pub fn patch_proinfo_channel(input: &Path, output: &Path) -> Result<bool> {
     const FROM: &[u8] = b"consumer";
@@ -638,16 +622,11 @@ fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
 
 /// In-place same-length pattern substitution; returns the replacement count.
 ///
-/// Mutates `data` directly (no per-pattern clone) and counts matches in the
-/// same pass, so a multi-pattern run over a large `vendor_boot` makes one
-/// scan per pattern instead of a count scan plus a clone-and-replace scan.
+/// Mutates `data` and counts matches in one pass per pattern.
 ///
-/// Unequal-length replacement would shift every byte after the match and
-/// break AVB digests of the containing image — safer to refuse than to let
-/// the caller ship a corrupt vendor_boot. Python v2 used `bytes.replace`,
-/// which accepts unequal lengths silently; returning an error here instead
-/// of asserting avoids taking down the GUI thread over a user-edited
-/// `config.json`.
+/// Unequal lengths would shift every following byte and break the image's AVB
+/// digests, so they are refused with an error (not a panic, which would take
+/// down the GUI thread over a user-edited `config.json`).
 fn replace_in_place(data: &mut [u8], from: &[u8], to: &[u8]) -> Result<usize> {
     if from.len() != to.len() {
         return Err(LtboxError::Patch(format!(

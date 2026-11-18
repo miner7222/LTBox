@@ -175,8 +175,8 @@ pub fn replace_vendor_boot_dtb(
         ))
     })?;
 
-    // This call performs the chip check before any output buffer or file is
-    // produced, then serializes the replacement only after it passes.
+    // The chip check runs before any output is produced; the replacement is
+    // serialized only after it passes.
     let target_chip = parse_fdt_gpu_info(&old_dtb[target.clone()])?.chip;
     let section_chip = if target_chip.is_none() {
         let chips = ranges

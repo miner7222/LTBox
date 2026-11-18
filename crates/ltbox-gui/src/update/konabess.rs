@@ -243,10 +243,9 @@ impl App {
                 let probable_dtb_index = result.prepared.probable_dtb_index;
                 self.konabess.prepared = Some(result.prepared);
                 if self.operation.direct_update.is_active() {
-                    // Defensive overlap: finish the existing inspection's EDL
-                    // cleanup instead of retaining a table the update modal
-                    // cannot let the user apply or cancel. CancelDone releases
-                    // the busy reservation before the updater may exit.
+                    // Defensive: a direct update is active, so keep no table the
+                    // user cannot apply or cancel; finish the EDL cleanup instead.
+                    // CancelDone releases the busy reservation before the updater exits.
                     return self.cancel_konabess_inspection();
                 }
                 self.konabess

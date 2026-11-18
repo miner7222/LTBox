@@ -1,7 +1,6 @@
 //! APatch / FolkPatch kernel patching via kptools-rs library.
 //!
-//! Replaces the v2 `kptools.exe unpack → -p → repack` subprocess chain
-//! with direct library calls inside `work_dir`.
+//! Calls the kptools library directly (unpack, patch, repack) inside `work_dir`.
 
 use fs_err as fs;
 use std::path::{Path, PathBuf};
@@ -67,11 +66,9 @@ fn patch_boot_impl(
     root_key: bool,
     log: &mut Vec<String>,
 ) -> Result<PathBuf> {
-    // kptools-base defaults LOG_ENABLE off so library embedders don't get
-    // `[+]`/`[?]`/`[-]` chatter on stderr unasked. We want it: stderr is
-    // tapped by the GUI's stdout_tap into the live log panel, and the
-    // per-step context is the only window into what kptools is doing
-    // mid-patch. Idempotent — safe to call per-invocation.
+    // kptools-base defaults LOG_ENABLE off. Enable it: the GUI's stdout_tap
+    // feeds stderr to the live log panel, the only view into kptools mid-patch.
+    // Idempotent.
     kptools::log::set_log_enable(true);
 
     let boot_in = work_dir.join("boot.img");
@@ -105,10 +102,8 @@ fn patch_boot_impl(
     bootimg::extract_kernel(&boot_in, &kernel_ori)
         .map_err(|e| LtboxError::Patch(format!("kptools extract_kernel failed: {e}")))?;
 
-    // Bail if kernel is already patched. `parse_image_patch_info` returns
-    // Ok for any kernel with a Linux banner (patched or pristine); only
-    // `preset_offset.is_some()` distinguishes the two, so an `is_ok()` check
-    // alone would flag every pristine stock image as already patched.
+    // Bail if already patched. `parse_image_patch_info` is Ok for any kernel with
+    // a Linux banner, so only `preset_offset.is_some()` tells patched from pristine.
     {
         let kimg_bytes = fs::read(&kernel_ori)?;
         if let Ok(info) = patch::parse_image_patch_info(&kimg_bytes)
@@ -119,9 +114,9 @@ fn patch_boot_impl(
             ));
         }
 
-        // CONFIG_KALLSYMS gate: kptools needs symbol resolution; patching without it bricks.
-        // Detect via raw byte search in the IKCONFIG payload (default for Android kernels).
-        // Absent IKCONFIG → inconclusive, warn but don't block.
+        // CONFIG_KALLSYMS gate: kptools needs symbol resolution, and patching
+        // without it bricks. Detected by byte search in the IKCONFIG payload;
+        // absent IKCONFIG is inconclusive (warn, don't block).
         let has_kallsyms = kimg_bytes
             .windows(b"CONFIG_KALLSYMS=y".len())
             .any(|w| w == b"CONFIG_KALLSYMS=y");
@@ -318,24 +313,17 @@ mod tests {
         assert!(msg.contains("missing kpimg"), "unexpected: {msg}");
     }
 
-    /// Regression guard: `parse_image_patch_info(..).is_ok()` alone is true on
-    /// **every** kernel with a Linux banner, including pristine stock images,
-    /// so the already-patched check must key on `preset_offset.is_some()`.
-    ///
-    /// This test asserts the patch-info parser reports
-    /// `preset_offset = None` on a known-pristine boot image. The image
-    /// path is supplied via the `LTBOX_TEST_PRISTINE_BOOT_IMG`
-    /// environment variable so no developer-local path lives in the
-    /// source tree. Gated behind `#[ignore]` so CI (which doesn't ship
-    /// firmware) skips it. Run locally with
+    /// Regression guard: `parse_image_patch_info(..).is_ok()` is true on every
+    /// kernel with a Linux banner, pristine ones included, so the already-patched
+    /// check must key on `preset_offset.is_some()`. Asserts `preset_offset = None`
+    /// on the pristine boot image named by `LTBOX_TEST_PRISTINE_BOOT_IMG`;
+    /// `#[ignore]`d because CI ships no firmware. Run locally with
     ///
     ///     LTBOX_TEST_PRISTINE_BOOT_IMG=/path/to/boot.img \
-    ///         cargo test -p ltbox-patch -- --ignored tb322
+    ///         cargo test -p ltbox-patch -- --ignored pristine_boot_not_flagged_as_patched
     ///
-    /// (or `set LTBOX_TEST_PRISTINE_BOOT_IMG=...` on Windows cmd, or
-    /// `$env:LTBOX_TEST_PRISTINE_BOOT_IMG="..."` in PowerShell.)
-    /// See `ObsidianVault/05_Agent_Onboarding.md` for the full env-var
-    /// list.
+    /// (`set VAR=...` on Windows cmd, `$env:VAR="..."` in PowerShell.) See
+    /// `ObsidianVault/05_Agent_Onboarding.md` for the full env-var list.
     #[test]
     #[ignore = "needs LTBOX_TEST_PRISTINE_BOOT_IMG=/path/to/boot.img"]
     fn pristine_boot_not_flagged_as_patched() {

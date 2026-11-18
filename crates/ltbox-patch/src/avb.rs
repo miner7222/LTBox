@@ -128,9 +128,8 @@ pub struct AvbImageInfo {
     pub salt: Option<Vec<u8>>,
     pub public_key_sha1: Option<String>,
     pub props: Vec<(String, Vec<u8>)>,
-    // Keep the compatibility evidence gathered while the complete descriptor
-    // set is available. The footer API cannot recover it from the modeled
-    // fields later, after an image has already been copied or patched.
+    // Recorded now because the footer API cannot recover it from the modeled
+    // fields once the image has been copied or patched.
     source_image_path: PathBuf,
     hash_descriptor_algorithm: Option<String>,
     hash_descriptor_count: usize,
@@ -139,12 +138,12 @@ pub struct AvbImageInfo {
 
 /// The Android build fingerprint embedded in an image's AVB property
 /// descriptors (`com.android.build.<part>.fingerprint`, e.g.
-/// `qti/TB323FU/...:user/release-keys`), if present. Used to identify the
-/// firmware an image belongs to.
+/// `qti/TB323FU/...:user/release-keys`), if present. Identifies the firmware an
+/// image belongs to.
 ///
-/// Custom ROMs name the device codename rather than the model in most of these
-/// values, while a few (a stock vendor blob, `pvmfw`) keep the model token, so
-/// the choice prefers one that names a known model:
+/// Custom ROMs mostly carry the device codename instead of the model, while a
+/// few props (a stock vendor blob, `pvmfw`) keep the model token, so the pick
+/// prefers a value that names a known model:
 /// 1. `com.android.build.system.fingerprint` (carried by vbmeta_system, the
 ///    unified identity source) when it names a known model;
 /// 2. otherwise the first `.fingerprint` prop, in descriptor order, that does;
@@ -296,10 +295,9 @@ pub struct ChainPartitionDescriptor {
 
 /// The chain partition descriptors a vbmeta image declares, in descriptor order
 /// (e.g. `boot`, `recovery`, `vbmeta_system`). Drives a layout-aware re-sign:
-/// only the partitions this vbmeta actually chains are re-signed and have their
-/// chain partition descriptor public keys updated, and each carries its
-/// `DO_NOT_USE_AB` flag so the caller targets the right GPT label — so a package
-/// without (say) recovery, or with non-A/B chains, still works.
+/// only partitions this vbmeta chains are re-signed and get their chain public
+/// keys updated, and each carries its `DO_NOT_USE_AB` flag so the caller flashes
+/// the right GPT label. Packages without recovery or with non-A/B chains work.
 pub fn chain_partition_descriptors(vbmeta_path: &Path) -> Result<Vec<ChainPartitionDescriptor>> {
     // libavb `AVB_CHAIN_PARTITION_DESCRIPTOR_FLAGS_DO_NOT_USE_AB`.
     const DO_NOT_USE_AB: u32 = 1;
@@ -323,10 +321,9 @@ pub fn chain_partition_descriptors(vbmeta_path: &Path) -> Result<Vec<ChainPartit
 }
 
 /// The Hash descriptor an image declares for `partition_name` — from a vbmeta
-/// image (where it is the digest vbmeta pins) or from a partition image's own
-/// footer. Comparing the two proves a rebuilt vbmeta actually adopted the
-/// image it was rebuilt from, instead of carrying a stale digest the
-/// bootloader would reject.
+/// image (the digest vbmeta pins) or from a partition image's own footer.
+/// Comparing the two proves a rebuilt vbmeta adopted the image it was rebuilt
+/// from rather than keeping a stale digest the bootloader would reject.
 pub fn hash_descriptor(
     image: &Path,
     partition_name: &str,
@@ -369,8 +366,8 @@ pub fn verify_root_backup(image: &Path, vbmeta: Option<&Path>, partition: &str) 
             "Root backup filename does not match its partition".into(),
         ));
     }
-    // The upstream verifier resolves descriptors through sibling filenames.
-    // Restrict this self-check to the selected root image, never arbitrary paths.
+    // The upstream verifier resolves descriptors via sibling filenames; limit
+    // this self-check to the selected root image.
     if info.descriptors.iter().any(|d| matches!(d,
         avbtool_rs::info::DescriptorInfo::Hash { partition_name, .. } if partition_name != partition)
         || matches!(d, avbtool_rs::info::DescriptorInfo::Hashtree { .. } | avbtool_rs::info::DescriptorInfo::ChainPartition { .. })) {
@@ -404,8 +401,7 @@ pub fn verify_root_backup(image: &Path, vbmeta: Option<&Path>, partition: &str) 
 }
 
 /// The AVB algorithm name for a signing-key spec (bundled name or PEM path),
-/// e.g. `testkey_rsa4096` -> `SHA256_RSA4096`, derived from the key's size. Used
-/// to keep a rebuild's algorithm consistent with a key override.
+/// e.g. `testkey_rsa4096` -> `SHA256_RSA4096`, derived from the key's size.
 pub fn algorithm_for_key_spec(key_spec: &str) -> Option<String> {
     let key = avbtool_rs::crypto::load_key_from_spec(key_spec).ok()?;
     key.algorithm().ok()
@@ -439,10 +435,9 @@ pub fn max_hash_footer_image_size(partition_size: u64) -> Result<u64> {
 }
 
 /// Rebuild `vbmeta.img` using the original as a template, refreshing matching
-/// Hash / Hashtree descriptors imported from those embedded in
-/// `partition_images`. The chain partition descriptors and public keys remain
-/// unchanged. Partition images must already contain current descriptors; this
-/// does not add or update hash/hashtree footers on partition images.
+/// Hash / Hashtree descriptors from `partition_images`. Chain partition
+/// descriptors and public keys are unchanged. Partition images must already
+/// carry current descriptors; no footers are added or updated on them.
 /// `key_spec` follows the [`resign_image`] convention.
 pub fn rebuild_vbmeta_with_partition_descriptors(
     output_path: &Path,
@@ -471,9 +466,8 @@ fn descriptor_values_match(
     if expected.len() != actual.len() {
         return false;
     }
-    // The builder sorts descriptors. Compare values and multiplicity, retaining
-    // duplicate properties and unknown descriptors rather than treating them
-    // as a set or requiring their original positions.
+    // The builder sorts descriptors, so compare values with multiplicity
+    // (duplicate properties, unknown descriptors), not as a set or by position.
     let mut remaining: Vec<_> = expected.iter().collect();
     for descriptor in actual {
         let Some(index) = remaining.iter().position(|value| *value == descriptor) else {
@@ -537,14 +531,11 @@ pub fn rebuild_root_vbmeta_owner(
 /// keys** of `chain_partition_names` to `chain_key_spec`'s public key.
 ///
 /// Needed when chained partitions (boot / recovery / vbmeta_system) are
-/// re-signed with a different key than the stock one: their chain partition
-/// descriptors in vbmeta carry the *public key*, so the bootloader rejects
-/// the re-signed images unless vbmeta points at the new key. Unlike
-/// [`rebuild_vbmeta_with_partition_descriptors`] (which only refreshes Hash /
-/// Hashtree descriptors imported from partition images and leaves chain
-/// pubkeys untouched), this rewrites the chain partition descriptors. Hash /
-/// Hashtree descriptors and properties for untouched partitions are preserved
-/// verbatim.
+/// re-signed with a non-stock key: their chain descriptors in vbmeta carry the
+/// *public key*, so the bootloader rejects the images unless vbmeta points at
+/// the new one. Unlike [`rebuild_vbmeta_with_partition_descriptors`], this
+/// rewrites the chain descriptors; Hash / Hashtree descriptors and properties
+/// of untouched partitions are preserved verbatim.
 pub fn rebuild_vbmeta_with_chain_key_overrides(
     output_path: &Path,
     original_vbmeta_path: &Path,
@@ -598,9 +589,8 @@ pub fn rebuild_vbmeta_with_chain_key_overrides(
                     flags: *flags,
                 });
             }
-            // Hash / Hashtree / KernelCmdline / Unknown carried through
-            // verbatim (KernelCmdline via extra_descriptors, not the
-            // builder's `kernel_cmdlines` Vec<String>, so its flags survive).
+            // Carried through verbatim; KernelCmdline goes via extra_descriptors
+            // (not `kernel_cmdlines`) so its flags survive.
             DescriptorInfo::Hash { .. }
             | DescriptorInfo::Hashtree { .. }
             | DescriptorInfo::KernelCmdline { .. }
@@ -650,9 +640,9 @@ fn preserve_original_vbmeta_size(output_path: &Path, original_vbmeta_path: &Path
 }
 
 /// Restore the complete signed stock blob without changing its authenticated
-/// descriptors. GBL tolerates the stale content digest, but requires the stock
-/// key and internally consistent authentication data. Keep the repacked payload
-/// boundary and relocate only the blob; never copy the stock payload size back.
+/// descriptors. GBL tolerates the stale content digest but requires the stock
+/// key and consistent authentication data. Keeps the repacked payload boundary
+/// and relocates only the blob; never copies the stock payload size back.
 pub fn preserve_stock_vbmeta(stock: &Path, repacked: &Path) -> Result<()> {
     use avbtool_rs::parser::{AVB_FOOTER_SIZE, AvbFooter};
     use std::io::{Read, Seek, SeekFrom, Write};
@@ -684,8 +674,8 @@ pub fn preserve_stock_vbmeta(stock: &Path, repacked: &Path) -> Result<()> {
         ));
     }
     footer.vbmeta_size = blob.len() as u64;
-    // All bounds are checked before modifying the output. Truncate old metadata
-    // and zero-fill padding so a larger repacked blob cannot leave stale bytes.
+    // Bounds are checked before the output is modified. Old metadata is truncated
+    // and padding zero-filled so no stale bytes survive.
     file.set_len(footer.vbmeta_offset)?;
     file.seek(SeekFrom::Start(footer.vbmeta_offset))?;
     file.write_all(&blob)?;
@@ -706,8 +696,8 @@ pub fn add_hash_footer(
     const HASH_ALGORITHM: &str = "sha256";
 
     let rollback = new_rollback_index.unwrap_or(info.rollback_index);
-    // Must bail loudly — the embedded Hash descriptor records partition_name,
-    // and the bootloader refuses to mount if it doesn't match the recorded name.
+    // Must bail loudly: the Hash descriptor records partition_name and the
+    // bootloader refuses a partition whose name differs.
     let name = info.partition_name.as_deref().ok_or_else(|| {
         LtboxError::Avb(format!(
             "Cannot add AVB hash footer to {}: no partition_name in AVB info (source image has no Hash/Hashtree descriptor)",
@@ -716,8 +706,8 @@ pub fn add_hash_footer(
     })?;
 
     // avbtool-rs cannot carry arbitrary source descriptors through this footer
-    // API. Refuse the rebuild while the destination is still untouched instead
-    // of quietly producing metadata that no longer matches the source image.
+    // API; refuse while the destination is untouched rather than emit metadata
+    // that no longer matches the source.
     if let Some(kind) = info.unreproducible_descriptor_kinds.first() {
         return Err(LtboxError::Avb(format!(
             "Cannot add AVB hash footer to {}: source image {} contains a {kind} descriptor, which the hash-footer rebuild cannot reproduce",

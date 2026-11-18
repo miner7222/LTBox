@@ -61,13 +61,12 @@ pub fn cpio_checked(work_dir: &Path, cpio_file: &str, commands: &[&str]) -> Resu
 
 /// CPIO operations with extra env vars set for the duration of the call.
 ///
-/// Required for `cpio … patch` on Magisk/KernelSU/APatch flows: magiskboot's
-/// patcher reads `KEEPVERITY` / `KEEPFORCEENCRYPT` from the process env at
-/// call time. Without them magiskboot defaults to *stripping* dm-verity and
-/// forceencrypt fstab flags — the opposite of what stock-preserving root
-/// wants. Overrides apply only to the isolated child process.
+/// Required for `cpio … patch` on ramdisk-root flows: magiskboot reads
+/// `KEEPVERITY` / `KEEPFORCEENCRYPT` from the process env, and without them
+/// *strips* dm-verity and forceencrypt fstab flags. The overrides apply only to
+/// the isolated child process.
 ///
-/// Always checked: patch is a mutation, a non-zero rc means nothing to repack.
+/// Always checked: a non-zero rc from `patch` means there is nothing to repack.
 pub fn cpio_with_env(
     work_dir: &Path,
     cpio_file: &str,

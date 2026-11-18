@@ -54,10 +54,6 @@ pub(crate) const LANGUAGES: &[Language] = &[
     Language::Fr,
 ];
 
-// =========================================================================
-// Translations
-// =========================================================================
-
 const EN_JSON: &str = include_str!("../lang/en.json");
 const KO_JSON: &str = include_str!("../lang/ko.json");
 const ZH_JSON: &str = include_str!("../lang/zh.json");
@@ -65,8 +61,7 @@ const RU_JSON: &str = include_str!("../lang/ru.json");
 const JA_JSON: &str = include_str!("../lang/ja.json");
 const FR_JSON: &str = include_str!("../lang/fr.json");
 
-// Parsed once on first access; `Translations::load` then swaps two
-// `&'static` refs — no reparse on language switch.
+// Parsed once on first access, so switching language never reparses.
 static EN_TABLE: std::sync::LazyLock<HashMap<String, String>> =
     std::sync::LazyLock::new(|| serde_json::from_str(EN_JSON).expect("en.json must parse"));
 static KO_TABLE: std::sync::LazyLock<HashMap<String, String>> =
@@ -80,8 +75,8 @@ static JA_TABLE: std::sync::LazyLock<HashMap<String, String>> =
 static FR_TABLE: std::sync::LazyLock<HashMap<String, String>> =
     std::sync::LazyLock::new(|| serde_json::from_str(FR_JSON).expect("fr.json must parse"));
 
-/// Active translation table + English fallback. Two `&'static` refs
-/// into the process-wide `LazyLock` tables, so reload is free.
+/// Active translation table plus the English fallback, as `&'static` refs into
+/// the `LazyLock` tables.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Translations {
     pub(crate) primary: &'static HashMap<String, String>,
@@ -117,8 +112,8 @@ impl Default for Translations {
     }
 }
 
-/// Wire the language tables into `ltbox_core::i18n` so backend crates
-/// still produce localized log output.
+/// Route `ltbox_core::i18n` lookups through these tables so backend crates log
+/// in the active language.
 pub(crate) fn install_core_translator(lang: Language) {
     let tr = Translations::load(lang);
     ltbox_core::i18n::set_translator(move |key| tr.t(key).to_string());

@@ -30,13 +30,11 @@ pub(crate) fn sysupdate_worker(
     {
         return Err(error);
     }
-    // Disable/Enable need a running Android shell; Rescue needs EDL. A
-    // device sitting in Fastboot or EDL is still recoverable, so bridge it:
-    //   * Disable/Enable: from Fastboot, `fastboot continue` and wait for
-    //     ADB; from EDL there is no automatic system-boot path, so the user
-    //     must reboot manually.
-    //   * Rescue: hand off to `transition_to_edl`, which already handles
-    //     all three source modes via `ensure_edl`.
+    // Disable/Enable need a running Android shell; Rescue needs EDL. A device in Fastboot or EDL is
+    // still recoverable, so bridge it:
+    //   * Disable/Enable: from Fastboot, `fastboot continue` and wait for ADB; from EDL there is no
+    //     automatic system-boot path, so the user must reboot manually.
+    //   * Rescue: hand off to `transition_to_edl`, which handles all three source modes.
     if action != SysUpdateAction::Rescue {
         ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(1));
     }
@@ -51,12 +49,9 @@ pub(crate) fn sysupdate_worker(
         }
     }
     let mut adb = ltbox_device::adb::AdbManager::new();
-    // Disable/Enable need ADB. Wait up to 120 s
-    // (matches `AdbManager::wait_for_device`'s
-    // internal cap) so a fastboot→system reboot
-    // has time to land before we surface a hard
-    // failure. Rescue skips this — its own bridge
-    // below routes to EDL, where ADB isn't needed.
+    // Disable/Enable need ADB. Wait up to 120 s (matches `AdbManager::wait_for_device`'s internal
+    // cap) so a Fastboot->system reboot can land before a hard failure. Rescue skips this: its own
+    // bridge below routes to EDL, where ADB isn't needed.
     if action != SysUpdateAction::Rescue {
         ltbox_core::live!(
             log,
@@ -88,9 +83,8 @@ pub(crate) fn sysupdate_worker(
     ];
     match action {
         SysUpdateAction::Disable => {
-            // Command echoes (`$ settings put …` / `$ pm clear …`)
-            // were noise — the user only needs to see the outcome
-            // (Uninstalled / Reinstalled / failure). Suppressed.
+            // Command echoes (`$ settings put ...` / `$ pm clear ...`) are suppressed; the user only needs
+            // the outcome (Uninstalled / Reinstalled / failure).
             ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(2));
             phases.mark_writes_started();
             adb.shell("settings put global ota_disable_automatic_update 1")
@@ -136,7 +130,7 @@ pub(crate) fn sysupdate_worker(
             Ok(log)
         }
         SysUpdateAction::Enable => {
-            // Command echoes suppressed — same rationale as Disable.
+            // Command echoes suppressed, as for Disable.
             ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(2));
             phases.mark_writes_started();
             adb.shell("settings put global ota_disable_automatic_update 0")
@@ -179,8 +173,7 @@ pub(crate) fn sysupdate_worker(
         }
         SysUpdateAction::Rescue => {
             ltbox_core::live!(log, "[Rescue] {}", phases.marker(1));
-            // Precondition: loader file + region
-            // picked in the wizard.
+            // Precondition: loader file + region picked in the wizard.
             let Some(loader_path) = rescue_folder else {
                 return Err(ltbox_core::i18n::tr("err_rescue_loader_not_selected"));
             };
@@ -194,11 +187,9 @@ pub(crate) fn sysupdate_worker(
                     path = loader.display().to_string()
                 ));
             }
-            // Extension-only check — accept `.melf` /
-            // `.mbn` / `.elf` single-blob loaders, the
-            // `.xml` multi-image manifest, or its
-            // encrypted `.x` form (decrypted in
-            // `EdlSession::open`). Filename is free-form.
+            // Extension-only check: accept `.melf` / `.mbn` / `.elf` single-blob loaders, the `.xml`
+            // multi-image manifest, or its encrypted `.x` form (decrypted in `EdlSession::open`). The
+            // filename is free-form.
             let ext_ok = loader
                 .extension()
                 .and_then(|e| e.to_str())
@@ -234,11 +225,8 @@ pub(crate) fn sysupdate_worker(
                 )
             );
 
-            // Stage dumps + patched outputs in a
-            // timestamped temp dir next to the
-            // loader so the user's loader directory
-            // doesn't get cluttered with rescue
-            // intermediates.
+            // Stage dumps + patched outputs in a timestamped temp dir next to the loader, so the loader
+            // directory isn't cluttered with rescue intermediates.
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -265,18 +253,15 @@ pub(crate) fn sysupdate_worker(
                 "[Rescue] {}",
                 ltbox_core::i18n::tr("live_rescue_transitioning")
             );
-            // Use the shared `transition_to_edl` helper so Rescue handles
-            // every source mode (ADB / Fastboot / EDL) the same way
-            // Flash / Root / Unroot already do.
+            // The shared `transition_to_edl` handles every source mode (ADB / Fastboot / EDL), as for
+            // Flash / Root / Unroot.
             transition_to_edl(conn, &mut log)?;
 
             ltbox_core::live!(log, "[Rescue] {}", phases.marker(3));
             let mut session = open_edl_session(&loader, &mut log)?;
 
-            // vendor_boot + vbmeta resolve through the
-            // shared partition LUN map (LUN 4 on supported
-            // models). GPT-by-name resolves sector geometry,
-            // no rawprogram*.xml needed.
+            // vendor_boot + vbmeta resolve through the shared partition LUN map (LUN 4 on supported
+            // models); GPT-by-name resolves sector geometry, so no rawprogram*.xml is needed.
             let slots = ["a", "b"];
             let mut dumped: Vec<(String, String, std::path::PathBuf)> = Vec::new();
             ltbox_core::live!(log, "[Rescue] {}", phases.marker(4));
@@ -317,23 +302,17 @@ pub(crate) fn sysupdate_worker(
                 }
             }
 
-            // Model-agnostic safety net for the EDL-first
-            // path where `device_model` is unknown so the
-            // TB323FU action gate can't fire: if none of
-            // vendor_boot/vbmeta resolved via the shared
-            // LUN map + GPT, the device doesn't have the
-            // layout Boot Recovery assumes. Abort before
-            // any write — nothing was flashed.
+            // Model-agnostic safety net for the EDL-first path, where `device_model` is unknown and the
+            // rescue capability gate can't fire: if neither vendor_boot nor vbmeta resolved via the LUN map +
+            // GPT, the device lacks the layout Boot Recovery assumes. Abort before any write; nothing was
+            // flashed.
             if dumped.is_empty() {
                 return Err(ltbox_core::i18n::tr("err_rescue_unsupported_layout"));
             }
 
-            // Cross-check firmware against device
-            // model via AVB vendor_boot fingerprint —
-            // aborts the whole rescue if the dumped
-            // image was built for another model. Uses
-            // the first available vendor_boot dump;
-            // slot A/B carry the same fingerprint.
+            // Cross-check the firmware against the device model via the AVB vendor_boot fingerprint; abort
+            // the whole rescue if the dumped image was built for another model. Uses the first available
+            // vendor_boot dump (slots A/B carry the same fingerprint).
             if let Some(vb_probe) = dumped.iter().find(|(b, _, _)| b == "vendor_boot") {
                 match ltbox_patch::avb::extract_image_avb_info(&vb_probe.2) {
                     Ok(info) => {
@@ -496,9 +475,7 @@ pub(crate) fn sysupdate_worker(
                     );
                 }
 
-                // Rebuild AVB hash footer on the
-                // patched vendor_boot using metadata
-                // from the original.
+                // Rebuild the AVB hash footer on the patched vendor_boot using the original's metadata.
                 let vb_info = match ltbox_patch::avb::extract_image_avb_info(&vb_src.2) {
                     Ok(i) => i,
                     Err(e) => {
@@ -514,8 +491,7 @@ pub(crate) fn sysupdate_worker(
                         continue;
                     }
                 };
-                // Only the two stock test keys embedded in
-                // avbtool-rs are supported.
+                // Only the two stock test keys embedded in avbtool-rs are supported.
                 let vb_key_spec =
                     ltbox_patch::key_map::key_spec_for_pubkey(vb_info.public_key_sha1.as_deref());
                 if let Err(e) =
@@ -533,10 +509,8 @@ pub(crate) fn sysupdate_worker(
                     continue;
                 }
 
-                // Refresh matching vbmeta descriptors from those embedded in
-                // the patched vendor_boot. Key fallback:
-                // algorithm comes from the original
-                // vbmeta header.
+                // Refresh the matching vbmeta descriptors from those embedded in the patched vendor_boot. The
+                // algorithm comes from the original vbmeta header.
                 let vbm_info = match ltbox_patch::avb::extract_image_avb_info(&vbm_src.2) {
                     Ok(i) => i,
                     Err(e) => {

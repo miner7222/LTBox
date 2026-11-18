@@ -162,8 +162,8 @@ fn about_license_messages_open_and_close_the_dialog() {
 
 #[test]
 fn an_empty_partition_scan_is_an_error_in_both_wizards() {
-    // Read Partitions reported it; Flash Partitions silently sat on the
-    // loader step with an empty table and no explanation.
+    // Both wizards must report it rather than sit on the loader step with an
+    // empty table and no explanation.
     let app = App::default();
     assert!(app.parts_scan_outcome(None, true).is_some());
     assert!(app.parts_scan_outcome(None, false).is_none());
@@ -177,9 +177,8 @@ fn an_empty_partition_scan_is_an_error_in_both_wizards() {
 
 #[test]
 fn a_refused_loader_pick_clears_the_path_and_blocks_next() {
-    // Guards against a per-wizard hand-rolled version of this check that
-    // left a stale loader_path in place on a bad pick and did not gate
-    // Next on the error, letting a wizard advance on a refused loader.
+    // Guards against a stale loader_path surviving a bad pick, or Next not
+    // being gated on the error, letting a wizard advance on a refused loader.
     let dir = tempfile::tempdir().unwrap();
     let good = dir.path().join("xbl_s_devprg_ns.melf");
     std::fs::write(&good, b"loader").unwrap();
@@ -480,9 +479,8 @@ fn a_firmware_folder_with_an_incomplete_manifest_demands_its_own_loader() {
 #[test]
 fn root_and_unroot_loader_steps_upgrade_a_tb323fu_melf_to_the_manifest() {
     // Guards against Root/Unroot assigning the raw picked path instead of
-    // routing through `resolve_loader_input` like every other wizard,
-    // which would let a TB323FU `.melf` reach the Sahara handshake
-    // without the manifest it needs.
+    // going through `resolve_loader_input`, which would let a manifest-route
+    // model's `.melf` reach Sahara without its manifest.
     let dir = tempfile::tempdir().unwrap();
     let melf = dir.path().join("xbl_s_devprg_ns.melf");
     std::fs::write(&melf, b"loader").unwrap();
@@ -528,7 +526,7 @@ fn root_and_unroot_loader_steps_upgrade_a_tb323fu_melf_to_the_manifest() {
         Some(want.as_str())
     );
 
-    // A non-TB323FU keeps the .melf it was given.
+    // A model without `requires_sahara_manifest` keeps the .melf it was given.
     let mut other = App {
         device: DeviceSnapshot {
             model: "TB320FC".to_string(),
@@ -955,10 +953,8 @@ fn advanced_in_progress_gates_partition_table_on_edl() {
     app.advanced_wizard_open = AdvancedWizardOpen::None;
     assert!(!app.advanced_in_progress());
 
-    // Exec / result surface preserves until 'start over': a Simple Flash on
-    // its confirm step (folder picked) AND on its exec/result step (>=2)
-    // both survive a sidebar bounce; the intro step (0, after 'start over')
-    // resets.
+    // Simple Flash survives a sidebar bounce on its confirm step (folder
+    // picked) and on its exec/result step (>=2); the intro step (0) resets.
     let mut app = App {
         advanced_wizard_open: AdvancedWizardOpen::SimpleFlash,
         ..App::default()
@@ -1054,10 +1050,6 @@ fn every_operation_phase_label_exists_in_every_locale() {
         }
     }
 }
-
-// =========================================================================
-// Wizard state-machine tests
-// =========================================================================
 
 #[test]
 fn flash_wizard_next_back_round_trip() {
@@ -2296,7 +2288,7 @@ fn country_patch_progress_requires_all_expected() {
 
 #[test]
 fn country_patch_progress_oemowninfo_expected() {
-    // TB320FC / TB323FU patch oemowninfo + persist instead of devinfo.
+    // Some models (e.g. TB320FC, TB323FU) patch oemowninfo + persist, not devinfo.
     let mut progress = CountryPatchProgress::new(&["oemowninfo", "persist"]);
     progress.mark_flashed("oemowninfo");
     progress.mark_flashed("persist");

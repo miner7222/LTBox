@@ -1,4 +1,4 @@
-//! Root-wizard handler (family/mode/provider/version, confirm, exec). Extracted from `main.rs`.
+//! Root-wizard handler (family/mode/provider/version, confirm, exec).
 
 use crate::*;
 use iced::Task;
@@ -7,11 +7,9 @@ use ltbox_core::tr_args;
 impl App {
     /// What to call this root run in the log.
     ///
-    /// Family alone does not identify the route: Magisk and Magisk forks are
-    /// both the Magisk family but take different pipelines, so a report saying
-    /// only "Magisk" left the actual route to guesswork. The provider is set
-    /// exactly on the routes where it means something — GKI and SKRoot never
-    /// reach a provider picker — so append it whenever there is one.
+    /// Family alone does not identify the route: Magisk and Magisk forks share
+    /// a family but take different pipelines. The provider is set only where it
+    /// means something (GKI and SKRoot have none), so append it when present.
     fn root_route_label(&self) -> String {
         let family = self
             .root
@@ -81,9 +79,8 @@ impl App {
                 Task::none()
             }
             RootMsg::RootSkrootFlavor(flavor) => {
-                // Pro stays visible in the UI to set expectations, but
-                // stale messages must not advance the wizard into a route
-                // with no patch implementation.
+                // Pro is shown but has no patch implementation; drop stale
+                // messages so the wizard cannot enter that route.
                 if flavor == SkrootFlavor::Pro {
                     return Task::none();
                 }
@@ -144,11 +141,8 @@ impl App {
             RootMsg::RootSelectFile => {
                 self.picker_target = PickerTarget::RootFile;
                 let spec = if self.root.is_gki() {
-                    // GKI route accepts both an AnyKernel3 zip and a raw
-                    // boot.img — the patcher branches on the extension
-                    // (`gki::patch_boot` unpacks the .img with
-                    // magiskboot in a scratch subdir to pull the kernel
-                    // out, then reuses the existing repack path).
+                    // GKI accepts an AnyKernel3 zip or a donor boot.img;
+                    // `gki::patch_boot` branches on the extension.
                     pickers::FilePickSpec::single().with_filter("Kernel image", &["zip", "img"])
                 } else {
                     pickers::FilePickSpec::single().with_filter("APK", &["apk"])
@@ -157,8 +151,8 @@ impl App {
             }
             RootMsg::RootSelectFolder => {
                 // `folder_path` holds a single EDL loader file, not a folder.
-                // Always the picker: a remembered loader skips this step
-                // entirely, so arriving here means the user wants to choose.
+                // Always the picker: arriving here after a remembered loader
+                // would have skipped the step means the user wants to choose.
                 self.pick_loader(|__v| Message::Root(RootMsg::RootLoaderChosen(__v)))
             }
             RootMsg::RootLoaderChosen(path) => {
@@ -235,21 +229,16 @@ impl App {
                 }
                 if self.root.step == 6 {
                     if self.root.needs_ksu_lkm_kernel_version() {
-                        // Reserve the global busy op *before* the blocking
-                        // ADB probe so concurrent flash/root/reboot starts
-                        // cannot race it, and so a late
-                        // `RootKernelVersionProbeDone` cannot auto-launch
-                        // over a different live operation. Use silent busy
-                        // (empty `op_steps`) so the probe is distinguishable
-                        // from a phased Root exec that already owns `busy`.
+                        // Reserve the busy op before the blocking ADB probe so other
+                        // starts cannot race it and a late `RootKernelVersionProbeDone`
+                        // cannot launch over a different operation. Silent (empty
+                        // steps) to tell it apart from a phased Root exec.
                         if self.operation.is_running() {
                             return Task::none();
                         }
                         self.begin_silent_op(View::Root);
-                        // ADB probe is blocking — push to the heavy pool so
-                        // the UI doesn't freeze on a slow / unresponsive
-                        // device. Continuation lands in
-                        // `RootKernelVersionProbeDone`.
+                        // Blocking ADB probe runs on the heavy pool so a slow device
+                        // cannot freeze the UI; continues in `RootKernelVersionProbeDone`.
                         return task_heavy(
                             || {
                                 ltbox_device::adb::AdbManager::new_if_connected().and_then(
@@ -273,8 +262,8 @@ impl App {
                     return self.update(Message::Root(RootMsg::RootExecStart));
                 }
                 self.root.next();
-                // Skip the loader step when this model has a usable
-                // remembered loader. Back still lands on it.
+                // Skip the loader step when the model has a usable remembered
+                // loader; Back still lands on it.
                 if self.root.step == 5
                     && self.root.folder_path.is_none()
                     && let Some(path) = self.remembered_loader_for_model()
@@ -347,8 +336,7 @@ impl App {
                 Task::none()
             }
             RootMsg::RootSelectKpm => {
-                // Multi-select; paths merge-dedup into the list so
-                // the user can Browse multiple times.
+                // Multi-select; paths merge into the list, deduplicated.
                 let spec = pickers::FilePickSpec::multi().with_filter("KPM modules", &["kpm"]);
                 pickers::pick_files_for(spec, &self.recent_paths, |__v| {
                     Message::Root(RootMsg::RootKpmSelected(__v))
@@ -431,19 +419,17 @@ impl App {
                 Task::none()
             }
             RootMsg::RootKernelVersionProbeDone(detected) => {
-                // Only continue while *this* probe still owns the silent
-                // Root busy reservation. A phased Root exec (non-empty
-                // `op_steps`), a cleared busy flag, or a different
-                // `busy_view` means the result is stale — never auto-launch.
+                // Continue only while this probe still owns the silent Root busy
+                // reservation; a phased Root exec, cleared busy flag or different
+                // view means the result is stale.
                 let probe_still_ours = self.operation.is_running()
                     && self.operation.view() == Some(View::Root)
                     && self.operation.steps.is_empty();
                 if !probe_still_ours {
                     return Task::none();
                 }
-                // Wizard may have moved off step 6 by the time the probe
-                // returns (user clicked Back); release the reservation and
-                // drop the result if we are no longer at the same gate.
+                // The user may have gone Back off step 6; release the reservation
+                // and drop the result if the gate no longer applies.
                 if self.root.step != 6 || !self.root.needs_ksu_lkm_kernel_version() {
                     self.end_silent_op();
                     return Task::none();
@@ -451,9 +437,8 @@ impl App {
                 if let Some(kv) = detected {
                     self.root.kernel_version = Some(kv);
                     self.root.next();
-                    // Drop the probe reservation *before* RootExecStart's
-                    // begin_phased_op so the phased root op starts cleanly
-                    // with no nested/overlapping busy ownership.
+                    // Release before RootExecStart's begin_phased_op so busy
+                    // ownership does not nest.
                     self.end_silent_op();
                     return self.update(Message::Root(RootMsg::RootExecStart));
                 }
@@ -464,9 +449,8 @@ impl App {
                 Task::none()
             }
             RootMsg::RootExecStart => {
-                // Refuse to start while any busy op is live (including a
-                // still-held KSU probe reservation). Callers that own the
-                // probe path release it before re-entering here.
+                // Refuse while any op is live, including a held KSU probe
+                // reservation; callers owning it release it first.
                 if self.operation.is_running() {
                     return Task::none();
                 }
@@ -524,8 +508,7 @@ impl App {
                 let gui_kernel_version = self.root.kernel_version.clone();
                 let device_model = self.device.model.clone();
                 let conn = self.device.connection;
-                // Folder must contain `xbl_s_devprg_ns.melf`; optional
-                // `keys/testkey_rsa{2048,4096}.pem` as KEY_MAP fallback.
+                // The picked EDL loader file (see `RootSelectFolder`).
                 let fw_folder = self.root.folder_path.clone();
                 // APatch-only; empty / default elsewhere.
                 let kpm_paths: Vec<std::path::PathBuf> = self
@@ -541,10 +524,10 @@ impl App {
                     "[Root] {}",
                     tr_args!("log_op_starting", what = self.root_route_label())
                 ));
-                // Resolve Magisk preinit device via /proc/self/mountinfo
-                // before ADB vanishes past EDL. Gates /data on the device's
-                // encryption state — metadata-encrypted devices land preinit
-                // on userdata otherwise and boot-loop after first wipe.
+                // Resolve the Magisk preinit device from /proc/self/mountinfo
+                // while ADB is still up (it is gone once in EDL). The encryption
+                // state gates `/data`: block/metadata-encrypted devices must not
+                // get preinit on userdata.
                 let preinit_device: String = if matches!(family, Some(Family::Magisk))
                     && matches!(
                         self.device.connection,
@@ -960,8 +943,8 @@ mod tests {
 
     #[test]
     fn ksu_probe_done_detected_releases_probe_busy_before_exec() {
-        // Missing loader makes RootExecStart fail before begin_phased_op —
-        // proves the probe reservation is released and no nested busy remains.
+        // A missing loader makes RootExecStart fail before begin_phased_op,
+        // proving the probe reservation was released.
         let mut app = App {
             operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: {
@@ -1012,8 +995,8 @@ mod tests {
             }
             .root_route_label()
         };
-        // Magisk and Magisk Forks must produce distinguishable labels, or a
-        // user's log report can't tell which route actually ran.
+        // Magisk and Magisk Forks must label differently so a log report
+        // identifies the route.
         assert_ne!(
             label(Some(Provider::Magisk)),
             label(Some(Provider::MagiskForks))
@@ -1022,7 +1005,7 @@ mod tests {
             label(Some(Provider::MagiskForks))
                 .contains(ltbox_core::i18n::tr("provider_magisk_forks").as_str())
         );
-        // GKI and SKRoot never reach a provider picker; family stands alone.
+        // With no provider (as on GKI / SKRoot) the family stands alone.
         assert_eq!(label(None), ltbox_core::i18n::tr("family_magisk"));
     }
 }

@@ -100,12 +100,10 @@ impl App {
                     return self.update(Message::Unroot(UnrootMsg::UnrootExecStart));
                 }
                 self.unroot.next();
-                // If we just advanced onto the loader step and this model
-                // has a usable remembered loader, pre-fill it + skip straight
-                // to the folder step — matches the Root wizard's loader-skip
-                // pattern (see `RootNext` step-5 fill + advance). Back returns
-                // to the skipped step, and the fill is gated on `is_none()` so
-                // a loader chosen there is not overwritten on the way forward.
+                // On entering the loader step with a usable remembered loader,
+                // pre-fill it and skip to the folder step (as `RootNext` does at
+                // step 5). Back returns to the skipped step; `is_none()` keeps a
+                // loader picked there from being overwritten.
                 if self.unroot.step == 1
                     && self.unroot.loader_path.is_none()
                     && let Some(path) = self.remembered_loader_for_model()
@@ -142,12 +140,9 @@ impl App {
                 };
                 let conn = self.device.connection;
                 let device_model = self.device.model.clone();
-                // Loader is decoupled from the backup folder — `folder`
-                // holds boot.img + vbmeta.img, the loader can live
-                // anywhere (remembered for this model, or whatever the
-                // user pointed the picker at). `validate_loader_path`
-                // surfaces a missing-file error before the device-side
-                // work starts, matching the other wizards' behaviour.
+                // The loader is independent of the backup folder (`folder` holds
+                // boot.img + vbmeta.img). `validate_loader_path` reports a missing
+                // file before any device work starts.
                 let loader_override =
                     match self.validate_loader_path(&self.unroot.loader_path.clone()) {
                         Ok(p) => Some(p),

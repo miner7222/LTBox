@@ -63,9 +63,9 @@ pub(super) fn resolve_backup_contents(
         BackupRootTarget::Boot => ltbox_patch::root_pipeline::RootImageTarget::Boot,
         BackupRootTarget::InitBoot => ltbox_patch::root_pipeline::RootImageTarget::InitBoot,
     };
-    // Old fixed backup folders can retain vbmeta from another run. Apply the
-    // same participation rule as Root instead of trusting its mere presence
-    // or consuming the old manifest. Chained boot and TB323FU leave it alone.
+    // Old fixed backup folders can retain a vbmeta from another run. Apply the same participation
+    // rule as Root rather than trusting its presence or the old manifest. Chained boot and GBL-route
+    // models leave it alone.
     let restore_vbmeta = ltbox_patch::root_pipeline::root_run_rebuilds_vbmeta(target, device_model)
         && !ltbox_core::model::capabilities(device_model).root_uses_gbl;
     validate_backup_image(backup_dir, root_target.filename())?;

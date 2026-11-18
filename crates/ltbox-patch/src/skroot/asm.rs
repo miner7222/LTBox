@@ -1,6 +1,6 @@
-//! Minimal AArch64 instruction encoder — replaces the upstream asmjit
-//! dependency. Only the instruction forms the SKRoot Lite patches actually emit
-//! are implemented; each is a fixed-shape encoding from the ARM ARM.
+//! Minimal AArch64 instruction encoder standing in for upstream's asmjit. Only
+//! the forms the SKRoot Lite patches emit are implemented, each a fixed-shape
+//! encoding from the ARM ARM.
 //!
 //! Output is byte-accurate: [`Asm`] appends little-endian words (and arbitrary
 //! `embed`ed data) into one buffer, tracks byte offsets, and resolves
@@ -115,8 +115,6 @@ impl Asm {
         }
     }
 
-    // Moves.
-
     pub fn movz_x(&mut self, rd: u32, imm16: u16, shift: u32) {
         self.word(0xD280_0000 | ((shift / 16) << 21) | (u32::from(imm16) << 5) | rd);
     }
@@ -211,8 +209,6 @@ impl Asm {
         self.word(0xD538_4100 | rt);
     }
 
-    // Arithmetic / logical.
-
     /// `add xd, xn, #imm12` (no shift, `imm12 <= 0xFFF`).
     pub fn add_imm_x(&mut self, rd: u32, rn: u32, imm12: u32) {
         self.word(0x9100_0000 | ((imm12 & 0xFFF) << 10) | (rn << 5) | rd);
@@ -270,8 +266,6 @@ impl Asm {
             None => false,
         }
     }
-
-    // Loads / stores.
 
     /// `ldr xt, [xn, #imm]` (unsigned offset, `imm` a multiple of 8).
     pub fn ldr_x_uoff(&mut self, rt: u32, rn: u32, imm: u32) {
@@ -334,8 +328,6 @@ impl Asm {
         self.word(0xC800_FC00 | (rs << 16) | (rn << 5) | rt);
     }
 
-    // PC-relative addresses.
-
     /// `adr xd, .+byte_off` (signed 21-bit byte range, ±1 MiB).
     pub fn adr(&mut self, rd: u32, byte_off: i32) {
         if !(-(1 << 20)..(1 << 20)).contains(&byte_off) {
@@ -366,8 +358,6 @@ impl Asm {
         self.word(0x9000_0000 | (immlo << 29) | (immhi << 5) | rd);
         true
     }
-
-    // Branches & returns.
 
     /// `ret` (`ret x30`).
     pub fn ret(&mut self) {

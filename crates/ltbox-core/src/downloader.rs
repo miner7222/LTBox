@@ -8,21 +8,16 @@ use std::path::Path;
 
 use crate::error::{LtboxError, Result};
 
-/// Shared `ltbox/<version>` user agent for every outbound request. The
-/// `probe_connectivity` startup check builds its own short-timeout agent but
-/// reuses this string, so the user agent has a single definition.
+/// `ltbox/<version>` user agent for every outbound request, including the
+/// separate short-timeout agent in `probe_connectivity`.
 pub const USER_AGENT: &str = concat!("ltbox/", env!("CARGO_PKG_VERSION"));
 
-/// Process-wide shared `ureq::Agent`. Reuses TLS roots + the connection
-/// pool across every outbound HTTP request in the workspace (downloader,
-/// github / nightly.link clients, lenovo PTSTPD, lenovo OTA). Building a
-/// fresh agent per call rebuilt the rustls config + spun up a new pool
-/// each time, which on a Magisk-update flow alone meant 5+ redundant
-/// TLS-config setups in seconds.
+/// Process-wide `ureq::Agent`, so every outbound request shares one TLS config
+/// and connection pool.
 ///
-/// Per-stage timeouts (15 s connect, 30 s recv-response, 600 s recv-body),
-/// not a single global timeout, so a slow-link download (Lenovo /
-/// GitHub-release pulls) is not cut off mid-body once it is making progress.
+/// Phase budgets: 15 s connect, 30 s response headers, 600 s total body receive.
+/// The body budget starts after headers and is not reset by reads or progress,
+/// so a slow but steady download can still time out.
 fn shared_agent() -> &'static ureq::Agent {
     use std::sync::OnceLock;
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
@@ -37,17 +32,13 @@ fn shared_agent() -> &'static ureq::Agent {
     })
 }
 
-/// Clone the process-wide shared `ureq::Agent` handle (cheap, `Arc`-backed).
-/// Reuse this for every outbound HTTP request in the workspace — including
-/// other crates — so they share TLS roots, the connection pool, and a single
-/// `ltbox/<version>` user agent.
+/// Clone the shared `ureq::Agent` handle (cheap, `Arc`-backed). Use it for
+/// every outbound HTTP request, in any crate.
 pub fn build_agent() -> ureq::Agent {
     shared_agent().clone()
 }
 
-/// Event emitted by [`stream_with_progress`] at each progress
-/// throttle gate. Callers map these into log lines (and / or telemetry
-/// counters) — the streamer keeps no opinions about formatting or
+/// Event emitted by [`stream_with_progress`]; callers own all formatting and
 /// i18n.
 pub enum DownloadEvent {
     /// Stream opened, before any bytes have been read.
@@ -65,17 +56,12 @@ pub enum DownloadEvent {
     Done { downloaded_mb: f64, elapsed_s: f64 },
 }
 
-/// Stream `url` to `out_path` in 64 KiB chunks; the caller's
-/// `on_event` closure handles all progress logging / formatting.
-/// Centralises the byte loop + 750 ms-tick throttle so
-/// secondary consumers (e.g. the Windows driver installer) don't
-/// re-implement the streaming logic just to swap the log prefix and
-/// i18n keys.
+/// Stream `url` to `out_path` in 64 KiB chunks, calling `on_event` for start,
+/// progress (throttled to one per 750 ms) and completion.
 ///
-/// Creates missing parent dirs. Bytes land in a sibling temporary file
-/// and are atomically renamed onto `out_path` only after a successful
-/// full download; partials are removed on failure so a concurrent
-/// reader never observes a truncated destination.
+/// Creates missing parent dirs. Bytes land in a sibling temporary file that
+/// replaces `out_path` only after a complete download; partials are removed on
+/// failure, so a reader never sees a truncated destination.
 pub fn stream_with_progress<F>(
     agent: &ureq::Agent,
     url: &str,
@@ -166,9 +152,8 @@ where
 
     match write_result {
         Ok((downloaded, started_at, partial)) => {
-            // The sibling source keeps this on one filesystem, so persist
-            // replaces the destination atomically. If finalization fails, the
-            // destination is left untouched and the partial is removed on drop.
+            // Same filesystem, so persist replaces the destination atomically;
+            // on failure the destination is untouched and the partial dropped.
             let partial_path = partial.path().to_path_buf();
             if let Err(e) = persist_replacing(partial, out_path) {
                 return Err(LtboxError::Download(format!(
@@ -195,12 +180,11 @@ where
 
 /// Move a finished temp file over `dest`, replacing it.
 ///
-/// `NamedTempFile::persist` makes a single `MoveFileExW` attempt on Windows.
+/// `NamedTempFile::persist` makes a single `MoveFileExW` attempt on Windows;
 /// `std::fs::rename` also retries an access-denied replace with POSIX rename
-/// semantics, which succeeds while another process (antivirus, the indexer)
-/// holds the old destination open with delete sharing. Use that fallback so a
-/// cached file that is merely being scanned can still be refreshed. On failure
-/// the temp file is removed and `dest` is untouched.
+/// semantics, which succeeds while antivirus or the indexer holds the old
+/// destination open with delete sharing. On failure the temp file is removed
+/// and `dest` is untouched.
 pub fn persist_replacing(file: tempfile::NamedTempFile, dest: &Path) -> std::io::Result<()> {
     match file.persist(dest) {
         Ok(_) => Ok(()),
@@ -235,9 +219,10 @@ fn create_partial_file(out_path: &Path) -> std::io::Result<tempfile::NamedTempFi
         .tempfile_in(parent)
 }
 
-/// Download `url` to `out_path` in 64 KiB chunks. Progress is throttled to
-/// one live update per 750 ms; GUI persistence samples every 5 s. Creates missing parent dirs; replaces the destination
-/// only after a complete download (via a sibling partial + rename).
+/// Download `url` to `out_path` via [`stream_with_progress`], logging start and
+/// result lines and live progress (one update per 750 ms; the GUI log history
+/// samples every 5 s). The destination is replaced only after a complete
+/// download.
 pub fn download_to_file(url: &str, out_path: &Path, log: &mut Vec<String>) -> Result<()> {
     let display_name = out_path
         .file_name()
@@ -248,8 +233,8 @@ pub fn download_to_file(url: &str, out_path: &Path, log: &mut Vec<String>) -> Re
     let agent = build_agent();
     let progress_key = crate::live_sink::progress_key("download");
     stream_with_progress(&agent, url, out_path, log, move |log, event| {
-        // Starts/results are ordinary log lines; transient progress carries
-        // an identity so GUI presentation and export sampling stay separate.
+        // Start/result lines are ordinary log lines; progress carries a key so
+        // the sink can coalesce it.
         match event {
             DownloadEvent::Start => {
                 crate::live!(
@@ -332,10 +317,9 @@ mod tests {
 
     /// Serve one response declaring `content_length` but sending `body`.
     ///
-    /// The whole request head is read before replying, and the socket is shut
-    /// down for writing and drained before it closes. Closing with unread
-    /// request bytes makes Windows send RST instead of FIN, which the client
-    /// reports as "connection forcibly closed" (os error 10054).
+    /// The request head is read first and the socket drained before closing:
+    /// closing with unread bytes makes Windows send RST, which the client
+    /// reports as os error 10054.
     fn serve_response(body: &'static [u8], content_length: usize) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
@@ -429,10 +413,9 @@ mod tests {
         let out = dir.path().join("payload.bin");
         std::fs::write(&out, b"keep-me").unwrap();
 
-        // The body ends well short of the declared length, so the read fails
-        // after the partial file exists. The server owns its port for the
-        // whole test: a bound-then-dropped port can be taken by another test's
-        // server running in parallel, which turns "must fail" into a success.
+        // The body ends short of the declared length, so the read fails after
+        // the partial exists. The server keeps its port for the whole test; a
+        // dropped port could be reused by a parallel test's server.
         let url = serve_response(b"truncated", 1 << 20);
 
         let mut log = Vec::new();

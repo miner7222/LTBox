@@ -213,9 +213,8 @@ impl GitHubClient {
             }
             match request.call() {
                 Ok(mut resp) => {
-                    // GitHub release + tag JSON payloads we hit are small;
                     // `read_to_string` is bounded by ureq's default body-size
-                    // limit (these endpoints never approach it).
+                    // limit; these payloads are far below it.
                     let body = resp
                         .body_mut()
                         .read_to_string()
@@ -238,16 +237,11 @@ impl GitHubClient {
         }))
     }
 
-    /// Newest non-draft, non-prerelease release on the repo, or `Ok(None)`
-    /// when the repo has nothing stable published yet.
+    /// Highest-semver non-draft, non-prerelease release, or `Ok(None)` when
+    /// nothing stable is published.
     ///
-    /// `/releases/latest` would already filter out prereleases on GitHub's
-    /// side, but it 404s when **every** published release on the repo is a
-    /// prerelease — a real state for this project during alpha/beta. Walk
-    /// `/releases?per_page=100` instead and pick the highest semver among
-    /// the `prerelease == false && draft == false` rows so the caller
-    /// always gets a defined answer (`None` = no stable yet, `Some(...)`
-    /// = the candidate to compare against the running build).
+    /// Walks `/releases?per_page=100` because `/releases/latest` 404s when every
+    /// release is a prerelease.
     pub fn latest_stable_release(&self) -> Result<Option<StableRelease>> {
         let releases: Vec<Release> = self.get_json("/releases?per_page=100")?;
         let mut best: Option<(semver::Version, StableRelease)> = None;
@@ -255,10 +249,8 @@ impl GitHubClient {
             if r.draft || r.prerelease {
                 continue;
             }
-            // Tags are conventionally `vX.Y.Z`; semver wants the bare
-            // `X.Y.Z` form. Skip tags we can't parse — better to ignore a
-            // weird tag than to call it "the latest" and ship a bad
-            // banner pointing at it.
+            // Tags are `vX.Y.Z`. Skip unparseable tags rather than point the
+            // update banner at one.
             let stripped = r.tag_name.trim_start_matches('v');
             let Ok(ver) = semver::Version::parse(stripped) else {
                 continue;
@@ -362,10 +354,9 @@ impl GitHubClient {
         if !runs.is_empty() {
             return Ok(runs);
         }
-        // The `status`/`branch` filters go through GitHub's run search, which
-        // has returned nothing for a tag run that completed a week earlier
-        // (KernelSU-Next v3.4.0). Check the unfiltered newest runs before
-        // concluding the tag has none.
+        // GitHub's run search has returned nothing for a tag run that
+        // completed a week earlier (KernelSU-Next v3.4.0); check the
+        // unfiltered newest runs before concluding the tag has none.
         let resp: WorkflowRunsResponse = self.get_json(&format!(
             "/actions/workflows/{workflow_file}/runs?per_page=100"
         ))?;
@@ -487,12 +478,11 @@ impl GitHubClient {
         Ok(found)
     }
 
-    /// Walk the workflow's **unfiltered** run listing newest-first, one page at a
-    /// time. GitHub's `status=`/`branch=` filters go through a search index that
-    /// lags by weeks (the unfiltered listing is authoritative), so callers filter
-    /// client-side. `visit` returns `Ok(true)` to stop early. The walk also stops
-    /// on a short page, once a page ends at a run 90 days old or more, and after
-    /// [`MAX_RUN_PAGES`] pages to bound API calls.
+    /// Walk the workflow's unfiltered run listing newest-first, a page at a time.
+    /// The `status=`/`branch=` filters use a search index that lags by weeks, so
+    /// callers filter client-side. `visit` returns `Ok(true)` to stop early. The
+    /// walk also stops on a short page, a page ending at a run 90 days old or
+    /// more, and after [`MAX_RUN_PAGES`] pages.
     fn walk_workflow_runs(
         &self,
         workflow_file: &str,

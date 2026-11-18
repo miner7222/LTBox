@@ -129,14 +129,13 @@ fn validate_dp_filename_usage(raw_xmls: &[PathBuf], allow_dp_filenames: bool) ->
 }
 
 /// Collect `rawprogram*.xml` and `patch*.xml` from `dir` for firmware
-/// flashing. Drops v2 filter targets (WIPE/BLANK variants,
-/// `rawprogram0.xml` GPT programmer) and treats devinfo/persist XML
-/// variants as mutually exclusive families.
+/// flashing. Drops `wipe_partitions` / `blank_gpt` variants, picks one XML
+/// from each devinfo/persist family, and uses plain `rawprogram0.xml` only
+/// when no persist variant exists.
 ///
-/// `allow_dp_filenames=false` is the normal v3 firmware path: country-code
-/// images are dumped, patched, and flashed explicitly after rawprogram
-/// flashing, so a selected rawprogram must not reference `persist.img` or
-/// `devinfo.img`.
+/// `allow_dp_filenames=false` is the normal path: country-code images are
+/// dumped, patched and flashed after the rawprogram pass, so a selected
+/// rawprogram must not reference `persist.img` or `devinfo.img`.
 pub fn collect_firmware_xmls_for_flash(
     dir: &Path,
     allow_dp_filenames: bool,
@@ -161,16 +160,14 @@ pub fn collect_firmware_xmls_for_flash(
             continue;
         }
         if lower.starts_with("rawprogram") {
-            // v2 skips WIPE / zero-GPT variants.
+            // Skip wipe / zero-GPT variants.
             if lower.contains("wipe_partitions") || lower.contains("blank_gpt") {
                 continue;
             }
             if lower == "rawprogram0.xml" {
-                // Lenovo stock ships a persist/`_unsparse0` LUN0 variant that
-                // supersedes the plain `rawprogram0.xml`, so defer it and use it
-                // only as a fallback when no such variant exists — ported ROMs
-                // ship only `rawprogram0.xml`, with `super` (the OS) on LUN0, so
-                // dropping it unconditionally left `super` unflashed.
+                // Stock packs ship a persist/`_unsparse0` LUN0 variant that
+                // supersedes this; ported ROMs ship only `rawprogram0.xml`, and
+                // dropping it would leave `super` (LUN0) unflashed.
                 rawprogram0 = Some(path);
                 continue;
             }
@@ -184,9 +181,8 @@ pub fn collect_firmware_xmls_for_flash(
         }
     }
 
-    // LUN0 source: prefer the persist/`_unsparse0` variant; otherwise fall back
-    // to the plain `rawprogram0.xml`. Either way `flash_rawprogram_with_wipe`'s
-    // per-label keep/wipe skip still preserves userdata/metadata.
+    // LUN0 source: the persist/`_unsparse0` variant, else `rawprogram0.xml`.
+    // `flash_rawprogram_with_wipe`'s keep-data skip still guards userdata/metadata.
     match select_persist_xml(persist_xmls, allow_dp_filenames) {
         Some(path) => raw_xmls.push(path),
         None => {
@@ -261,11 +257,8 @@ mod tests {
 
     #[test]
     fn collect_firmware_xmls_prefers_persistless_lun0_for_simple_flash() {
-        // Simple Flash reuses `collect_firmware_xmls_for_flash(dir, false)`:
-        // when a firmware ships both a persist-less LUN0 rawprogram
-        // (save_persist, empty persist filename) and a persist-writing one
-        // (write_persist), the persist-less variant must win and be the *only*
-        // LUN0 rawprogram kept.
+        // With both save_persist (empty persist filename) and write_persist
+        // LUN0 rawprograms, save_persist must be the only one kept.
         let fw = TempFirmwareDir::new();
         fw.write(
             "rawprogram_save_persist_unsparse0.xml",

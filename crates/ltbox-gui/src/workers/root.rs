@@ -172,8 +172,7 @@ pub(crate) fn root_worker(
     }
     let skip_adb = conn.skip_adb();
 
-    // GKI route: AnyKernel3 zip is the full input —
-    // no provider / version / GitHub fetch.
+    // GKI route: the AnyKernel3 zip is the full input; no provider / version / GitHub fetch.
     let is_gki_route = mode == Some(RootMode::Gki);
     if is_gki_route && !ltbox_core::model::capabilities(&device_model).gki_root {
         return Err(tr_args!("model_unsupported", model = device_model.as_str()));
@@ -226,10 +225,8 @@ pub(crate) fn root_worker(
     if !loader.is_file() {
         return Err(tr_args!("err_root_loader_missing", path = loader.display()));
     }
-    // Accept single-blob loaders (`.melf` / `.mbn` /
-    // `.elf`), the `.xml` multi-image manifest, or its
-    // encrypted `.x` form (TB323FU; decrypted in
-    // `EdlSession::open`). Filename is free-form.
+    // Accept single-blob loaders (`.melf` / `.mbn` / `.elf`), the `.xml` multi-image manifest, or its
+    // encrypted `.x` form (decrypted in `EdlSession::open`). The filename is free-form.
     let loader_ok = loader
         .extension()
         .and_then(|e| e.to_str())
@@ -244,9 +241,8 @@ pub(crate) fn root_worker(
             path = loader.display()
         ));
     }
-    // Signing key: pipeline resolves via KEY_MAP
-    // + `public_key_sha1`; PEM is `include_str!`'d
-    // in avbtool-rs. No on-disk key consulted here.
+    // Signing key: the pipeline resolves it via KEY_MAP + `public_key_sha1` (PEMs are
+    // `include_str!`'d in avbtool-rs); no on-disk key is consulted here.
     ltbox_core::live!(
         log,
         "[Root] {}",
@@ -262,24 +258,17 @@ pub(crate) fn root_worker(
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| tr_args!("err_root_output_dir_failed", error = e))?;
 
-    // Phase 1/8 — Inspect the device, slot, and kernel.
-    // Front-loaded so the user sees something happen
+    // Phase 1/8 — Inspect the device, slot, and kernel. Front-loaded so the user sees progress
     // before the long manager-APK / payload download.
     live!(log, "[Root] {}", phases.marker(1));
-    // Slot detection must succeed — root flashes the resolved root target +
-    // vbmeta_<slot>, and defaulting to `_a` would flash the wrong slot when
-    // the device is actually running `_b`. Poll both ADB + Fastboot up to
-    // 30 s; on failure, the helper returns a diagnostic that names which
-    // transport last failed and what to do (re-plug into normal/recovery,
-    // reboot to bootloader, fix unauthorized ADB, …).
+    // Slot detection must succeed: root flashes the resolved target + vbmeta_<slot>, and defaulting
+    // to `_a` would write the wrong slot on a `_b` device. Poll ADB + Fastboot up to 30 s; on failure
+    // the helper's diagnostic names the transport that last failed and what to do.
     let slot_suffix =
         ltbox_device::controller::poll_active_slot(std::time::Duration::from_secs(30), &mut log)
             .map_err(|e| e.to_string())?;
-    // Kernel version probe (KSU LKM) needs ADB
-    // shell; runs only when ADB is currently
-    // usable so the slot-resolved-via-Fastboot
-    // path doesn't waste 30 s waiting for a
-    // shell that won't come.
+    // The kernel version probe (KSU LKM) needs an ADB shell and runs only when ADB is usable, so
+    // the Fastboot-resolved-slot path doesn't wait 30 s for a shell that won't come.
     let mut kernel_version: Option<String> = gui_kernel_version.clone();
     // Only ADB can supply this; a manually typed version carries no branch.
     let mut kernel_gki_branch: Option<String> = None;
@@ -368,11 +357,9 @@ pub(crate) fn root_worker(
         .map_err(|e| tr_args!("err_root_manager_apk_failed", error = e))?;
     stage_root_payload(&manager_cfg, &mut log)
         .map_err(|e| tr_args!("err_root_payload_failed", error = e))?;
-    // Manager install is non-fatal; keep the path to surface in the
-    // post-run manual-install reminder (the on-device /sdcard copy when
-    // the push fallback worked, otherwise the local staged file).
-    // `keep_staging` forces the work dir to survive cleanup only in the
-    // latter case, where the local file is the user's last resort.
+    // Manager install is non-fatal; keep the path for the post-run manual-install reminder (the
+    // on-device /sdcard copy if the push fallback worked, else the local staged file).
+    // `keep_staging` keeps the work dir only in the latter case, the user's last resort.
     let mut manager_install_failed_path: Option<std::path::PathBuf> = None;
     let mut skroot_root_key = None;
     let mut keep_staging = false;
@@ -400,10 +387,9 @@ pub(crate) fn root_worker(
         false
     };
 
-    // Track whether Phase 6 has started any partition write.
-    // Pre-write failures still attempt an EDL -> system reset;
-    // once a write has begun, leave the device in EDL instead of
-    // rebooting into a half-written AVB image set.
+    // Track whether Phase 6 has started any partition write. A pre-write failure still attempts an
+    // EDL -> system reset; once a write began, stay in EDL rather than reboot into a half-written
+    // AVB image set.
     let mut writes_started = false;
     let device_phase_result: std::result::Result<(), String> =
         (|| -> std::result::Result<(), String> {
@@ -414,9 +400,8 @@ pub(crate) fn root_worker(
             // The target was resolved once before payload staging. Geometry
             // resolves from GPT by its partition label.
             let base_name = manager_cfg.root_image_target.partition_base();
-            // `slot_suffix` was poll-resolved at Phase 1
-            // and propagated through `RootPipelineConfig`;
-            // it is guaranteed to be `_a` or `_b` here.
+            // `slot_suffix` was resolved at Phase 1 and propagated via `RootPipelineConfig`; it is `_a` or
+            // `_b` here.
             let root_primary = format!("{base_name}{slot_suffix}");
             let vbmeta_primary = format!("vbmeta{slot_suffix}");
             let root_lun = ltbox_core::partition_lun::lun_for_partition(base_name)
@@ -445,23 +430,17 @@ pub(crate) fn root_worker(
             // manifest can describe this snapshot to the user. Unroot derives
             // required images from the model, selected method and filenames.
             let vbmeta_backed_up;
-            // TB323FU only: when the dumped efisp is empty (stock,
-            // GBL-unprovisioned) we download the region GBL here and
-            // flash it alongside the patched root target image at Phase 6.
+            // GBL targets only: when the dumped efisp is empty (stock, GBL-unprovisioned), download the
+            // region GBL here and flash it with the patched root target image at Phase 6.
             let mut root_efisp_efi: Option<std::path::PathBuf> = None;
             {
                 let mut session = open_edl_session(&loader, &mut log)?;
                 let dumped_root_image = work_dir.join(root_image_name);
                 let dumped_vbmeta = work_dir.join("vbmeta.img");
-                // `dump_partition` scans the LUN's GPT for the
-                // named partition — matches the shell-level
-                // `qdl-rs --phys-part-idx 4 dump-part <name>`.
-                //
-                // The root target is read first because every route needs it,
-                // and it carries the same build fingerprint vbmeta does
-                // (`com.android.build.<part>.fingerprint`) — so the model
-                // cross-check below needs no separate vbmeta dump on devices
-                // that chain the target.
+                // `dump_partition` scans the LUN's GPT for the named partition. The root target is read first:
+                // every route needs it, and it carries the same build fingerprint as vbmeta
+                // (`com.android.build.<part>.fingerprint`), so the model cross-check below needs no separate
+                // vbmeta dump on devices that chain the target.
                 session
                     .dump_partition(&root_primary, &dumped_root_image, 0, root_lun, &mut log)
                     .map_err(|e| {
@@ -563,9 +542,8 @@ pub(crate) fn root_worker(
                     );
                 }
 
-                // TB323FU root needs provisioned efisp; once present, skip AVB
-                // footer and vbmeta writes. Keep the verified fingerprint so
-                // an empty efisp can fetch the matching region GBL.
+                // GBL root needs a provisioned efisp; once present, skip AVB footer and vbmeta writes. Keep the
+                // verified fingerprint so an empty efisp can fetch the matching region GBL.
                 if uses_gbl {
                     let efi_dir = ltbox_core::app_paths::work_dir_for("root_efisp");
                     root_efisp_efi = prepare_canoe_efisp(
@@ -577,10 +555,9 @@ pub(crate) fn root_worker(
                         &mut log,
                     )?;
                 }
-                // Stock-image safety net for Unroot, captured
-                // before the irreversible patch + flash. A copy
-                // failure must abort the run. Reserve a fresh directory for
-                // every root operation so no previous run can be overwritten.
+                // Stock-image safety net for Unroot, captured before the irreversible patch + flash. A copy
+                // failure aborts the run. A fresh directory per root operation means no earlier backup is
+                // overwritten.
                 let actual_backup_dir = create_backup_dir("root", &device_model).map_err(|e| {
                     tr_args!(
                         "err_root_backup_dir_failed",
@@ -650,20 +627,17 @@ pub(crate) fn root_worker(
                     );
                 }
                 backup_dir = actual_backup_dir;
-                // Bounce to Sahara — otherwise the second
-                // session's sahara_run times out because
-                // the device is still in Firehose.
+                // Bounce to Sahara: the second session's sahara_run would time out while the device is still in
+                // Firehose.
                 session
                     .reset_to_edl(&mut log)
                     .map_err(|e| tr_args!("err_reboot_edl_reset_failed", error = e))?;
                 live!(log, "[EDL] {}", ll.closing_dump);
-                // Drop session — serial port closes so
-                // the post-patch open gets a fresh handle.
+                // Dropping the session closes the serial port so the post-patch open gets a fresh handle.
             }
 
-            // Phase 5/8 — Offline root target image patch + AVB metadata
-            // rebuild. Network downloads happen in Phase 2, so this step
-            // never touches the network, matching its "patching" label.
+            // Phase 5/8 — Offline root target patch + AVB metadata rebuild. Downloads happen in Phase 2, so
+            // this step never touches the network.
             live!(log, "[Root] {}", phases.marker(5));
 
             // Reuse the staged inputs and the owner detected from the dumps.
@@ -739,12 +713,9 @@ pub(crate) fn root_worker(
             session.reset_tolerant(&mut log);
             // Phase 8/8 — Finish Android setup and manager installation.
             live!(log, "[Root] {}", phases.marker(8));
-            // Skip post-reboot retry if the pre-EDL install already failed
-            // for a deterministic reason (e.g.
-            // `INSTALL_FAILED_VERSION_DOWNGRADE`) — the 60 s wait + reinstall
-            // would hit the same error after the user's burned a minute
-            // waiting. The end-of-run reminder still fires from the pre-EDL
-            // `manager_install_failed_path` stamp.
+            // Skip the post-reboot retry if the pre-EDL install already failed deterministically (e.g.
+            // `INSTALL_FAILED_VERSION_DOWNGRADE`): the 60 s wait + reinstall would hit the same error. The
+            // end-of-run reminder still fires from the `manager_install_failed_path` stamp.
             if !manager_installed_pre_edl
                 && manager_install_failed_path.is_none()
                 && let Some(path) = manager_apk.as_ref()
@@ -754,11 +725,8 @@ pub(crate) fn root_worker(
                     &mut log,
                 )
             {
-                // Same non-fatal handling as the pre-EDL path —
-                // log the warning, record the donor path for the
-                // post-run reminder, keep going so the user
-                // doesn't lose the success summary just because
-                // the manager package couldn't auto-install.
+                // Same non-fatal handling as the pre-EDL path: log the warning and record the donor path for the
+                // post-run reminder, so the success summary survives a failed auto-install.
                 live!(
                     log,
                     "[Root] {}",
@@ -787,11 +755,9 @@ pub(crate) fn root_worker(
         })();
     match device_phase_result {
         Ok(()) => {
-            // Keep staging files on error for debugging, and also when the
-            // manager APK could not be auto-installed *and* the on-device
-            // push fallback failed — the local staged APK is then the only
-            // copy the user can reach, so the reminder points at it and the
-            // work dir must survive.
+            // Keep staging files on error for debugging, and when both the manager auto-install and the
+            // on-device push fallback failed: the local staged APK is then the user's only copy and the
+            // reminder points at it.
             if !keep_staging {
                 let _ = std::fs::remove_dir_all(&base);
             }
@@ -808,11 +774,9 @@ pub(crate) fn root_worker(
                 let msg = tr_args!("err_root_partial_write_recovery", error = e);
                 Err(msg)
             } else {
-                // Pre-write failure: best-effort open a fresh session on
-                // the same loader and ask the device to boot.
-                // `reset_tolerant` already swallows the post-handoff error
-                // some devices return, so this never masks the real error
-                // — failures here are only logged.
+                // Pre-write failure: best-effort open a fresh session on the same loader and ask the device to
+                // boot. `reset_tolerant` swallows the post-handoff error some devices return; failures here are
+                // only logged.
                 let mut reset_log: Vec<String> = Vec::new();
                 live!(
                     reset_log,
@@ -991,7 +955,7 @@ mod tests {
             check_dumped_root_image(foo, "TB390FU", false),
             Err(tr_args!("model_unsupported", model = "TB390FU"))
         );
-        // No known detected model: rejected as today.
+        // No known detected model: rejected.
         for device in ["", "Legion Y700"] {
             assert!(
                 check_dumped_root_image(foo, device, false).is_err(),

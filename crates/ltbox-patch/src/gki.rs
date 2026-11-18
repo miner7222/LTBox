@@ -1,18 +1,15 @@
 //! GKI custom-kernel root — replaces the kernel blob inside `boot.img`
 //! with one supplied by the user. Two input shapes accepted:
 //!
-//! * **AnyKernel3 zip** (legacy / default) — `Image` / `kernel` / etc.
-//!   pulled out via `extract_kernel_from_zip`.
-//! * **Raw `boot.img`** — unpacked with magiskboot in a scratch subdir
-//!   under `work_dir`, then the `kernel` it produces is copied over
-//!   the stock kernel (`extract_kernel_from_boot_img`). Lets the user
-//!   feed any donor boot image (custom kernel build, OEM custom rom
-//!   boot.img, etc.) without first stripping it into an AnyKernel3
-//!   wrapper.
+//! * **AnyKernel3 zip**: `Image` / `kernel` / etc. pulled out via
+//!   `extract_kernel_from_zip`.
+//! * **Raw `boot.img`**: unpacked with magiskboot in a scratch subdir under
+//!   `work_dir`, and its `kernel` is copied over the stock kernel
+//!   (`extract_kernel_from_boot_img`), so any donor boot image works without
+//!   repackaging as AnyKernel3.
 //!
-//! Selection is by file extension at the patcher entry — `.zip` →
-//! AnyKernel3 path, `.img` → boot.img path. Other extensions error
-//! out before the stock unpack runs.
+//! The patcher entry selects by extension (`.zip` or `.img`); anything else
+//! errors before the stock unpack runs.
 //!
 //! Writes `work_dir/new-boot.img` for the subsequent AVB re-sign step.
 
@@ -36,10 +33,9 @@ const CANDIDATES: &[&str] = &[
     "zImage-dtb",
 ];
 
-/// Subdirectory under `work_dir` for unpacking a user-supplied
-/// `boot.img` donor — isolated from the stock unpack so the two
-/// `kernel` files don't collide and the stock dtb / ramdisk components
-/// stay intact for the eventual repack.
+/// Subdirectory under `work_dir` for unpacking a donor `boot.img`, kept apart
+/// from the stock unpack so the two `kernel` files don't collide and the stock
+/// dtb / ramdisk stay intact for the repack.
 const CUSTOM_BOOT_SUBDIR: &str = "custom_kernel_extract";
 
 /// Patch `boot.img` inside `work_dir` with a kernel sourced from
@@ -49,16 +45,12 @@ const CUSTOM_BOOT_SUBDIR: &str = "custom_kernel_extract";
 /// * `.img` → boot.img donor, unpacked in a scratch subdir to extract
 ///   its `kernel` blob.
 ///
-/// Any other extension errors out up-front (before the stock unpack
-/// runs) so the user doesn't wait through a magiskboot pass only to
-/// get a "wrong file type" message at the donor step.
+/// Any other extension errors up front, before the stock unpack.
 ///
 /// On success, writes `work_dir/new-boot.img`.
 pub fn patch_boot(work_dir: &Path, kernel_src: &Path, log: &mut Vec<String>) -> Result<PathBuf> {
-    // Validate the donor extension before paying for the stock
-    // `boot.img` unpack. GUI picker filters to `.zip` / `.img`, but a
-    // typed path or a stale recent-paths entry could route anything
-    // here; surface the input error immediately.
+    // Validate the extension before the stock unpack: the GUI picker filters to
+    // `.zip` / `.img`, but a typed path or stale recent-paths entry may not.
     let ext = kernel_src
         .extension()
         .and_then(|e| e.to_str())
@@ -161,15 +153,12 @@ fn extract_linux_version(kernel_path: &Path) -> Option<String> {
 }
 
 /// Pull the kernel out of a user-supplied donor `boot.img` and copy
-/// it over `dst`. Unpacks the donor in an isolated subdir under
-/// `work_dir` so the parallel stock unpack (which already produced
-/// `work_dir/kernel`, `ramdisk.cpio`, dtb, …) isn't clobbered — only
-/// the `kernel` artefact is transplanted, the rest of the boot image
-/// keeps its stock layout.
+/// it over `dst`. The donor is unpacked in an isolated subdir so the stock
+/// unpack in `work_dir` (`kernel`, `ramdisk.cpio`, dtb, ...) isn't clobbered;
+/// only `kernel` is transplanted.
 ///
-/// The subdir is wiped on entry so a previous run's leftovers can't
-/// taint the unpack, and cleaned up on success. A failure leaves the
-/// subdir in place for post-mortem.
+/// The subdir is wiped on entry, and removed on success; a failure leaves it
+/// for post-mortem.
 fn extract_kernel_from_boot_img(
     boot_img: &Path,
     dst: &Path,
@@ -194,8 +183,7 @@ fn extract_kernel_from_boot_img(
     }
     let copied = fs::copy(&donor_kernel, dst)
         .map_err(|e| LtboxError::Patch(format!("copy donor kernel: {e}")))?;
-    // Best-effort cleanup; leaving the subdir behind on a remove
-    // failure is harmless — the next run wipes it anyway.
+    // Best-effort: a leftover subdir is wiped by the next run.
     let _ = fs::remove_dir_all(&scratch);
     ltbox_core::live!(
         log,
@@ -252,18 +240,14 @@ fn extract_kernel_from_zip(zip_path: &Path, dst: &Path, log: &mut Vec<String>) -
     let mut entry = archive
         .by_name(&name)
         .map_err(|e| LtboxError::Patch(format!("kernel zip {name}: {e}")))?;
-    // Stream the zip entry to disk instead of buffering it whole: `size()`
-    // comes from the untrusted local zip header, so pre-sizing a `Vec` from
-    // it is an OOM vector for a malformed or hostile AnyKernel zip. The cap
-    // (200 MiB — well above any real Android boot kernel) also protects
-    // against a runaway copy if the entry's stream itself is malformed.
+    // Stream to disk rather than pre-size a `Vec` from `size()`, which comes
+    // from the untrusted zip header (OOM on a hostile zip). The 200 MiB cap,
+    // well above any real boot kernel, also bounds a malformed stream.
     const MAX_KERNEL_BYTES: u64 = 200 * 1024 * 1024;
     let mut out = fs::File::create(dst)?;
     let copied = {
-        // `take(MAX + 1)` so an exactly-MAX-byte kernel reads through
-        // without flagging, and only a > MAX byte stream surfaces as
-        // the cap error (avoids a false positive on a real 200 MiB
-        // image that happens to land on the boundary).
+        // `take(MAX + 1)` so an exactly-MAX-byte kernel passes and only a
+        // longer stream trips the cap.
         let mut limited = (&mut entry).take(MAX_KERNEL_BYTES + 1);
         std::io::copy(&mut limited, &mut out)?
     };

@@ -1,10 +1,9 @@
 //! `qsahara_device_programmer.xml` parser.
 //!
-//! Lenovo's TB323FU firmware (kaanapali chipset) ships a multi-image
-//! Sahara handoff: instead of a single `xbl_s_devprg_ns.melf`, the
-//! programmer is split across 8 ELF / MBN payloads keyed by Sahara
-//! image-id. The shipped XML enumerates them so the host knows which
-//! file maps to which id.
+//! Models with `requires_sahara_manifest` (TB323FU, TB324ZC) ship a
+//! multi-image Sahara handoff: instead of a single `xbl_s_devprg_ns.melf`, the
+//! programmer is split across several ELF / MBN payloads keyed by Sahara
+//! image-id, and this XML maps each id to its file.
 //!
 //! Example:
 //!
@@ -20,9 +19,7 @@
 //! ```
 //!
 //! [`parse`] returns the entries in document order. [`load_image_slots`]
-//! reads each file relative to the XML's directory and returns a
-//! `Vec<Option<Vec<u8>>>` sized to `max_id + 1`, with `Some(bytes)` at
-//! every populated id and `None` everywhere else — the exact shape
+//! reads each file relative to the XML's directory into the slot array that
 //! `qdl::sahara::sahara_run` expects.
 
 use std::path::{Path, PathBuf};
@@ -32,9 +29,9 @@ use crate::error::{LtboxError, Result};
 /// Filename Lenovo uses for the multi-image manifest.
 pub const MANIFEST_FILENAME: &str = "qsahara_device_programmer.xml";
 
-/// Encrypted form of [`MANIFEST_FILENAME`] shipped in some Lenovo firmware
-/// packs (the same `.x` AES-CBC container as the rawprogram XMLs). Decrypt
-/// it to [`MANIFEST_FILENAME`] via [`crate::crypto::decrypt_file`] before use.
+/// Encrypted form of [`MANIFEST_FILENAME`] in some Lenovo firmware packs (the
+/// same `.x` container as the rawprogram XMLs); decrypt it with
+/// [`crate::crypto::decrypt_file`] before use.
 pub const ENCRYPTED_MANIFEST_FILENAME: &str = "qsahara_device_programmer.x";
 
 /// One `<image>` entry from the manifest.
@@ -46,8 +43,8 @@ pub struct SaharaImage {
     pub image_path: String,
 }
 
-/// Whether the file at `path` looks like a `qsahara_device_programmer.xml`
-/// manifest (the only XML the EDL loader picker accepts).
+/// Whether `path` is named like [`MANIFEST_FILENAME`] (the only XML the EDL
+/// loader picker accepts), ignoring ASCII case.
 pub fn is_manifest_filename(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -55,9 +52,8 @@ pub fn is_manifest_filename(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether `path` is the encrypted manifest form
-/// ([`ENCRYPTED_MANIFEST_FILENAME`]), which must be decrypted to
-/// [`MANIFEST_FILENAME`] before parsing.
+/// Whether `path` is named like [`ENCRYPTED_MANIFEST_FILENAME`], ignoring ASCII
+/// case.
 pub fn is_encrypted_manifest_filename(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -65,8 +61,8 @@ pub fn is_encrypted_manifest_filename(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Parse a `qsahara_device_programmer.xml` body into ordered
-/// `SaharaImage` entries.
+/// Parse a manifest body into entries in document order. Rejects a missing
+/// `<images>`, an empty list and duplicate ids.
 pub fn parse(xml: &str) -> Result<Vec<SaharaImage>> {
     let doc =
         crate::xml::parse(xml).map_err(|e| LtboxError::Other(format!("Sahara XML parse: {e}")))?;
@@ -109,16 +105,13 @@ pub fn parse(xml: &str) -> Result<Vec<SaharaImage>> {
     Ok(out)
 }
 
-/// Image files the manifest at `xml_path` references but that are **not**
-/// present beside it, in document order. An empty vector means every
-/// referenced payload resolves.
+/// Image files the manifest at `xml_path` references that are not present
+/// beside it, in document order; empty means every payload resolves.
 ///
-/// Only stats the files — nothing is read, decrypted or written — so this is
-/// cheap enough for a file-picker gate. A manifest that cannot be read or
-/// parsed is an `Err`, not "nothing missing".
-///
-/// Paths that escape the manifest's directory (`..`, absolute) fail through
-/// [`crate::safe_path::safe_join`] exactly as they would at load time.
+/// Only stats the files, so it is cheap enough for a file-picker gate. An
+/// unreadable or unparseable manifest is an `Err`, not "nothing missing".
+/// Paths escaping the manifest's directory fail through
+/// [`crate::safe_path::safe_join`], as at load time.
 pub fn missing_image_files(xml_path: &Path) -> Result<Vec<PathBuf>> {
     let xml_body = crate::xml::read(xml_path)
         .map_err(|e| LtboxError::Other(format!("Sahara XML read: {e}")))?;
@@ -136,16 +129,12 @@ pub fn missing_image_files(xml_path: &Path) -> Result<Vec<PathBuf>> {
     Ok(missing)
 }
 
-/// Slot array sized to `(max image-id + 1)` with `Some(bytes)` at every
-/// populated id and `None` everywhere else — exact shape
-/// `qdl::sahara::sahara_run` expects.
+/// Slot array sized `max image-id + 1`, `Some(bytes)` at each populated id and
+/// `None` elsewhere: the shape `qdl::sahara::sahara_run` expects.
 pub type ImageSlots = Vec<Option<Vec<u8>>>;
 
-/// Read the manifest at `xml_path`, then read each referenced image
-/// from the manifest's parent directory and return the slot array.
-///
-/// Returns `(slots, image_paths)` so callers can log both sides
-/// (which IDs were populated + which files were read).
+/// Read the manifest at `xml_path` and each referenced image from its parent
+/// directory. Returns `(slots, image_paths)` so callers can log both.
 pub fn load_image_slots(xml_path: &Path) -> Result<(ImageSlots, Vec<PathBuf>)> {
     let xml_body = crate::xml::read(xml_path)
         .map_err(|e| LtboxError::Other(format!("Sahara XML read: {e}")))?;
@@ -153,14 +142,9 @@ pub fn load_image_slots(xml_path: &Path) -> Result<(ImageSlots, Vec<PathBuf>)> {
     let parent = xml_path
         .parent()
         .ok_or_else(|| LtboxError::Other("Sahara XML has no parent directory".to_string()))?;
-    // `image_id` is a u32 from untrusted manifest XML. Without a cap, a
-    // hostile / corrupted entry could pre-allocate up to (u32::MAX + 1) ×
-    // size_of::<Option<Vec<u8>>>() bytes (~32 GiB on 64-bit) before we
-    // ever look at the referenced files — easy OOM / DoS vector. The
-    // Sahara protocol's image IDs sit in a small enumerated range (the
-    // qdl-rs upstream defines ~30 well-known IDs; production Qualcomm
-    // SoCs use double-digit values), so clamp at 256 which leaves
-    // headroom for vendor extensions without exposing the OOM.
+    // `image_id` is a u32 from untrusted XML; without a cap, one entry could
+    // make the slot vector allocate (u32::MAX + 1) * 24 bytes (~96 GiB). Real
+    // Sahara image ids are small, so 256 leaves room for vendor extensions.
     const MAX_SAHARA_IMAGE_ID: u32 = 256;
     let raw_max_id = entries.iter().map(|e| e.image_id).max().unwrap_or(0);
     if raw_max_id > MAX_SAHARA_IMAGE_ID {

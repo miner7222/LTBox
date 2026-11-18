@@ -1,4 +1,4 @@
-//! Advanced-menu handlers: physical/partition dump+flash, wizard nav. Extracted from `main.rs`.
+//! Advanced-menu handlers: physical/partition dump+flash, wizard nav.
 
 use crate::*;
 use iced::Task;
@@ -267,10 +267,9 @@ impl App {
                     self.parts_scan_outcome(result.error, self.dump_parts.rows.is_empty());
                 if self.dump_parts.scan_error.is_none() {
                     self.dump_parts.step = 1;
-                    // A successful Firehose GPT scan proves the device is in
-                    // EDL; reflect it immediately (the 3s poll may still show a
-                    // stale ADB/Fastboot state) so a sidebar bounce right after
-                    // the scan keeps the loaded table via `advanced_in_progress`.
+                    // A successful GPT scan proves the device is in EDL; reflect it
+                    // now (the poll may still show ADB/Fastboot) so a sidebar bounce
+                    // keeps the loaded table via `advanced_in_progress`.
                     self.apply_device_snapshot(DevicePollResult {
                         status: ConnectionStatus::Edl,
                         ..DevicePollResult::default()
@@ -291,9 +290,8 @@ impl App {
                 Task::none()
             }
             DumpPartsMsg::DumpPartsSelectFolder => {
-                // Dump destination, not a firmware source — goes to the
-                // `OutputFolder` bucket so the MRU list doesn't mix input
-                // firmware dirs with output dump dirs.
+                // Dump destination, not a firmware source: the `OutputFolder`
+                // bucket keeps the MRU list from mixing input and output dirs.
                 pickers::pick_folder_for(
                     pickers::PickerKind::OutputFolder,
                     &self.recent_paths,
@@ -428,10 +426,8 @@ impl App {
                     Err(()) => return Task::none(),
                 };
                 self.flash_parts.entry_connection = Some(self.device.connection);
-                // Loader-upload + GPT read to enumerate partitions — a
-                // *read*, not a flash. Use the Advanced busy view so the
-                // dialog shows `busy_partition_scan` ("Reading partition
-                // info…") like Read Partitions, not "Flash Firmware".
+                // Loader upload + GPT read: a read, not a flash. The Advanced
+                // busy view shows `busy_partition_scan`, not "Flash Firmware".
                 self.begin_op(View::Advanced);
                 self.error_msg = None;
                 self.flash_parts.scanning = true;
@@ -463,10 +459,9 @@ impl App {
                 self.end_op();
                 if self.flash_parts.scan_error.is_none() {
                     self.flash_parts.next(); // → Select
-                    // A successful Firehose GPT scan proves the device is in
-                    // EDL; reflect it immediately (the 3s poll may still show a
-                    // stale ADB/Fastboot state) so a sidebar bounce right after
-                    // the scan keeps the loaded table via `advanced_in_progress`.
+                    // A successful GPT scan proves the device is in EDL; reflect it
+                    // now (the poll may still show ADB/Fastboot) so a sidebar bounce
+                    // keeps the loaded table via `advanced_in_progress`.
                     self.apply_device_snapshot(DevicePollResult {
                         status: ConnectionStatus::Edl,
                         ..DevicePollResult::default()
@@ -487,9 +482,8 @@ impl App {
                     return Task::none();
                 }
                 self.flash_parts.next(); // advance to Exec screen
-                // Advanced busy view (not Flash) so the busy dialog shows the
-                // partition-write message via `busy_body_override`, not
-                // "Flash Firmware is in progress".
+                // Advanced busy view so the dialog shows the partition-write
+                // message via `busy_body_override`, not "Flash Firmware".
                 let phases =
                     self.begin_phased_op(View::Advanced, OperationPhaseKind::FlashPartitions);
                 self.error_msg = None;
@@ -605,7 +599,8 @@ impl App {
     pub(crate) fn update_adv(&mut self, msg: AdvMsg) -> Task<Message> {
         match msg {
             AdvMsg::AdvConfirm(a) => {
-                // Dedicated EDL wizards can skip their loader step via Settings.
+                // Dedicated EDL wizards skip their loader step when the model has
+                // a remembered loader.
                 if matches!(a, AdvAction::FlashPartitions) {
                     self.flash_parts.reset();
                     self.advanced_wizard_open = AdvancedWizardOpen::FlashParts;
@@ -623,9 +618,8 @@ impl App {
                     self.advanced_wizard_open = AdvancedWizardOpen::FlashPhys;
                     self.apply_remembered_loader_to_advanced_wizard()
                 } else if matches!(a, AdvAction::SimpleFlash) {
-                    // Dedicated wizard: intro (description) → folder picker →
-                    // confirm → flash. No loader step (the loader comes from
-                    // the firmware folder), so no default-loader fold-through.
+                    // Intro → folder picker → confirm → flash. No loader step (the
+                    // loader comes from the firmware folder).
                     self.simple_flash.reset();
                     self.advanced_wizard_open = AdvancedWizardOpen::SimpleFlash;
                     Task::none()
@@ -635,7 +629,7 @@ impl App {
             }
             AdvMsg::AdvWizOpen(a) => {
                 self.adv_wizard.open(a);
-                // Apply the saved loader only to EDL-based index queries.
+                // Pre-fill the remembered loader only for EDL-based index queries.
                 if matches!(a, AdvAction::DetectArb)
                     && self.rollback_query_needs_loader()
                     && let Some(path) = self.remembered_loader_for_model()
@@ -733,16 +727,15 @@ impl App {
                     self.error_msg = None;
                     return self.open_manual_rollback_editor();
                 }
-                // Change Country: leaving the Country step → apply the Settings
-                // default EDL loader the same way the dedicated EDL wizards do
-                // (auto-fill + skip the Loader step when a fitting default is set),
-                // so loader handling stays consistent across every picker flow.
+                // Change Country: leaving the Country step applies the remembered
+                // loader as the dedicated EDL wizards do (fill and skip the Loader
+                // step).
                 if matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo))
                     && self.adv_wizard.step == 0
                 {
                     self.adv_wizard.next(); // Country → Loader
                     if let Some(path) = self.remembered_loader_for_model() {
-                        // `remembered_loader_for_model` already fit-checked it.
+                        // Already fit-checked by `remembered_loader_for_model`.
                         match self.resolve_loader_input(&path) {
                             Ok(resolved) => {
                                 self.adv_wizard.file_path = Some(resolved);
@@ -758,19 +751,18 @@ impl App {
                     let Some(action) = self.adv_wizard.action else {
                         return Task::none();
                     };
-                    // Change Country Code runs the EDL country-change worker
-                    // (dump → patch → flash the model's country partitions →
-                    // reset to system), not the local-file advanced_file_worker.
+                    // Change Country Code runs the EDL country-change worker (dump →
+                    // patch → flash the model's country partitions → reset to
+                    // system), not the local-file advanced_file_worker.
                     if matches!(action, AdvAction::PatchDevinfo) {
                         let Some(target_code) = self.adv_wizard.country.clone() else {
                             return Task::none();
                         };
-                        // Re-resolve the loader against the currently connected model:
-                        // selections may predate this device (e.g. a `.melf` needs
-                        // its Sahara manifest only when the live device is TB323FU).
-                        // Pick-time resolve (AdvWizBrowseDone) keeps Confirm
-                        // accurate; this re-check keeps Start correct if the model
-                        // changed in between.
+                        // Re-resolve against the connected model: the pick may predate
+                        // this device (a `.melf` needs its Sahara manifest only on
+                        // `requires_sahara_manifest` models). The pick-time resolve
+                        // (AdvWizBrowseDone) keeps Confirm accurate; this covers a
+                        // model change since.
                         let Some(picked) = self.adv_wizard.file_path.clone() else {
                             return Task::none();
                         };
@@ -859,17 +851,14 @@ impl App {
             AdvMsg::AdvWizBrowseDone(path) => {
                 if let Some(p) = path {
                     if std::path::Path::new(&p).exists() {
-                        // Kind is derived from the action (folder ops →
-                        // folder bucket, file ops → File) rather than the
-                        // runtime is_dir() check — trusting the action
-                        // keeps buckets consistent even if rfd returns an
-                        // unexpected path type.
+                        // Kind comes from the action (folder ops → folder bucket,
+                        // file ops → File), not an is_dir() check, so buckets stay
+                        // consistent if rfd returns an unexpected path type.
                         self.remember_recent(self.adv_wizard.picker_kind(), &p);
                     }
-                    // Change Country Code picks an EDL loader: resolve it now
-                    // (e.g. upgrade a TB323FU .melf to its sibling Sahara
-                    // manifest) so the confirm screen shows the loader actually
-                    // used and Start needs no re-resolve.
+                    // These actions pick an EDL loader: resolve it now (e.g. swap a
+                    // `.melf` for its sibling Sahara manifest on manifest-route
+                    // models) so Confirm shows the loader actually used.
                     if matches!(
                         self.adv_wizard.action,
                         Some(AdvAction::PatchDevinfo | AdvAction::DetectArb)
@@ -922,9 +911,8 @@ impl App {
                 if let Some(dir) = self.adv_wizard.output_dir.clone()
                     && let Err(err) = open_in_file_manager(&dir)
                 {
-                    // Surface the failed command + path in the log so the user
-                    // can see what was tried; a silent no-op would make a
-                    // missing `xdg-open` invisible on Linux.
+                    // Log the failed command and path; a silent no-op would hide a
+                    // missing `xdg-open` on Linux.
                     self.log_push(format!(
                         "[GUI] {}",
                         tr_args!("log_gui_open_folder_failed", error = err)
@@ -945,8 +933,7 @@ impl App {
                         self.error_msg = Some(ltbox_core::i18n::tr("live_advanced_use_dedicated"));
                         return Task::none();
                     };
-                    // See AdvWizBrowseDone — trust the action's kind over
-                    // the runtime is_dir() probe.
+                    // Kind from the action, as in AdvWizBrowseDone.
                     self.remember_recent(self.adv_wizard.picker_kind(), &input_path);
                     let phases = self.begin_phased_op(View::Advanced, phase_kind);
                     self.error_msg = None;
@@ -994,8 +981,8 @@ impl App {
             }
             AdvMsg::AdvExecDone(lines) => {
                 self.flush_exec_done_log(lines);
-                // Leave adv_wizard / adv_confirm_path intact so the exec
-                // screen stays visible with Done/Failed until StartOver.
+                // Keep adv_wizard / adv_confirm_path so the exec screen stays
+                // visible until StartOver.
                 self.end_op();
                 Task::none()
             }

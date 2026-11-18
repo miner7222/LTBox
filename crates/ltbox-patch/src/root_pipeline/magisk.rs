@@ -1,8 +1,7 @@
 //! Magisk-specific download helpers (Stable + Nightly).
 //!
-//! Also hosts the shared `fetch_nightly_apk_outer_zip` helper that
-//! drives APatch's and KSU's nightly outer-zip flow — kept here
-//! because Magisk was the original consumer that defined its shape.
+//! Also hosts `fetch_nightly_apk_outer_zip`, shared with the APatch and KSU
+//! nightly flows.
 
 use std::path::{Path, PathBuf};
 
@@ -83,10 +82,9 @@ pub(super) fn fetch_nightly_apk_outer_zip(
         let f = fs::File::open(&outer_zip_path)?;
         let mut archive = zip::ZipArchive::new(f)
             .map_err(|e| LtboxError::Patch(format!("{repo}: nightly artifact not a zip: {e}")))?;
-        // Stage only the `.apk` entries, each streamed under a hard per-entry
-        // size cap. `archive.extract` writes every entry with no bound (a
-        // decompression-bomb sink) when all we need is the APK the recursive
-        // pick below selects. `enclosed_name` rejects zip-slip paths.
+        // Stage only the `.apk` entries, each streamed under a per-entry size cap;
+        // `archive.extract` would write every entry unbounded (decompression
+        // bomb). `enclosed_name` rejects zip-slip paths.
         for i in 0..archive.len() {
             let mut entry = archive
                 .by_index(i)

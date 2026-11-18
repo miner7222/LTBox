@@ -4,12 +4,11 @@ use crate::*;
 
 impl App {
     /// Open the EDL loader picker, filtered to the forms the connected model
-    /// accepts. Dedupe across `*SelectLoader` handlers.
+    /// accepts.
     ///
-    /// Always shows the dialog, including when the model has a remembered
-    /// loader: reaching a loader step that a remembered loader would have
-    /// skipped means the user walked Back to it on purpose, and the only
-    /// reason to do that is to choose a different file.
+    /// Always shows the dialog, even with a remembered loader: reaching a
+    /// loader step a remembered loader would have skipped means the user
+    /// walked Back to choose a different file.
     pub(crate) fn pick_loader<F>(&mut self, on_chosen: F) -> Task<Message>
     where
         F: 'static + Send + Fn(Option<String>) -> Message,
@@ -17,20 +16,14 @@ impl App {
         pickers::pick_file_for(self.model_loader_file_spec(), &self.recent_paths, on_chosen)
     }
 
-    /// The remembered EDL loader for the connected model, when it is still
-    /// usable. Every wizard consults this to decide whether its loader step
-    /// can be filled in and skipped.
+    /// The remembered EDL loader for the connected model, when still usable;
+    /// wizards use it to fill in and skip their loader step.
     ///
-    /// `None` — and therefore the picker — whenever anything is less than
-    /// certain: the feature is switched off, no model has been identified yet
-    /// (a loader is only ever remembered *against* a model, so with no model
-    /// there is nothing to look up), the model has no entry, or the
-    /// remembered file has since moved, stopped fitting the model, or lost
-    /// the manifest payloads beside it.
-    ///
-    /// Silent by design. The user never configured this path — it was learned
-    /// from an operation they ran — so a stale entry falls back to the picker
-    /// rather than accusing them of a misconfiguration.
+    /// `None` (so the picker shows) when the feature is off, no model is
+    /// identified, the model has no entry, or the remembered file moved, no
+    /// longer fits the model, or lost its manifest payloads. Silent by design:
+    /// the path was learned, not configured, so a stale entry just falls back
+    /// to the picker.
     pub(crate) fn remembered_loader_for_model(&self) -> Option<String> {
         if !self.remember_edl_loader {
             return None;
@@ -42,9 +35,8 @@ impl App {
         if !path.is_file() || !self.loader_fits_model(path) {
             return None;
         }
-        // Same gate the picker applies, so a remembered manifest that lost its
-        // payloads sends the user back to the picker instead of skipping the
-        // step onto a loader that cannot load.
+        // Same gate as the picker: a manifest that lost its payloads falls
+        // back to the picker instead of skipping onto a loader that cannot load.
         prepare_manifest_pick(path)
             .ok()
             .map(|p| p.to_string_lossy().into_owned())
@@ -53,9 +45,8 @@ impl App {
     /// Note which model the operation about to start belongs to, and discard
     /// any unread upload record from the previous one.
     ///
-    /// The model is captured *now* because the device is about to re-enumerate
-    /// into EDL: `device.model` can be blank, or briefly reset entirely, by the
-    /// time the upload succeeds.
+    /// Captured now because `device.model` can be blank or reset once the
+    /// device re-enumerates into EDL.
     pub(crate) fn arm_loader_memory(&mut self) {
         ltbox_device::edl::clear_uploaded_loader();
         self.loader_memory_model = model_memory_key(self.device.model.as_str());
@@ -79,39 +70,36 @@ impl App {
         self.persist_settings();
     }
 
-    /// Drain a completed loader upload published by the EDL layer. Called from
-    /// the same tick that drains worker log output.
+    /// Drain a completed loader upload published by the EDL layer; called from
+    /// the tick that drains worker log output.
     pub(crate) fn drain_uploaded_loader(&mut self) {
         if let Some(loader) = ltbox_device::edl::take_uploaded_loader() {
             self.remember_uploaded_loader(&loader);
         }
     }
 
-    /// Apply the remembered loader to whichever advanced-wizard loader-step is
-    /// currently open. Pre-fills the wizard's `loader_path` and either advances
-    /// directly to the Select step (DumpPhys / FlashPhys — no scan needed) or
-    /// fires the GPT scan (FlashParts / DumpParts — Select step requires
-    /// populated rows). Called from `AdvConfirm` after a wizard's `_open` flag
-    /// flips.
+    /// Apply the remembered loader to the open advanced wizard's loader step.
+    /// Pre-fills `loader_path`, then either advances to the Select step
+    /// (DumpPhys / FlashPhys, no scan) or starts the GPT scan (FlashParts /
+    /// DumpParts, whose Select step needs populated rows). Called from
+    /// `AdvConfirm` after a wizard's `_open` flag flips.
     ///
-    /// Returns `Task::none()` when the model has no usable remembered loader —
-    /// the caller's existing flow then surfaces the loader step as before, and
-    /// the user can still reach it with Back after a skip.
+    /// Returns `Task::none()` when there is no usable remembered loader, so
+    /// the loader step shows as usual.
     pub(crate) fn apply_remembered_loader_to_advanced_wizard(&mut self) -> Task<Message> {
         let Some(path) = self.remembered_loader_for_model() else {
             return Task::none();
         };
         if self.advanced_wizard_open.is_flash_parts() {
-            // Leave step at 0 (Loader); FlashPartsScanDone advances to
-            // Select on success, so jumping past step 0 here would
-            // double-advance past Select.
+            // Stay at step 0: FlashPartsScanDone advances to Select, so
+            // advancing here would skip past it.
             self.flash_parts.loader_path = Some(path);
             return self.update(Message::FlashParts(FlashPartsMsg::FlashPartsScanStart));
         } else if self.advanced_wizard_open.is_dump_parts() {
             self.dump_parts.loader_path = Some(path);
             return self.update(Message::DumpParts(DumpPartsMsg::DumpPartsScanStart));
         } else if self.advanced_wizard_open.is_dump_phys() {
-            // Whole-LUN — no scan. Skip to Select directly.
+            // Whole-LUN: no scan, go straight to Select.
             self.dump_phys.loader_path = Some(path);
             self.dump_phys.step = 1;
         } else if self.advanced_wizard_open.is_flash_phys() {
@@ -121,14 +109,13 @@ impl App {
         Task::none()
     }
 
-    /// Pre-fill the top-level KonaBess wizard from the model's remembered EDL
-    /// loader, preserving the former Advanced-tile entry behavior.
+    /// Pre-fill the KonaBess wizard from the model's remembered EDL loader.
     pub(crate) fn apply_remembered_loader_to_konabess(&mut self) {
         let Some(path) = self.remembered_loader_for_model() else {
             return;
         };
-        // `remembered_loader_for_model` already fit-checked and gated the path;
-        // resolve only to keep the recents bookkeeping identical to a pick.
+        // The path is already fit-checked and gated; resolve only for the
+        // recents bookkeeping a pick would do.
         if let Ok(loader) = self.resolve_loader_input(&path) {
             self.konabess.loader_path = Some(loader);
             self.konabess.loader_error = None;
@@ -148,10 +135,9 @@ impl App {
             self.error_msg = Some(msg);
             return Err(());
         }
-        // Backstop for loaders that reached a wizard without passing the
-        // picker's gate (recents, restored state): decrypt a `.x` manifest and
-        // require its images, so a run never gets as far as forcing the device
-        // into EDL on a loader that cannot load.
+        // Backstop for loaders that skipped the picker's gate (recents,
+        // restored state): decrypt a `.x` manifest and require its images
+        // before the device is forced into EDL.
         let prepared = prepare_manifest_pick(pb).map_err(|msg| {
             self.error_msg = Some(msg);
         })?;
@@ -184,13 +170,10 @@ impl App {
         let path = std::path::Path::new(selected_path);
         if path.is_file() {
             self.remember_recent(pickers::PickerKind::File, selected_path);
-            // TB323FU model gate: if the user picked a `.melf` but the
-            // device is a TB323FU, upgrade to the
-            // `qsahara_device_programmer.xml` manifest sitting in the
-            // same folder. If the manifest is missing the .melf
-            // alone is wrong and would fail mid-Sahara — abort up
-            // front. Performed during resolve so the wizard's Confirm
-            // step shows the correct path.
+            // Manifest-route models (`requires_sahara_manifest`) cannot load a
+            // lone `.melf`: swap in the `qsahara_device_programmer.xml` beside
+            // it, or abort now rather than fail mid-Sahara. Done here so the
+            // Confirm step shows the final path.
             if self.requires_sahara_manifest()
                 && is_melf_loader(path)
                 && let Some(parent) = path.parent()
@@ -205,12 +188,10 @@ impl App {
                     path = path.display()
                 ));
             }
-            // Multi-image manifest picked directly, in either form. The
-            // encrypted `.x` is decrypted to its sibling `.xml` here rather
-            // than in `EdlSession::open`, because the completeness check
-            // below needs the `<image>` list while the user is still in the
-            // picker — a manifest missing its payloads must not reach a
-            // wizard's Next button.
+            // Manifest picked directly (`.xml` or encrypted `.x`). A `.x` is
+            // decrypted to its sibling `.xml` here, not in `EdlSession::open`,
+            // so the completeness check can read the `<image>` list while still
+            // in the picker.
             if ltbox_core::sahara_xml::is_encrypted_manifest_filename(path)
                 || ltbox_core::sahara_xml::is_manifest_filename(path)
             {
@@ -235,14 +216,9 @@ impl App {
         Err(tr_args!("err_path_missing", path = selected_path))
     }
 
-    /// Whether the polled device is a TB323FU. Drives the multi-image
-    /// EDL loader path: TB323FU doesn't accept a single
-    /// `xbl_s_devprg_ns.melf`; it needs the full
-    /// `qsahara_device_programmer.xml` manifest + the per-id ELF /
-    /// MBN payloads it references. The loader resolver upgrades a
-    /// stray `.melf` selection to the manifest when one exists in
-    /// the same folder; if not, it aborts up front rather than
-    /// failing mid-Sahara.
+    /// Whether the polled model's capabilities require the multi-image Sahara
+    /// manifest (`qsahara_device_programmer.xml` plus the ELF / MBN payloads it
+    /// references) instead of a single `.melf`. See [`Self::resolve_loader_input`].
     pub(crate) fn requires_sahara_manifest(&self) -> bool {
         self.model_capabilities().requires_sahara_manifest
     }

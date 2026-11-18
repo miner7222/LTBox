@@ -129,8 +129,8 @@ impl FirmwareIdentity {
 
     pub(crate) fn from_avb_info(info: &ltbox_patch::avb::AvbImageInfo) -> Self {
         let fingerprint = ltbox_patch::avb::build_fingerprint(info);
-        // A known model (or the codename a custom ROM uses for it) wins over
-        // the product-name split, so a codename reports its canonical model.
+        // A known model (or a custom ROM's codename for it) wins over the
+        // product-name split, so a codename reports the canonical model.
         let model_token = fingerprint.as_deref().and_then(|fp| {
             ltbox_core::model::fingerprint_models(fp)
                 .next()
@@ -222,7 +222,7 @@ pub(crate) struct FlashWizard {
     /// firmware folder has none. `None` + `loader_required` blocks Next.
     pub(crate) loader_override: Option<String>,
     /// Reason the last picked loader was rejected (e.g. a standalone `.melf` on
-    /// TB323FU), shown in the folder step.
+    /// a `requires_sahara_manifest` model), shown in the folder step.
     pub(crate) loader_error: Option<String>,
     pub(crate) firmware_identity: Option<FirmwareIdentity>,
     pub(crate) firmware_identity_pending: bool,
@@ -379,7 +379,7 @@ impl Wizard for FlashWizard {
             },
             FlashStep::Target => self.target.is_some(),
             FlashStep::Data => self.data_mode.is_some(),
-            // Folder picked, and — when it ships no loader — a loader provided.
+            // Folder picked and, if it ships no loader, a loader provided.
             FlashStep::Folder => {
                 self.firmware_folder.is_some()
                     && (!self.loader_required || self.loader_override.is_some())

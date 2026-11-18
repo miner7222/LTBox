@@ -1,4 +1,5 @@
-//! Capture native stdout/stderr into the GUI log on Windows.
+//! Capture native (third-party) stdout/stderr into the GUI log on Windows.
+//! LTBox's own log lines come from the typed live sink, not from here.
 
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(windows)]
@@ -20,8 +21,7 @@ const PENDING_BUFFER_CAP: usize = 64 * 1024;
 
 static TAP_QUEUE: OnceLock<Queue> = OnceLock::new();
 
-/// Drain every captured line since the last call. Empty on non-Windows
-/// or pipe failure.
+/// Drain the captured lines. Empty on non-Windows or pipe failure.
 pub fn drain() -> Vec<String> {
     if let Some(q) = TAP_QUEUE.get()
         && let Ok(mut g) = q.lock()
@@ -48,9 +48,8 @@ fn install_inner() -> Queue {
         Err(_) => return queue,
     };
 
-    // Duplicate the write handle so one pipe feeds both stdout and
-    // stderr — magiskboot-rs routes every log line through eprintln!
-    // and losing those during a crash also loses the crash context.
+    // Duplicate the write handle so one pipe feeds both stdout and stderr;
+    // magiskboot-rs logs through eprintln!.
     let write_raw = writer.into_raw_handle();
     let write_raw_err: *mut core::ffi::c_void = unsafe {
         use windows_sys::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle};
@@ -67,8 +66,7 @@ fn install_inner() -> Queue {
             DUPLICATE_SAME_ACCESS,
         ) == 0
         {
-            // Fall back to the original — we never close these until
-            // process exit, so handle-shutdown coupling doesn't bite.
+            // Fall back to the original; neither handle is closed before exit.
             write_raw
         } else {
             dup
@@ -103,10 +101,9 @@ fn install_inner() -> Queue {
                         if emitted > 0 {
                             last_emit = Instant::now();
                         } else if last_emit.elapsed() >= INTERIM_EMIT_INTERVAL {
-                            // No `\n` yet: surface the latest `\r` segment for
-                            // live progress, then drop everything up to it so
-                            // a CR-only progress bar can't grow `pending`
-                            // without bound (the segment is already emitted).
+                            // No `\n` yet: emit the latest `\r` segment as live
+                            // progress, then drop up to it so a CR-only
+                            // progress bar cannot grow `pending` unbounded.
                             if emit_interim_progress(&pending, &q) {
                                 last_emit = Instant::now();
                                 if let Some(idx) = pending.iter().rposition(|&b| b == b'\r') {
@@ -114,10 +111,8 @@ fn install_inner() -> Queue {
                                 }
                             }
                         }
-                        // Cap the buffer even without `\r`/`\n` activity, so
-                        // a pathological stream (e.g. raw binary on the tap)
-                        // can't grow it unbounded; keep the tail so the next
-                        // `\n` still yields a usable line.
+                        // Cap the buffer for streams without `\r`/`\n` (e.g. raw
+                        // binary); keep the tail so the next `\n` yields a line.
                         if pending.len() > PENDING_BUFFER_CAP {
                             let drop = pending.len() - PENDING_BUFFER_CAP;
                             pending.drain(..drop);
@@ -180,12 +175,10 @@ fn emit_interim_progress(pending: &[u8], queue: &Queue) -> bool {
 
 #[cfg(windows)]
 fn flush_lines(pending: &mut Vec<u8>, queue: &Queue) -> usize {
-    // Split on '\n' only. Treating each `\r` as a line boundary
-    // produces hundreds of queue entries per second during a pbr
-    // flash, which crashes the wgpu glyph atlas on some drivers.
-    // Buffer to `\n`, keep only the final `\r` fragment of each
-    // logical line. Returns queue push count so the reader can reset
-    // its interim-emit throttle.
+    // Split on '\n' only, keeping the final `\r` fragment of each line: a
+    // `\r` boundary would queue hundreds of entries per second during a pbr
+    // progress bar, which crashes the wgpu glyph atlas on some drivers.
+    // Returns the push count so the reader can reset its interim throttle.
     let mut emitted = 0usize;
     let mut start = 0usize;
     let mut i = 0usize;
@@ -240,8 +233,7 @@ fn last_nonempty_cr_segment(slice: &[u8]) -> &[u8] {
     best
 }
 
-/// Decode + strip ANSI. Upstream lines keep their own prefix — wizard
-/// code applies `[Root]` / `[EDL]` / ... at push time.
+/// Decode lossily and strip ANSI escapes.
 #[cfg(windows)]
 fn sanitize_line(bytes: &[u8]) -> String {
     let decoded = String::from_utf8_lossy(bytes);
@@ -298,8 +290,7 @@ mod tests {
 
     #[test]
     fn flush_lines_collapses_pbr_cr_updates_into_final_state() {
-        // pbr rewrites one line via \r…\n → one queue entry (the final
-        // segment) or cosmic-text gets beaten to death each frame.
+        // pbr rewrites one line via \r…\n; only the final segment is queued.
         let queue: Queue = Arc::new(Mutex::new(Vec::new()));
         let mut buf = b"progress 10%\rprogress 50%\rprogress 100%\n".to_vec();
         flush_lines(&mut buf, &queue);

@@ -150,10 +150,8 @@ pub(crate) struct WorkflowConfig {
 
 /// Sort marker for a table column head.
 ///
-/// The active column shows the direction it is sorted in; the others show that
-/// they *can* be sorted. Both are arrows so the pair reads as one control in
-/// two states rather than two different marks, and the idle arrow drops to the
-/// disabled tone so the sorted column is the one that stands out.
+/// The active column shows its sort direction; the others show an idle,
+/// dimmed "sortable" arrow.
 pub(crate) fn parts_sort_marker(is_active: bool, desc: bool) -> Element<'static, Message> {
     let glyph = if is_active {
         if desc { "\u{2193}" } else { "\u{2191}" }
@@ -172,10 +170,8 @@ pub(crate) fn parts_sort_marker(is_active: bool, desc: bool) -> Element<'static,
         .into()
 }
 
-/// Sortable header cell for the FlashParts / DumpParts partition table.
-/// Renders `label` followed by either the active-sort arrow or the idle
-/// sortable marker; click fires `msg`. Transparent button so the cell reads
-/// as text first.
+/// Sortable header cell for the FlashParts / DumpParts partition table:
+/// `label` plus the sort marker; click fires `msg`.
 pub(crate) fn parts_sort_header(
     label: String,
     is_active: bool,

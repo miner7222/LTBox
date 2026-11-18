@@ -1,5 +1,4 @@
-//! Device + connection identity model: the device-class classifier
-//! and the live connection state, split out of `main.rs`.
+//! Device-class classifiers and the live connection state.
 
 use crate::theme::Palette;
 /// Whether the model needs the long-edge USB port advisory.
@@ -7,31 +6,30 @@ pub(crate) fn is_dual_usbc_model(model: &str) -> bool {
     ltbox_core::model::capabilities(model).dual_usb
 }
 
-/// Whether a root run on `model` skips AVB post-processing entirely. TB323FU
-/// signs its chain through the testkey efisp/GBL route instead, so the images a
-/// root run backs up carry no AVB metadata at all.
+/// Whether a root run on `model` skips AVB post-processing entirely
+/// (`root_uses_gbl`). Such models sign their chain through the testkey
+/// efisp/GBL route, so the backed-up images carry no AVB metadata.
 ///
-/// Unroot therefore cannot compare such a backup against the device and has to
-/// restore it verbatim. The shared capability profile keeps Root and Unroot
-/// on the same route when another model adopts this behavior.
+/// Unroot therefore cannot compare the backup against the device and restores
+/// it verbatim. Keying on the capability keeps Root and Unroot on one route.
 pub(crate) fn root_skips_avb_postprocess(model: &str) -> bool {
     ltbox_core::model::capabilities(model).root_uses_gbl
 }
 
-/// Every supported Lenovo tablet enforces AVB rollback protection EXCEPT the
-/// PRC-only TB322FC and TB324ZC. Used to decide whether a missing fastboot
-/// `stored_rollback_index` means "no ARB, skip" (TB322FC, TB324ZC) or "ARB present but
+/// Every supported model enforces AVB rollback protection except the PRC-only
+/// TB322FC and TB324ZC. Decides whether a missing fastboot
+/// `stored_rollback_index` means "no ARB, skip" (those two) or "ARB present but
 /// fastboot can't report it, read it over EDL" (everything else). An unknown
-/// model is treated as protected — safer to read + honour the index than to
-/// skip and risk a rollback-rejected downgrade.
+/// model counts as protected: reading the index beats risking a
+/// rollback-rejected downgrade.
 pub(crate) fn is_rollback_protected_model(model: &str) -> bool {
     ltbox_core::model::capabilities(model)
         .rollback
         .is_protected()
 }
 
-/// Apply the model's existing rollback-mode restrictions. Shared by the
-/// confirm editor and worker, which also enforces newly discovered identities.
+/// Apply the rollback policy's restrictions to a requested mode. Shared by the
+/// confirm editor and the worker.
 pub(crate) fn effective_rollback_mode(
     policy: ltbox_core::model::RollbackPolicy,
     mode: ltbox_patch::rollback::RollbackMode,
@@ -88,25 +86,21 @@ pub(crate) enum ConnectionStatus {
     #[default]
     None,
     Adb,
-    /// ADB inside a TWRP recovery build (`ro.product.device` starts
-    /// with `twrp_`). Same transition rules as `Adb`; different label.
+    /// ADB inside TWRP (product name starts with `twrp_`). Same transitions as
+    /// `Adb`; different label.
     AdbRecovery,
     /// ADB sees the device but USB-debug auth is unaccepted
-    /// (`unauthorized` / `authorizing`). Shell probes fail; dashboard
-    /// shows an authorize-debug prompt.
+    /// (`unauthorized` / `authorizing`); shell probes fail.
     AdbUnauthorized,
-    /// Recovery sideload: adbd completed the connect without an auth
-    /// challenge but serves no `shell:`. Authorized, and still unusable —
-    /// no property can be read, so the dashboard stays empty. Kept apart
-    /// from `AdbUnauthorized` so it never tells the user to re-tap
-    /// "Allow USB debugging" at a screen that has no such prompt.
+    /// Recovery sideload: adbd connects without an auth challenge but serves
+    /// no `shell:`, so no property can be read. Kept apart from
+    /// `AdbUnauthorized` so the user is never told to re-tap "Allow USB
+    /// debugging" at a screen with no such prompt.
     AdbSideload,
-    /// An external `adb.exe` server (or anything else listening on
-    /// `127.0.0.1:5037`) is holding the Android USB interface
-    /// exclusively, so LTBox's libusb claim returns `LIBUSB_ERROR_BUSY`
-    /// even though the device is physically authorized. Distinct from
-    /// `AdbUnauthorized` so the dashboard can offer "kill server"
-    /// instead of asking the user to re-tap "Allow USB debugging".
+    /// An external `adb.exe` server (or anything else on `127.0.0.1:5037`)
+    /// holds the Android USB interface, so LTBox's libusb claim returns
+    /// `LIBUSB_ERROR_BUSY` although the device is authorized. Distinct from
+    /// `AdbUnauthorized` so the dashboard can offer "kill server".
     AdbServerBlocking,
     Fastboot,
     Edl,

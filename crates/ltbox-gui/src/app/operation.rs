@@ -55,10 +55,9 @@ impl App {
         self.error_msg = None;
         self.operation_error = None;
         self.clear_flash_progress();
-        // Both operation entry points funnel through here, which is the last
-        // moment the connected model is reliably readable: the device is about
-        // to re-enumerate into EDL, and a re-enumeration can blank the polled
-        // snapshot outright.
+        // Both operation entry points pass through here, the last moment the
+        // model is reliably readable: re-enumeration into EDL can blank the
+        // polled snapshot.
         self.arm_loader_memory();
     }
 
@@ -85,8 +84,8 @@ impl App {
         let Some(kind) = self.operation.phase_kind() else {
             return false;
         };
-        // Overflow-safe: current operation step is zero-based; policies use
-        // the one-based phase numbers printed in the live log.
+        // The step is zero-based; policies use the one-based phase numbers
+        // from the live log.
         self.operation
             .current_step()
             .checked_add(1)
@@ -164,17 +163,15 @@ impl App {
             || self.root.kernel_version_popup_open
     }
 
-    /// True when the Advanced view holds wizard state the user would lose to a
-    /// sidebar bounce: an op's exec/result surface (running, or its Done screen
-    /// still up), a generic op sitting on its confirm step, or a partition
-    /// read/write whose GPT table is still valid (device still in EDL). The
-    /// `Navigate` handler consults this to skip the entry-time reset so
-    /// navigating away and back keeps the user's place.
+    /// True when the Advanced view holds wizard state a sidebar bounce would
+    /// lose: an exec/result surface (running, or Done still up), a generic op
+    /// on its confirm step, or a partition read/write whose GPT table is still
+    /// valid (device still in EDL). `Navigate` uses it to skip the entry-time
+    /// reset.
     pub(crate) fn advanced_in_progress(&self) -> bool {
-        // The exec/result surface must survive a sidebar bounce until the user
-        // hits 'start over' — mirrors the `is_in_exec()` gate the Root / Flash /
-        // etc. views use in `Navigate`. `busy` already covers a running op; this
-        // also keeps the result on screen after the op finishes.
+        // The exec/result surface survives a bounce until 'start over', like
+        // the `is_in_exec()` gate other views use in `Navigate`; this also
+        // keeps the result up after the op finishes.
         if self.advanced_inline_exec_surface_active() {
             return true;
         }
@@ -183,9 +180,9 @@ impl App {
             // Generic advanced op (PatchArb / PatchDevinfo / DetectArb / ...):
             // preserve only on the confirm step (waiting to start).
             W::None => self.adv_wizard.action.is_some() && self.adv_wizard.is_confirm_step(),
-            // Read/Write Partitions: a rendered GPT table — or the confirm
-            // screen after it — survives as long as the device stays in EDL,
-            // since the table reflects the live partition layout.
+            // Read/Write Partitions: the GPT table (or the confirm screen after
+            // it) survives while the device stays in EDL, as it reflects the
+            // live layout.
             W::FlashParts => {
                 self.device.connection == ConnectionStatus::Edl && !self.flash_parts.rows.is_empty()
             }
@@ -196,15 +193,13 @@ impl App {
             // DumpPhys runs Select → Exec with no confirm screen to preserve.
             W::FlashPhys => self.flash_phys.step + 2 == FLASH_PHYS_STEPS.len(),
             W::DumpPhys => false,
-            // Simple Flash: preserve the confirm screen (folder already
-            // picked) so a sidebar bounce returns the user to it.
+            // Simple Flash: preserve the confirm screen (folder already picked).
             W::SimpleFlash => self.simple_flash.step == 1,
         }
     }
 
-    /// True while KonaBess owns a prepared EDL workspace whose table or
-    /// confirm screen must survive a sidebar bounce. This mirrors the
-    /// partition-table branch of `advanced_in_progress`.
+    /// True while KonaBess owns a prepared EDL workspace whose table or confirm
+    /// screen must survive a sidebar bounce (cf. `advanced_in_progress`).
     pub(crate) fn konabess_in_progress(&self) -> bool {
         self.device.connection == ConnectionStatus::Edl
             && self.konabess.prepared.is_some()
@@ -215,16 +210,14 @@ impl App {
         let dedicated_reboot_wait =
             self.reboot_wait_transition && self.operation.view() == Some(View::Reboot);
         self.operation.is_running()
-            // The temp-file cleanup borrows `busy` only to lock out racing
-            // device ops; it's a sub-second maintenance action with its own
-            // in-button "Cleaning…" state, so it gets no full-screen dialog.
+            // Temp-file cleanup holds the busy lock only against racing device
+            // ops and shows its own in-button state, so no dialog.
             && !self.cleaning_temp
             && self.current_view != View::Dashboard
             && !self.blocking_popup_open()
             && !self.current_view_has_inline_exec_surface()
-            // The EDL transition has its own truthful checklist. Keep the
-            // generic spinner suppressed even after that modeless dialog is
-            // closed; the tracked operation itself continues unchanged.
+            // The EDL transition has its own checklist; keep the generic
+            // spinner suppressed even after that dialog is closed.
             && !dedicated_reboot_wait
     }
 
@@ -261,18 +254,14 @@ impl App {
             .unwrap_or_else(|| self.t("status_working").to_string())
     }
 
-    /// Override busy-dialog body for the four Advanced partition/physical
-    /// flows during their reboot → loader → GPT-scan preamble. Gated on
-    /// `busy_view == Advanced` so a stale wizard doesn't hijack unrelated ops.
+    /// Override busy-dialog body for KonaBess and for the Advanced
+    /// partition/physical flows (including their reboot → loader → GPT-scan
+    /// preamble). Gated on the busy view so a stale wizard cannot hijack
+    /// unrelated ops.
     ///
-    /// When the Advanced view is busy but no specific sub-action labels
-    /// itself, the default template "{operation} 중입니다." substitutes
-    /// in `nav_advanced` ("고급") and reads awkwardly across all four
-    /// locales — "고급 중입니다." / "Advanced is in progress." /
-    /// "高级 正在进行中。" / "Дополнительно выполняется." — because
-    /// the operation token is a section noun, not a verb phrase. The
-    /// `busy_advanced_generic` key carries a per-locale full sentence
-    /// for this fallback.
+    /// When Advanced is busy with no sub-action label, the default template
+    /// would insert the section noun `nav_advanced` and read awkwardly;
+    /// `busy_advanced_generic` supplies a full sentence instead.
     pub(crate) fn busy_body_override(&self) -> Option<String> {
         if self.operation.view() == Some(View::KonaBess) {
             let key = if self.konabess.prepared.is_some() {
@@ -285,13 +274,11 @@ impl App {
         if self.operation.view() != Some(View::Advanced) {
             return None;
         }
-        // Simple Flash is a full firmware flash, not a partition scan/write —
-        // let it fall through to the default "{operation} in progress" template
-        // (operation = its own label) instead of the partition-scan body.
+        // Simple Flash is a full firmware flash: use the default template with
+        // its own label, not the partition-scan body.
         if self.advanced_wizard_open.is_open() && !self.advanced_wizard_open.is_simple_flash() {
-            // Write Partitions' exec phase is a partition *write*; the loader-
-            // upload + GPT scan preamble (and the other advanced flows) keep
-            // the scan label.
+            // Write Partitions' exec phase is a write; its loader-upload + GPT
+            // scan preamble and the other flows keep the scan label.
             let key = if self.advanced_wizard_open.is_flash_parts() && self.flash_parts.is_in_exec()
             {
                 "busy_partition_write"

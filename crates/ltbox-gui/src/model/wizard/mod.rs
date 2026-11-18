@@ -1,5 +1,4 @@
-//! Wizard model — the per-flow wizard state structs and their
-//! navigation logic, extracted from `main.rs`.
+//! Per-flow wizard state structs and their navigation logic.
 
 use crate::pickers;
 use crate::{
@@ -34,14 +33,11 @@ pub(crate) use simple_flash::*;
 pub(crate) use sysupdate::*;
 pub(crate) use unroot::*;
 
-/// Linear-step wizard contract. Wizards whose `next` / `back` walk a
-/// `0..step_count` range share `reset` / `next` / `back` /
-/// `is_in_exec` via this trait's default impls; only `step`,
-/// `step_mut`, `step_count`, and `can_next` need per-impl bodies.
+/// Linear-step wizard contract: `next` / `back` walk `0..step_count`, and
+/// implementors supply only `step`, `step_mut`, `step_count` and `can_next`.
 ///
-/// Not implemented for `RootWizard` because its non-linear step
-/// numbering (steps skip around depending on family/mode) requires
-/// custom navigation logic.
+/// Not implemented for `RootWizard`: its step numbering skips around by
+/// family/mode and needs custom navigation.
 pub(crate) trait Wizard: Default {
     fn step(&self) -> usize;
     fn step_mut(&mut self) -> &mut usize;
@@ -64,9 +60,8 @@ pub(crate) trait Wizard: Default {
     fn is_in_exec(&self) -> bool {
         self.step() == self.step_count() - 1
     }
-    /// True on the confirm/start screen — the step immediately before
-    /// exec. A sidebar bounce here preserves the wizard (the user returns
-    /// to the confirm screen) instead of resetting to step 0.
+    /// True on the confirm/start screen, the step just before exec. A sidebar
+    /// bounce here keeps the wizard instead of resetting to step 0.
     fn is_on_confirm_step(&self) -> bool {
         let n = self.step_count();
         n >= 2 && self.step() == n - 2

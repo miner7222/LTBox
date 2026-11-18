@@ -1,31 +1,27 @@
 //! Source-free kallsyms decoder.
 //!
-//! Reconstructs the kernel's symbol table directly from the in-image kallsyms
-//! blob — no `System.map`, no `/proc/kallsyms`, no kernel source. This is a
-//! unified port of upstream's seven near-duplicate `kallsyms_lookup_name_*`
-//! classes: the only real differences between them are a handful of layout
-//! constants and heuristics, captured here in [`Profile`] and selected by
-//! kernel version.
+//! Reconstructs the kernel's symbol table from the in-image kallsyms blob alone
+//! (no `System.map`, `/proc/kallsyms` or kernel source). Unified port of
+//! upstream's seven near-duplicate `kallsyms_lookup_name_*` classes; their
+//! layout differences are captured in [`Profile`] and selected by kernel version.
 //!
-//! All AArch64 Android kernels in scope use `CONFIG_KALLSYMS_BASE_RELATIVE`, so
-//! the relative-offsets format is the only path implemented; the absolute
-//! `kallsyms_addresses` formats from the oldest kernels are out of scope.
+//! Only the `CONFIG_KALLSYMS_BASE_RELATIVE` format is implemented (all
+//! AArch64 Android kernels in scope use it), not the absolute
+//! `kallsyms_addresses` format of the oldest kernels.
 //!
-//! The validated target kernels store `kallsyms_offsets` as a monotonically
-//! increasing unsigned table, which is what [`Decoder::scan_offsets_list`]
-//! keys on. [`Decoder::sym_address`] also implements the signed
+//! The table-location heuristic ([`Decoder::scan_offsets_list`], as in upstream)
+//! assumes `kallsyms_offsets` is a monotonically increasing unsigned table, as
+//! on the validated kernels. [`Decoder::sym_address`] does implement the signed
 //! `ABSOLUTE_PERCPU` rule (negative entries relative to `relative_base - 1`),
-//! but, exactly like upstream's offsets scan, the *table-location* heuristic
-//! assumes the unsigned form: a kernel built with `ABSOLUTE_PERCPU` interleaving
-//! many negative entries could truncate the scanned run. The whole-image
-//! `kallsyms_num_syms` fallback recovers the symbol count in most such cases,
-//! but that layout is not covered by the integration tests.
+//! but a kernel with many negative entries could truncate the scanned run. The
+//! whole-image `kallsyms_num_syms` fallback usually recovers the count; that
+//! layout is not covered by the integration tests.
 //!
 //! Layout walked (relative format), in file order:
-//! `kallsyms_offsets` → `kallsyms_relative_base` (6.1.60+) →
-//! `kallsyms_seqs_of_names` (6.12, sits before num) → `kallsyms_num_syms` →
+//! `kallsyms_offsets` → `kallsyms_relative_base` (6.1.42+) →
+//! `kallsyms_seqs_of_names` (6.12+, before num) → `kallsyms_num_syms` →
 //! `kallsyms_names` → `kallsyms_markers` → `kallsyms_seqs_of_names`
-//! (6.1.60..6.12) → `kallsyms_token_table` → `kallsyms_token_index`.
+//! (6.1.42..6.12) → `kallsyms_token_table` → `kallsyms_token_index`.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -105,17 +101,17 @@ enum NumFrom {
     Zero,
 }
 
-/// Where `kallsyms_seqs_of_names` sits in the layout (6.1.60+ only).
+/// Where `kallsyms_seqs_of_names` sits in the layout (6.1.42+ only).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Seqs {
     None,
-    /// Between `kallsyms_markers` and `kallsyms_token_table` (6.1.60..6.12).
+    /// Between `kallsyms_markers` and `kallsyms_token_table` (6.1.42..6.12).
     AfterMarkers,
     /// Between `kallsyms_relative_base` and `kallsyms_num_syms` (6.12+).
     AfterRelBase,
 }
 
-/// Per-kernel-version layout knobs — the entire delta between upstream's seven
+/// Per-kernel-version layout knobs; the whole delta between upstream's seven
 /// decoder classes.
 struct Profile {
     /// Reject a compressed name length `>=` this (`KSYM_NAME_LEN`).
@@ -201,10 +197,6 @@ pub fn analyze_with_version(
     }
     .run()
 }
-
-// =========================================================================
-// Byte helpers
-// =========================================================================
 
 fn rd16(b: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([b[off], b[off + 1]])
@@ -312,10 +304,6 @@ fn is_really_work(buf: &[u8], start: usize) -> bool {
     true
 }
 
-// =========================================================================
-// Decoder
-// =========================================================================
-
 struct Decoder<'a> {
     buf: &'a [u8],
     profile: Profile,
@@ -326,12 +314,12 @@ impl Decoder<'_> {
         let buf = self.buf;
         let code_static_start = find_static_code_start(buf);
 
-        // 1. kallsyms_offsets list (monotonic u32 deltas, first entry 0).
+        // kallsyms_offsets list (monotonic u32 deltas, first entry 0).
         let (mut off_start, off_end) = self
             .find_offsets_list()
             .ok_or(KallsymsError::NoOffsetsList)?;
 
-        // 2. kallsyms_relative_base (6.1.60+).
+        // kallsyms_relative_base (6.1.42+).
         let mut relative_base = 0u64;
         let mut rel_base_end = 0usize;
         if self.profile.has_relative_base {
@@ -342,18 +330,17 @@ impl Decoder<'_> {
             rel_base_end = rb + 8;
         }
 
-        // 3. kallsyms_num_syms.
+        // kallsyms_num_syms.
         let min_cnt = ((off_end - off_start) / 4) as i64;
         let num_search_start = match self.profile.num_from {
             NumFrom::OffsetsEnd => off_end,
             NumFrom::RelBaseEnd => rel_base_end,
             NumFrom::Zero => 0,
         };
-        // `kallsyms_num_syms` precedes `kallsyms_names`. Its position relative to
-        // the offsets list varies between builds (Android backports move the
-        // num/names block ahead of the offsets), so the version-directed start
-        // is only a fast path: on miss, fall back to a whole-image scan. The
-        // names entropy check makes a wrong match astronomically unlikely.
+        // `kallsyms_num_syms` precedes `kallsyms_names`, and its position relative
+        // to the offsets list varies (Android backports put num/names before the
+        // offsets). The version-directed start is a fast path; on a miss scan the
+        // whole image. The names entropy check makes a false match very unlikely.
         let (num, num_offset) = self
             .find_num(num_search_start, min_cnt - 10, min_cnt + 20)
             .or_else(|| {
@@ -366,9 +353,8 @@ impl Decoder<'_> {
             .ok_or(KallsymsError::NoSymbolCount)?;
         let _ = rel_base_end;
 
-        // Re-align the offsets list to exactly `num` entries ending at off_end,
-        // backing up while the first entry is non-zero (mirrors upstream). Only
-        // the start matters here — the realigned end stays at off_end.
+        // Re-align the offsets list to `num` entries ending at off_end, backing up
+        // while the first entry is non-zero (mirrors upstream).
         off_start = off_end - (num as usize) * 4;
         while off_start >= 4 && rd32(buf, off_start) != 0 {
             off_start -= 4;
@@ -386,27 +372,26 @@ impl Decoder<'_> {
             .ok_or(KallsymsError::NoMarkersList)?;
 
         // kallsyms_token_table + kallsyms_token_index. `kallsyms_seqs_of_names`
-        // (6.1.60+) may sit between markers and the token table, or trail the
-        // whole block — its position is build-specific. Rather than predict it,
-        // scan forward and accept the first candidate whose token index decodes
-        // the leading symbols into clean names, which uniquely pins the table.
+        // (6.1.42+) may sit between markers and the token table or trail the
+        // block, depending on the build, so scan forward for the first candidate
+        // whose token index decodes the leading symbols into clean names.
         let tables = self
             .find_token_tables(names_start, markers_end, num)
             .ok_or(KallsymsError::NoTokenTable)?;
 
-        // 8. Decode names + raw symbol addresses in kallsyms order.
+        // Decode names + raw symbol addresses in kallsyms order.
         let raw = self.decode_symbols(num, offsets_offset, relative_base, &tables);
 
-        // 9. Resolve the VA→file-offset base from _stext (upstream
-        //    resolve_kallsyms_offset_symbol_base), then materialize offsets.
+        // Resolve the VA→file-offset base from _stext (upstream
+        // resolve_kallsyms_offset_symbol_base), then materialize offsets.
         let stext_raw = raw
             .iter()
             .find(|(n, _)| n == "_stext")
             .map(|(_, a)| *a)
             .ok_or(KallsymsError::NoSymbolBase)?;
-        // base maps _stext's VA onto its file position (code_static_start);
-        // every other symbol follows by VA delta. Computed in i64 (the upstream
-        // i32 `base_off` only differs in bits above the 4 GiB image span).
+        // base maps _stext's VA onto its file position (code_static_start); other
+        // symbols follow by VA delta. i64 here; upstream's i32 `base_off` differs
+        // only above a 4 GiB image span.
         let base = (code_static_start as i64).wrapping_sub(stext_raw as i64);
 
         let mut by_name = HashMap::with_capacity(raw.len());
@@ -644,11 +629,9 @@ impl Decoder<'_> {
     }
 
     /// Locate `kallsyms_token_table` + `kallsyms_token_index` by scanning forward
-    /// from the markers list and validating each candidate: a real token table
-    /// is 256 short NUL-terminated strings (compact span) whose paired token
-    /// index expands the first symbols into clean, printable names. This skips
-    /// any interposed `kallsyms_seqs_of_names` without needing to know where it
-    /// is.
+    /// from the markers list: a real token table is 256 short NUL-terminated
+    /// strings whose token index expands the first symbols into clean, printable
+    /// names. This skips any interposed `kallsyms_seqs_of_names`.
     fn find_token_tables(&self, names_offset: usize, from: usize, num: u32) -> Option<Tables> {
         let buf = self.buf;
         let n = buf.len();
@@ -709,8 +692,8 @@ impl Decoder<'_> {
     }
 
     /// Accept a token-table/index candidate only if it expands the first symbols
-    /// into non-empty, printable symbol names — what a correct table always does
-    /// and a misaligned (e.g. seqs-data) candidate never does.
+    /// into non-empty, printable names, which a misaligned (e.g. seqs-data)
+    /// candidate never does.
     fn token_tables_decode_cleanly(&self, tables: &Tables, num: u32) -> bool {
         let probe = num.min(16);
         if probe == 0 {

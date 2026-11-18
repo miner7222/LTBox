@@ -1,15 +1,11 @@
-// Windows "installer detection" heuristic auto-elevates any EXE
-// whose filename contains tokens like `setup`, `install`, `update`,
-// or `patch`. Cargo names the lib-test binary
-// `ltbox_patch-<hash>.exe`, which trips the heuristic and produces
-// `os error 740` (elevation required) when `cargo test` tries to
-// launch it under non-elevated shells.
+// Windows' installer-detection heuristic auto-elevates any EXE whose name
+// contains `setup`, `install`, `update` or `patch`. The lib-test binary
+// `ltbox_patch-<hash>.exe` trips it and `cargo test` fails with `os error 740`
+// under non-elevated shells.
 //
-// Embed an explicit `requestedExecutionLevel level="asInvoker"`
-// manifest into every EXE this crate's link step produces (which
-// in practice is just the lib-test harness — the crate is a
-// library otherwise) so Windows skips the heuristic. MSVC-only;
-// MinGW / non-Windows hosts ignore manifests.
+// Embed a `requestedExecutionLevel level="asInvoker"` manifest into every EXE
+// this crate links (in practice only the lib-test harness) so Windows skips
+// the heuristic. MSVC-only; MinGW / non-Windows hosts ignore manifests.
 use std::fs;
 use std::path::PathBuf;
 

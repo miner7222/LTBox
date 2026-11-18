@@ -94,8 +94,7 @@ pub(crate) fn advanced_file_worker(
     let mut log = Vec::new();
     let input = std::path::Path::new(&input_path);
     let parent = input.parent().unwrap_or(std::path::Path::new("."));
-    // Created eagerly so a no-op exec still
-    // leaves a folder for the user to find.
+    // Created eagerly so a no-op exec still leaves a folder for the user to find.
     if action.produces_output() && action != AdvAction::PatchArb {
         let _ = std::fs::create_dir_all(&output_dir);
         ltbox_core::live!(
@@ -162,12 +161,8 @@ pub(crate) fn advanced_file_worker(
             ltbox_core::live!(log, "[Crypto] {}", phases.marker(3));
         }
         AdvAction::DetectArb => {
-            // DetectArb routes through its dedicated
-            // `AdvDetectArbExecStart` worker, not the
-            // generic file-selected pipeline. Reaching
-            // this arm means a stale code path triggered
-            // it; surface a clear error instead of a
-            // silent no-op.
+            // DetectArb has its own `AdvDetectArbExecStart` worker, not this generic file-selected
+            // pipeline; reaching this arm is a stale code path, so fail loudly instead of a silent no-op.
             return Err(ltbox_core::i18n::tr("err_advanced_detect_arb_dedicated"));
         }
         AdvAction::FlashPartitions
@@ -394,8 +389,7 @@ pub(crate) fn advanced_file_worker(
             // descriptors go stale when dtbo / init_boot / vendor_boot change.
             let info = ltbox_patch::avb::extract_image_avb_info(input)
                 .map_err(|e| tr_args!("err_vbmeta_inspect_failed", error = e.to_string()))?;
-            // Only the two stock test keys embedded in
-            // avbtool-rs are supported.
+            // Only the two stock test keys embedded in avbtool-rs are supported.
             let key_spec =
                 ltbox_patch::key_map::key_spec_for_pubkey(info.public_key_sha1.as_deref())
                     .ok_or_else(|| {

@@ -60,12 +60,9 @@ pub(crate) fn flash_worker(
         tr_args!("live_flash_firmware_folder", path = fw_folder)
     );
 
-    // Decompress any `*.zst` partition images (e.g. a ported ROM's
-    // `super.img.zst`) up front — before any device probe / transition. The
-    // output can be tens of GB and take a while, so do it while the device is
-    // still untouched (rather than leaving it parked in the bootloader), and so
-    // a compressed AVB-protected partition image is present for the scan + region/AVB/ARB
-    // planning below. On failure the device has not been moved, so return.
+    // Decompress `*.zst` images (e.g. a ported ROM's `super.img.zst`) before any device probe:
+    // the output can be tens of GB, so keep the device untouched meanwhile. The scan and
+    // region/AVB/ARB planning below need the decompressed images. Nothing has moved yet on failure.
     // Phase 2/9 — Decompress packaged images.
     live!(log, "[Flash] {}", phases.marker(2));
     decompress_zst_images(fw_dir, &mut log)?;
@@ -114,9 +111,8 @@ pub(crate) fn flash_worker(
     // Phase 3/9 — Inspect device and firmware compatibility.
     live!(log, "[Flash] {}", phases.marker(3));
 
-    // Probe ADB before the Fastboot bridge below reboots the device off ADB —
-    // otherwise this always logs "no ADB device info" even though a bridge
-    // was live a moment earlier.
+    // Probe ADB before the Fastboot bridge below reboots the device off ADB; afterwards this
+    // would always log "no ADB device info".
     let skip_adb = conn.skip_adb();
     if skip_adb {
         ltbox_core::live!(
@@ -136,8 +132,7 @@ pub(crate) fn flash_worker(
                 "[ADB] {}",
                 ltbox_core::i18n::tr("live_adb_device_connected")
             );
-            // The active slot is resolved later via `controller::poll_active_slot`,
-            // which polls both ADB and Fastboot and hard-errors on probe failure.
+            // The Fastboot probe below captures the active slot before EDL.
         } else {
             ltbox_core::live!(
                 log,
@@ -147,15 +142,9 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // Snapshot rollback index before EDL —
-    // `stored_rollback_index` vanishes past
-    // Fastboot. Probe Fastboot vars first, and
-    // when the device is sitting in ADB bridge
-    // it through `adb reboot bootloader` before
-    // retrying — otherwise the user sees the
-    // ARB=ON abort on every PRC↔ROW flash that
-    // started from the ADB-connected state, even
-    // though Fastboot is reachable in principle.
+    // Snapshot the rollback floor before EDL: `stored_rollback_index` is not readable past
+    // Fastboot. Probe Fastboot vars first; from ADB, bridge through `adb reboot bootloader` and
+    // retry, so PRC<->ROW flashes started from ADB do not abort on ARB=ON.
     struct FastbootProbe {
         rollback_floors: Option<ltbox_patch::rollback::FastbootRollbackFloors>,
         reachable: bool,
@@ -197,22 +186,15 @@ pub(crate) fn flash_worker(
             ltbox_core::i18n::tr("live_flash_adb_to_bootloader")
         );
         if let Some(mut adb) = ltbox_device::adb::AdbManager::new_if_connected() {
-            // `adb reboot bootloader` often returns a
-            // disconnect/transport error even when the
-            // reboot physically succeeds. Treat the
-            // observed Fastboot state as authoritative:
-            // always poll after the attempt, and only
-            // surface the reboot error if Fastboot never
-            // appears.
+            // `adb reboot bootloader` often reports a disconnect/transport error although the reboot
+            // succeeded. Treat the observed Fastboot state as authoritative: always poll, and surface the
+            // reboot error only if Fastboot never appears.
             let reboot_err = match adb.reboot("bootloader") {
                 Ok(()) => None,
                 Err(e) => Some(e.to_string()),
             };
-            // Poll for Fastboot up to 60s — ADB→bootloader
-            // typically lands inside 8 s but cold boots
-            // can drag. Open/parse once per attempt and
-            // reuse that probe result instead of
-            // check_device()+immediate reopen.
+            // Poll for Fastboot up to 60s (ADB->bootloader usually takes under 8s; cold boots are
+            // slower), reusing one probe result per attempt.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             while std::time::Instant::now() < deadline {
                 probe = probe_fastboot();
@@ -221,9 +203,7 @@ pub(crate) fn flash_worker(
                 }
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
-            // Final probe after the wait loop so the full
-            // 60s deadline is covered (loop may last probe
-            // slightly before the boundary due to sleep).
+            // Final probe after the loop so the full 60s deadline is covered.
             if !probe.reachable {
                 probe = probe_fastboot();
             }
@@ -235,9 +215,8 @@ pub(crate) fn flash_worker(
                         tr_args!("live_adb_reboot_failed", error = error)
                     );
                 } else {
-                    // reboot() returned Ok, but Fastboot never appeared.
-                    // Keep going for Auto/Off (EDL path still works); only
-                    // surface an explicit timeout so the log is not silent.
+                    // reboot() returned Ok but Fastboot never appeared. Auto/Off continue (the EDL path
+                    // still works); log the timeout so the run is not silent.
                     ltbox_core::live!(
                         log,
                         "[ADB] {}",
@@ -254,7 +233,6 @@ pub(crate) fn flash_worker(
         raw_getvar_all: getvar_raw,
     } = probe;
 
-    // 3. Scan firmware folder
     let vendor_boot = fw_dir.join("vendor_boot.img");
     let vbmeta = fw_dir.join("vbmeta.img");
     let boot = fw_dir.join("boot.img");
@@ -287,9 +265,8 @@ pub(crate) fn flash_worker(
             status = if has_boot { &found } else { &not_found },
         )
     );
-    // No rawprogram pack (.x encrypted or .xml) anywhere in the folder → almost
-    // certainly the wrong folder, not a firmware image set. Say so clearly so the
-    // later AVB key abort isn't mistaken for a firmware-key problem.
+    // No rawprogram pack (`.x` or `.xml`) means the wrong folder, not a firmware set. Say so,
+    // so the later AVB key abort is not mistaken for a firmware-key problem.
     let has_rawprogram_pack = std::fs::read_dir(fw_dir)
         .map(|rd| {
             rd.flatten().any(|e| {
@@ -356,9 +333,9 @@ pub(crate) fn flash_worker(
     // Phase 4/9 — Prepare the flash and safety plan.
     live!(log, "[Flash] {}", phases.marker(4));
 
-    // TB323FU keeps region vendor_boot/vbmeta AVB conversion off (it
-    // provisions a GBL on efisp instead) but DOES take ARB
-    // overlays. Region detect uses fp first, then model.
+    // Models without `region_avb_conversion` (TB323FU provisions a GBL on efisp instead) skip
+    // region AVB conversion but still take ARB overlays. Capabilities come from the device
+    // model and the firmware fingerprint.
     let device_caps = capabilities(&device_model);
     let firmware_caps = || {
         firmware_fingerprint
@@ -371,8 +348,8 @@ pub(crate) fn flash_worker(
     let canoe_skip_region =
         device_caps.root_uses_gbl || firmware_caps().any(|caps| caps.root_uses_gbl);
 
-    // GBL provisioning follows only the target firmware, never device identity.
-    // `target_is_canoe` was resolved before device access for ABL validation.
+    // `target_is_canoe` (GBL provisioning) follows only the target firmware, never device
+    // identity; it was resolved before device access for ABL validation.
     let xiaoxin_skip_region = xiaoxin_pro13_token(&device_model).is_some()
         || firmware_fingerprint
             .as_deref()
@@ -397,15 +374,11 @@ pub(crate) fn flash_worker(
         ));
     }
 
-    // EDL-start does not force rollback-bypass or region off. The device
-    // model and committed rollback index are read by dumping vendor_boot +
-    // boot + vbmeta_system from BOTH slots over EDL once the session is open
-    // (see the `edl_start` block after `EdlSession::open` below), so the
-    // user's selected rollback-bypass + region modes are preserved exactly as
-    // on an ADB/bootloader start.
+    // On EDL-start the model and committed rollback floors are read over the open session (the
+    // `edl_start` block after `EdlSession::open`), so rollback and region modes are not forced off.
 
-    // TB323FU keeps explicit Manual targets; only blind On is demoted to Auto.
-    // TB376FC/TB390FU never modify rollback indices, regardless of UI input.
+    // `On` is demoted to Auto for GBL targets (explicit Manual targets are kept). TB376FC/TB390FU
+    // never modify rollback indices, whatever the UI requested.
     let effective_mode =
         effective_flash_rollback_mode(rb_mode, target_is_canoe, xiaoxin_pro13_flash);
     if effective_mode != rb_mode {
@@ -435,11 +408,9 @@ pub(crate) fn flash_worker(
         );
     }
 
-    // Rollback=ON + no fastboot vars → can't target a safe
-    // index. Bail before EDL — UNLESS the device started in EDL, where the
-    // index is read by dumping partitions over the open session (the
-    // `edl_start` block after `EdlSession::open`). A bootloader/ADB start with
-    // unreachable fastboot still has no index source, so it still aborts.
+    // Rollback ON without Fastboot vars has no safe index source: abort before EDL. An EDL start
+    // is exempt: the index is read over the open session (`edl_start` block below). A bootloader/ADB
+    // start with unreachable Fastboot still aborts.
     if matches!(rb_mode, ltbox_patch::rollback::RollbackMode::On)
         && !fastboot_reachable
         && !edl_start
@@ -449,8 +420,7 @@ pub(crate) fn flash_worker(
             "[ARB] {}",
             ltbox_core::i18n::tr("live_arb_on_fastboot_unreachable")
         );
-        // Best-effort reboot — any failure stays
-        // in the log; wizard still gets the Err.
+        // Best-effort reboot; failures stay in the log and the wizard still gets the Err.
         if let Some(mut adb) = ltbox_device::adb::AdbManager::new_if_connected() {
             if let Err(e) = adb.shell("reboot") {
                 ltbox_core::live!(
@@ -475,18 +445,13 @@ pub(crate) fn flash_worker(
         return Err(ltbox_core::i18n::tr("err_rollback_on_fastboot_unreachable"));
     }
 
-    // efisp GBL download is deferred until after the EDL
-    // ARB dump decides `_arb` (testkey-root) vs stock — see
-    // the post-rawprogram-staging block below.
+    // The efisp GBL download waits for the EDL ARB dump, which decides `_arb` (testkey-root)
+    // vs stock (see the post-rawprogram staging block).
     let mut efisp_efi: Option<std::path::PathBuf> = None;
     let mut canoe_arb_need = false;
 
-    // Count .x and .xml files
-    // Count flashable `.x` (rawprogram) files. The
-    // encrypted Sahara manifest
-    // (`qsahara_device_programmer.x`) is a loader, not a
-    // flash image, so it is excluded here and left for
-    // `EdlSession::open` to decrypt at load time.
+    // Count flashable `.x` rawprogram files. The encrypted Sahara manifest
+    // (`qsahara_device_programmer.x`) is a loader, not a flash image; `EdlSession::open` decrypts it.
     let x_count = std::fs::read_dir(fw_dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
@@ -526,12 +491,9 @@ pub(crate) fn flash_worker(
         )
     );
 
-    // AVB root-of-trust pre-check (before region conversion, which only re-signs
-    // via testkeys in KEY_MAP). Use the folder step's cached vbmeta_system key
-    // class (the unified key source): an `Unknown` key aborts; a Lenovo-key
-    // firmware aborts on cross-region for now (same-region Lenovo-key is handled
-    // after EDL opens; cross-region re-sign is a separate change). TB323FU has its
-    // own region path (efisp GBL) and is exempt here.
+    // AVB root-of-trust pre-check before region conversion (which only re-signs with KEY_MAP
+    // testkeys), using the folder step's cached vbmeta_system key class: an `Unknown` key aborts.
+    // Lenovo-key firmware is checked against the device key class after EDL opens.
     if fw_key_class == ltbox_patch::key_map::KeyClass::Unknown {
         ltbox_core::live!(
             log,
@@ -541,11 +503,9 @@ pub(crate) fn flash_worker(
         reboot_fastboot_to_system_after_pre_edl_abort(&mut log, started_in_fastboot);
         return Err(ltbox_core::i18n::tr("err_flash_vbmeta_key_unknown"));
     }
-    // 4. Region conversion. Skipped for a Lenovo-key firmware: its
-    //    vbmeta isn't in KEY_MAP, so the standard (testkey) converter cannot
-    //    re-sign it. Cross-region Lenovo-key is handled after EDL opens, where the
-    //    device key class decides between a testkey re-sign + conversion
-    //    (testkey device) or an abort (Lenovo-key device).
+    // Region conversion is skipped for Lenovo-key firmware: its vbmeta is not in KEY_MAP, so the
+    // testkey converter cannot re-sign it. Cross-region Lenovo-key is handled after EDL opens: a
+    // testkey device converts + re-signs, a Lenovo-key device aborts.
     let mut region_pair: Option<ltbox_patch::region::RegionAvbOutput> = None;
     if cfg.modify_region
         && !skip_region_conversion
@@ -643,10 +603,8 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // 5. ARB detection. The effective rollback mode is already surfaced by
-    // the `[Flash] Bypass rollback protection: …` summary line, so it is not
-    // repeated here; this block reports the measured indices + the final
-    // bypass decision.
+    // The effective rollback mode is already shown by the `[Flash] Bypass rollback protection`
+    // summary line; this block reports the measured indices and the final bypass decision.
     let device_idx_str = fastboot_rollback_floors
         .map(|floors| floors.boot_index)
         .map(|v| v.to_string())
@@ -657,11 +615,8 @@ pub(crate) fn flash_worker(
         tr_args!("live_arb_device_index", index = device_idx_str)
     );
     if has_boot && !edl_start && rb_mode != ltbox_patch::rollback::RollbackMode::Manual {
-        // Pre-result "Analyzing …" line dropped — analysis is
-        // synchronous and the result line ("boot.img rollback
-        // index: …") fires immediately after. Skipped on EDL-start: the
-        // device index is unknown until the post-open both-slot dump, so a
-        // pre-EDL summary here would print a misleading "bypass: no".
+        // Skipped on EDL-start: the device index is unknown until the post-open both-slot dump, so a
+        // pre-EDL summary would print a misleading "bypass: no".
         match ltbox_patch::rollback::analyze_rollback_with_mode(
             &boot,
             fastboot_rollback_floors.map(|floors| floors.boot_index),
@@ -700,10 +655,8 @@ pub(crate) fn flash_worker(
     }
     // ARB analysis above is diagnostic only — flash plan unchanged.
 
-    // 6. XML
-    //
-    // Decrypt every shipped `.x` rawprogram in place so the catalog scan
-    // below picks up the `<stem>.xml` output (see decrypt_rawprogram_x_files).
+    // Decrypt every shipped `.x` rawprogram in place so the catalog scan below picks up the
+    // `<stem>.xml` output (see `decrypt_rawprogram_x_files`).
     if x_count > 0 {
         decrypt_rawprogram_x_files(fw_dir, &mut log)?;
     }
@@ -730,7 +683,6 @@ pub(crate) fn flash_worker(
         );
     }
 
-    // 7. Country code
     if cfg.wipe {
         ltbox_core::live!(
             log,
@@ -752,8 +704,7 @@ pub(crate) fn flash_worker(
         );
     }
 
-    // 8. EDL flash. A user-picked loader (the firmware folder shipped none) wins
-    // over the in-folder lookup.
+    // A user-picked loader (the firmware folder shipped none) wins over the in-folder lookup.
     let loader = match loader_override {
         Some(p) => std::path::PathBuf::from(p),
         None => {
@@ -778,17 +729,12 @@ pub(crate) fn flash_worker(
     // Phase 6/9 — Read live device state and stage safeguards.
     live!(log, "[Flash] {}", phases.marker(6));
 
-    // EDL-start: fastboot/ADB never ran, so the device model + committed
-    // rollback index are unknown. Read them off the device by dumping BOTH
-    // slots over the open session — the active slot is unknown in EDL-start,
-    // and the inactive slot's images may not carry parseable AVB info.
-    // vendor_boot identifies the model (compared against the target firmware
-    // fingerprint); boot + vbmeta_system give the rollback floor. If neither
-    // slot yields a valid AVB image, reset back into EDL and abort rather than
-    // flash blind. TB322FC has no rollback protection → bypass forced Off.
-    // On EDL-start, the per-location rollback floors (component-wise max across
-    // both slots) feed both the generic ARB overlay loop and TB323FU's overlay
-    // builder below — each location keeps its own floor.
+    // EDL-start: Fastboot/ADB never ran, so read the model and rollback floors over the open
+    // session by dumping both slots (the active slot is unknown). The vbmeta_system fingerprint is
+    // checked against the target firmware; boot + vbmeta_system give the floors. If no slot yields
+    // a valid image, reset back into EDL and abort rather than flash blind. A model without rollback
+    // protection (e.g. TB322FC) forces bypass Off. The per-location floors feed the generic overlay
+    // loop and the GBL overlay builder.
     let mut edl_floors: Option<(u64, u64)> = None;
     if edl_start {
         match read_edl_start_device(&mut session, firmware_fingerprint.as_deref(), &mut log) {
@@ -809,10 +755,9 @@ pub(crate) fn flash_worker(
                 }
                 match probe.rollback_floors {
                     None => {
-                        // TB322FC is PRC-only. The pre-EDL UI gates that block
-                        // cross-region / non-CN country never fired (the model
-                        // was unknown until now), so enforce the constraint
-                        // here, before any region or country write.
+                        // Rollback-unprotected models (TB322FC, TB324ZC) are PRC-only. The pre-EDL UI gates on
+                        // cross-region / non-CN country never fired (the model was unknown), so enforce them here,
+                        // before any region or country write.
                         let non_cn_country = cfg
                             .country_action
                             .target()
@@ -841,10 +786,8 @@ pub(crate) fn flash_worker(
                         }
                     }
                     Some(floors) => {
-                        // Component-wise floors flow per location into both the
-                        // generic overlay loop and the TB323FU builder; never
-                        // collapse to a single max (that would inflate the
-                        // lower location and block future stock firmware).
+                        // Floors stay per location in the generic overlay loop and the GBL builder; collapsing to one
+                        // max would inflate the lower location and block future stock firmware.
                         edl_floors = Some(floors);
                     }
                 }
@@ -861,9 +804,8 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // TB376FC/TB390FU bootloaders do not expose rollback variables. Even on an
-    // ADB/Fastboot start, determine both component floors from EDL dumps and
-    // fail closed before rawprogram can write anything.
+    // TB376FC/TB390FU bootloaders expose no rollback variables: even on an ADB/Fastboot start,
+    // read both floors from EDL dumps and fail closed before rawprogram writes anything.
     if !edl_start && xiaoxin_pro13_flash {
         let floor_dir = ltbox_core::app_paths::work_dir_for("flash_xiaoxin_arb");
         let _ = std::fs::remove_dir_all(&floor_dir);
@@ -926,7 +868,7 @@ pub(crate) fn flash_worker(
                 return Err(ltbox_core::i18n::tr("rollback_manual_error_missing"));
             }
             let floors = if !is_rollback_protected_model(&device_model) {
-                // TB322FC has no committed rollback protection.
+                // Unprotected models have no committed floor.
                 RollbackIndices {
                     boot: 0,
                     vbmeta_system: 0,
@@ -978,14 +920,12 @@ pub(crate) fn flash_worker(
         abl_restore = Some((lun, path.clone()));
     }
 
-    // AVB root-of-trust gate (device side). The firmware vbmeta was already
-    // classified (`fw_key_class`): `Unknown` aborted before region conversion;
-    // `Testkey` firmware and a `Lenovo` firmware on TB323FU take their existing
-    // paths. Here a `Lenovo` firmware on any other model classifies the
-    // device's active-slot vbmeta and either proceeds as-is (Lenovo-key device, same
-    // region, no downgrade), re-signs to the testkey + preserves the device
-    // bootloader (testkey device — including a cross-region convert-then-resign),
-    // or aborts (Lenovo-key device cross-region/downgrade, or unknown device key).
+    // AVB root-of-trust gate (device side) for Lenovo-key firmware on non-GBL models (`Unknown`
+    // aborted earlier; Testkey and GBL firmware take their own paths). Classify the device's
+    // active-slot vbmeta, then: proceed as-is (Lenovo-key device, same region, no downgrade);
+    // re-sign to the testkey and keep the device bootloader (testkey device, including
+    // cross-region convert-then-resign); or abort (Lenovo-key device cross-region/downgrade, or
+    // unknown device key).
     if fw_key_class == ltbox_patch::key_map::KeyClass::Lenovo && !target_is_canoe {
         let kc_dir = ltbox_core::app_paths::work_dir_for("flash_keyclass");
         let _ = std::fs::remove_dir_all(&kc_dir);
@@ -1010,9 +950,9 @@ pub(crate) fn flash_worker(
                 return Err(ltbox_core::i18n::tr("err_flash_device_key_unknown"));
             }
             LenovoFirmwareDevicePolicy::KeepLenovo => {
-                // Lenovo-key device + Lenovo-key firmware: the bootloader enforces rollback.
-                // Other models still reject region conversion; TB376FC/TB390FU
-                // flash the selected package as-is and store identity in proinfo.
+                // Lenovo-key device + Lenovo-key firmware: the bootloader enforces rollback. Region conversion
+                // is rejected, except TB376FC/TB390FU, which flash the selected package as-is and store
+                // identity in proinfo.
                 let fw_boot_idx = ltbox_patch::avb::extract_image_avb_info(&boot)
                     .map(|i| i.rollback_index)
                     .unwrap_or(0);
@@ -1044,12 +984,9 @@ pub(crate) fn flash_worker(
                 rb_mode = ltbox_patch::rollback::RollbackMode::Off;
             }
             LenovoFirmwareDevicePolicy::ResignTestkey => {
-                // Testkey device (or a user-supplied testkey ABL) + Lenovo-key firmware:
-                // re-sign the install to the RSA-4096 testkey root. The
-                // vbmeta_system signer may itself be RSA-2048; it still indicates
-                // a testkey-class device whose root vbmeta trusts this re-sign.
-                // The firmware's abl would re-root the chain to the Lenovo key and
-                // reject the re-signed images.
+                // Testkey device (or user-supplied testkey ABL) + Lenovo-key firmware: re-sign to the RSA-4096
+                // testkey root. An RSA-2048 vbmeta_system signer still means a testkey-class device. The
+                // firmware's abl would re-root the chain to the Lenovo key and reject the re-signed images.
                 ltbox_core::live!(
                     log,
                     "[AVB] {}",
@@ -1061,12 +998,9 @@ pub(crate) fn flash_worker(
                     .map_err(|e| tr_args!("err_arb_work_dir_failed", error = e))
                     .inspect_err(|_| abort_before_writes(&mut session, edl_start, &mut log))?;
 
-                // Cross-region: convert vendor_boot + rebuild a testkey vbmeta
-                // first (region converter passes the testkey override), then
-                // re-sign the chain ON TOP of that vbmeta so the merged vbmeta
-                // carries both the converted vendor_boot hash and the testkey
-                // chain. The converted vendor_boot is flashed as an overlay just
-                // before the merged vbmeta_a.
+                // Cross-region: convert vendor_boot and rebuild a testkey vbmeta first, then re-sign the chain
+                // on top so the merged vbmeta carries the converted vendor_boot hash and the testkey chain. The
+                // converted vendor_boot is flashed as an overlay just before the merged vbmeta_a.
                 let mut resign_base: Option<std::path::PathBuf> = None;
                 let mut region_vendor_boot: Option<std::path::PathBuf> = None;
                 if cfg.modify_region {
@@ -1156,8 +1090,8 @@ pub(crate) fn flash_worker(
         let checked = (|| {
             let firmware = firmware_rollback_indices(fw_dir)?;
             let floors = if !is_rollback_protected_model(&device_model) {
-                // TB324ZC enforces no rollback floor; only Manual targets
-                // still need the testkey/_arb chain this path cannot run.
+                // Unprotected model: no floor; only Manual targets still need the testkey/_arb chain this
+                // path cannot run.
                 RollbackIndices {
                     boot: 0,
                     vbmeta_system: 0,
@@ -1231,23 +1165,19 @@ pub(crate) fn flash_worker(
         && target_is_canoe
         && !is_rollback_protected_model(&device_model)
     {
-        // TB324ZC shares the GBL route but enforces no rollback floor: no
-        // device index read, no testkey re-sign, no `_arb` GBL. Manual targets
-        // were handled above.
+        // GBL route without rollback protection (TB324ZC): no device index read, no testkey re-sign,
+        // no `_arb` GBL. Manual targets were handled above.
         ltbox_core::live!(
             log,
             "[ARB] {}",
             ltbox_core::i18n::tr("arb_detect_no_anti_rollback")
         );
     } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off && target_is_canoe {
-        // TB323FU stages the testkey chain whenever the
-        // install is a downgrade, independent of region /
-        // wipe: the matching `_arb` GBL is flashed to efisp
-        // below in the exact same `need` cases, so the chain
-        // and its root of trust stay paired. fastboot never
-        // exposes the index, so dump it over EDL, testkey
-        // re-sign the four AVB partitions and stage overlays
-        // (or flash stock when not a downgrade).
+        // Protected GBL models (TB323FU) stage the testkey chain whenever the install is a downgrade,
+        // independent of region/wipe: the matching `_arb` GBL is flashed to efisp in the same `need`
+        // cases, keeping the chain and its root of trust paired. Fastboot does not expose the index, so
+        // dump it over EDL, testkey re-sign the four AVB partitions and stage overlays (or flash stock
+        // when not a downgrade).
         let arb_work_dir = ltbox_core::app_paths::work_dir_for("flash_arb");
         let _ = std::fs::remove_dir_all(&arb_work_dir);
         std::fs::create_dir_all(&arb_work_dir)
@@ -1394,8 +1324,7 @@ pub(crate) fn flash_worker(
                 return Err(err);
             };
 
-            // Non-TB323FU rollback bypass only supports stock keys in KEY_MAP.
-            // TB323FU is handled above by the GBL/efisp path.
+            // Non-GBL rollback bypass only supports stock keys in KEY_MAP; GBL targets are handled above.
             let key_from_map = match ltbox_patch::key_map::key_spec_for_signed_pubkey(
                 analysis.image_info.public_key_sha1.as_deref(),
             ) {
@@ -1519,8 +1448,8 @@ pub(crate) fn flash_worker(
             );
         }
     } else if target_is_canoe && !no_efisp_load && (efisp_arb_need || cfg.modify_region) {
-        // TB323FU's AVB fingerprint carries no region token; read the region
-        // from the firmware vendor_boot's `product_region` DTB marker instead.
+        // A GBL firmware's AVB fingerprint carries no region token; read the region from the firmware
+        // vendor_boot's `product_region` DTB marker instead.
         let staged =
             efisp_suffix_for_vendor_boot(&vendor_boot, efisp_arb_need).and_then(|suffix| {
                 fetch_efisp_asset(
@@ -1553,12 +1482,11 @@ pub(crate) fn flash_worker(
             patch = patch_xmls.len().to_string()
         )
     );
-    // The final ABL overlay is brick-critical once the firmware's own
-    // (Lenovo-key) abl can land: if rawprogram or an ARB overlay fails after that point, the
-    // selected testkey abl must still go back, or the device is left with a
-    // Lenovo-key bootloader on a testkey-resigned chain. Restore best-effort on
-    // those error paths (device stays in EDL for retry); the success-path
-    // restore below stays fatal.
+    // The final ABL overlay is brick-critical: if rawprogram or an ARB overlay fails after the
+    // firmware's own (Lenovo-key) abl may have landed, the selected testkey abl must still go back,
+    // or the device keeps a Lenovo-key bootloader under a testkey-resigned chain. Restore
+    // best-effort on those error paths (device stays in EDL for retry); the success-path restore
+    // below is fatal.
     // The firmware ABL may have changed since folder inspection/preflight.
     // Never flash a different load policy under a previously accepted choice.
     if let Some(expected) = &canoe_abl_snapshot
@@ -1633,16 +1561,12 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // efisp GBL, flashed immediately after the ARB overlays
-    // so the testkey chain and its `_arb` root of trust are
-    // provisioned together, before the best-effort region /
-    // country work that can abort in between. A fetched EFI
-    // (Some) is flashed: the `_arb` variant for an existing testkey
-    // firmware or an index change that re-signed the chain — fatal on failure since
-    // that chain can't boot without it — or the normal
-    // variant on a region-provisioning wipe (best-effort).
-    // With no EFI fetched, a same-region wipe strips efisp;
-    // every other mode leaves it untouched.
+    // efisp GBL, flashed right after the ARB overlays so the testkey chain and its `_arb` root of
+    // trust are provisioned together, before best-effort region/country work that can abort in
+    // between. A fetched EFI is flashed: the `_arb` variant for a testkey firmware or a re-signed
+    // chain (fatal on failure: that chain cannot boot without it), or the normal variant on a
+    // region-provisioning wipe (best-effort). With no EFI fetched, a same-region wipe strips efisp;
+    // other modes leave it untouched.
     if target_is_canoe && !no_efisp_load && !package_supplies_efisp {
         let efisp_lun = ltbox_core::partition_lun::lun_for_partition("efisp").unwrap_or(4);
         match &efisp_efi {
@@ -1712,11 +1636,9 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // Overwrite rawprogram's stock vendor_boot/vbmeta
-    // with the final region-converted AVB-valid pair.
-    // This must happen after rawprogram (and after any
-    // ARB overlays) so stock XML entries cannot put the
-    // unconverted ROW pair back on top.
+    // Overwrite rawprogram's stock vendor_boot/vbmeta with the final region-converted pair. Must
+    // run after rawprogram and any ARB overlays, so stock XML entries cannot put the unconverted
+    // ROW pair back.
     if let Some(output) = &region_pair {
         let overlays: [(&str, &std::path::Path); 2] = [
             ("vendor_boot_a", output.vendor_boot.as_path()),
@@ -1790,13 +1712,10 @@ pub(crate) fn flash_worker(
             if !getvar_raw.is_empty() {
                 let _ = std::fs::write(critical_backup.join("getvar.txt"), &getvar_raw);
             }
-            // Model-specific country partitions resolve through the hardcoded
-            // LUN map; start/num come from the device GPT via
-            // `dump_partition_by_name`. Avoids re-decrypting
-            // `rawprogram*.x` mid-flow when the catalog scratch
-            // dir has been cleaned.
-            // Best-effort after a successful flash: warn on a partial country
-            // failure but still reset (don't strand the device in EDL).
+            // Country partitions resolve through the static LUN map; start/num come from the device GPT via
+            // `dump_partition_by_name`, so no `rawprogram*.x` re-decrypt is needed once the catalog scratch
+            // dir is cleaned. Best-effort after a successful flash: a partial country failure warns but still
+            // resets (don't strand the device in EDL).
             if let Err(e) = run_country_change(
                 &mut session,
                 &work_dir,
@@ -1827,18 +1746,8 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // (efisp GBL is flashed earlier — right after the ARB
-    // overlays — so the testkey chain and its `_arb` root of
-    // trust are provisioned before the best-effort
-    // region/country work that can abort in between.)
-
-    // Mark `_a` active before reset. Lenovo
-    // firmware rawprograms only target `_a`, so
-    // a full flash always lands on `_a`. Without
-    // this the SoC may continue booting from a
-    // previously-active `_b` on the next reset
-    // and the freshly-written `_a` firmware
-    // would never run.
+    // Mark `_a` active before reset. Lenovo rawprograms only target `_a`; without this the SoC may
+    // keep booting a previously active `_b` and never run the new firmware.
     phases.mark_writes_started();
     if let Err(e) = session.set_active_slot_a(&mut log) {
         return Err(tr_args!(

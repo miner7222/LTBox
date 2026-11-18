@@ -1,16 +1,10 @@
 //! OS theme detection — `true` when the host OS is in dark mode.
 //!
-//! Backed by the `dark-light` crate so the same probe works on
-//! Windows (registry: `AppsUseLightTheme`), macOS (NSAppearance via
-//! the Cocoa runtime), and the major Linux desktops (GNOME's
-//! `org.gnome.desktop.interface color-scheme`, KDE's
-//! `kdeglobals` ColorScheme key, plus the freedesktop XDG portal),
-//! without any platform-specific FFI in this crate.
+//! Backed by the `dark-light` crate (Windows registry, macOS NSAppearance, GNOME,
+//! KDE and the freedesktop portal), so this crate needs no platform FFI for it.
 
 pub fn system_prefers_dark() -> bool {
-    // `dark-light::detect()` returns `Mode::Dark | Light | Unspecified`.
-    // Treat `Unspecified` as light: the safer default for accessibility
-    // (light text on a dark surface is the higher-contrast failure mode).
+    // An undetectable or `Unspecified` mode falls back to light.
     matches!(dark_light::detect(), Ok(dark_light::Mode::Dark))
 }
 

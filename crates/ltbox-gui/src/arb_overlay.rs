@@ -1,15 +1,14 @@
-//! Canoe efisp ARB-overlay provisioning: pick the efisp asset variant
-//! and build the per-LUN overlay set. Extracted from main.rs.
+//! Canoe efisp ARB-overlay provisioning: pick the efisp GBL asset variant and build
+//! the per-LUN testkey overlay set.
 
 use crate::*;
 
-/// GBL EFI asset suffix for a TB323FU target firmware, by region (`is_prc`) and
-/// whether the anti-rollback build is needed (`arb`). Picks the
-/// `*_prc.efi` / `*_row.efi` asset (or `*_prc_arb.efi` / `*_row_arb.efi`) from
-/// the gbl_root_baldur release. The `_arb` GBL roots trust at the testkey so it
-/// accepts the testkey-re-signed AVB chain LTBox stages on a downgrade. The
-/// region comes from the vendor_boot `product_region` DTB marker — TB323FU's AVB
-/// fingerprint carries no `_PRC`/`_ROW` token.
+/// GBL EFI asset suffix for a `root_uses_gbl` target, by region (`is_prc`) and whether
+/// the anti-rollback build is needed (`arb`): `_prc`/`_row`, or `_prc_arb`/`_row_arb`
+/// from the gbl_root_baldur release. The `_arb` GBL trusts the testkey, so it accepts
+/// the testkey-re-signed AVB chain staged on a downgrade. Region comes from the
+/// vendor_boot `product_region` DTB marker: TB323FU's AVB fingerprint carries no
+/// `_PRC`/`_ROW` token.
 pub(crate) fn efisp_asset_suffix(is_prc: bool, arb: bool) -> &'static str {
     match (is_prc, arb) {
         (true, false) => "_prc.efi",
@@ -19,11 +18,9 @@ pub(crate) fn efisp_asset_suffix(is_prc: bool, arb: bool) -> &'static str {
     }
 }
 
-/// A dumped `efisp` partition counts as empty (un-provisioned) when every byte
-/// is zero and the dump is nonempty — the stock/erased state.
-/// A GBL-provisioned efisp carries the EFI
-/// payload, so it has non-zero bytes. The TB323FU root flow uses an empty result
-/// to provision the appropriate region GBL before continuing.
+/// A dumped `efisp` is empty (stock/erased, GBL-unprovisioned) when it is nonempty
+/// and every byte is zero; a GBL-provisioned efisp carries the EFI payload. The GBL
+/// root flow uses an empty result to provision the region GBL first.
 pub(crate) fn efisp_is_empty(data: &[u8]) -> bool {
     !data.is_empty() && data.iter().all(|&b| b == 0)
 }
@@ -162,9 +159,8 @@ fn prepare_canoe_efisp_with(
         return Ok(None);
     }
 
-    // Empty efisp is the stock, GBL-unprovisioned state. Region comes from
-    // vendor_boot's product_region marker because the AVB fingerprint carries
-    // no PRC/ROW token on TB323FU.
+    // Empty efisp is the stock, GBL-unprovisioned state. Region comes from vendor_boot's
+    // product_region marker (TB323FU's AVB fingerprint has no PRC/ROW token).
     let suffix = if let Some(path) = dumped_vendor_boot {
         efisp_suffix_for_vendor_boot(path, false)?
     } else {
@@ -180,11 +176,10 @@ fn prepare_canoe_efisp_with(
 
 /// Download the pinned efisp GBL for `suffix` into `efi_dir` and verify it.
 ///
-/// Every caller writes the result to the device's `efisp` partition, so the
-/// release tag is pinned, the asset name must be one of a fixed set, and the
-/// bytes are SHA-256 checked before the path is handed back: an unpinned
-/// release or an unverified download could stage an unexpected image onto a
-/// rollback-protected partition.
+/// Every caller writes the result to the device's `efisp` partition, so the release
+/// tag is pinned, the asset name must be one of a fixed set, and the bytes are
+/// SHA-256 checked before the path is returned: an unpinned or unverified download
+/// could stage an unexpected image onto a rollback-protected partition.
 pub(crate) fn fetch_efisp_asset(
     suffix: &str,
     efi_dir: &std::path::Path,
@@ -235,7 +230,7 @@ pub(crate) fn fetch_efisp_asset(
     Ok(efi_path)
 }
 
-/// Pinned gbl_root_baldur release used for TB323FU efisp GBL images.
+/// Pinned gbl_root_baldur release used for efisp GBL images.
 pub(crate) const EFISP_GBL_RELEASE_TAG: &str = "6.2.192-mod2";
 
 /// Exact asset names accepted for the pinned efisp release.
@@ -258,8 +253,7 @@ pub(crate) const EFISP_EXPECTED_ASSETS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Map a region/ARB suffix to the exact pinned asset name for the
-/// `6.2.192-mod2` gbl_root_baldur release. Unknown suffixes refuse.
+/// Map a region/ARB suffix to the exact pinned asset name. Unknown suffixes refuse.
 pub(crate) fn efisp_expected_asset(suffix: &str) -> Option<&'static str> {
     match suffix {
         "_prc.efi" => Some("generic_superfastboot_prc.efi"),
@@ -330,10 +324,9 @@ pub(crate) fn provision_canoe_efisp(
 /// One staged ARB overlay: (GPT label, UFS LUN, patched image path).
 pub(crate) type ArbOverlay = (String, u8, std::path::PathBuf);
 
-/// Select the rollback indices written into the re-signed `boot` and
-/// `vbmeta_system` images, and report whether the selection requires the
-/// TB323FU ARB GBL. This is deliberately independent of USB and filesystem
-/// state so manual-target policy can be tested without a device session.
+/// Select the rollback indices written into the re-signed `boot` and `vbmeta_system`
+/// images, and report whether the selection requires the `_arb` GBL. Independent of
+/// USB and filesystem state so manual-target policy is testable without a device.
 fn select_arb_rollback_targets(
     firmware: ltbox_patch::rollback::RollbackIndices,
     device_floors: ltbox_patch::rollback::RollbackIndices,
@@ -361,9 +354,9 @@ fn select_arb_rollback_targets(
     Ok((targets, need))
 }
 
-/// Build the overlay files from already-read firmware/device state. This
-/// helper performs no device I/O, so fixture tests can verify AVB signatures,
-/// chain keys, and exact rollback indices without an `EdlSession`.
+/// Build the overlay files from already-read firmware/device state. Performs no
+/// device I/O, so fixture tests can verify AVB signatures, chain keys and exact
+/// rollback indices without an `EdlSession`.
 fn build_testkey_arb_overlays_from_images(
     fw_dir: &std::path::Path,
     work_dir: &std::path::Path,
@@ -390,11 +383,10 @@ fn build_testkey_arb_overlays_from_images(
         }
     };
 
-    // Validate + select the chained partitions to re-sign. A chained image
-    // missing from the package is unsafe because the rebuilt root would
-    // delegate to an image that the flash cannot replace. Partitions with no
-    // static LUN (for example vbmeta_vendor) retain their stock descriptor and
-    // image, as in the original layout-aware policy.
+    // Validate + select the chained partitions to re-sign. A chained image missing from
+    // the package is unsafe: the rebuilt root would delegate to an image the flash cannot
+    // replace. Partitions with no static LUN (e.g. vbmeta_vendor) keep their stock
+    // descriptor and image.
     let mut to_resign: Vec<&ltbox_patch::avb::ChainPartitionDescriptor> = Vec::new();
     for c in chain_descriptors {
         if c.name.is_empty()
@@ -425,9 +417,8 @@ fn build_testkey_arb_overlays_from_images(
         }
     }
 
-    // Re-sign each handled chained partition to the testkey. The rollback
-    // protected images receive the selected target exactly; other chained
-    // partitions are re-signed without changing their own rollback index.
+    // Re-sign each handled chained partition to the testkey. Rollback-protected images
+    // get the selected target exactly; the others keep their own rollback index.
     let key_algo = ltbox_patch::avb::algorithm_for_key_spec(KEY)
         .ok_or_else(|| format!("unknown AVB algorithm for {KEY}"))?;
     let mut ordered = to_resign.clone();
@@ -449,9 +440,8 @@ fn build_testkey_arb_overlays_from_images(
         overlays.push((label, lun, out));
     }
 
-    // Rebuild vbmeta on the base, updating chain partition descriptor public
-    // keys for the re-signed chained partitions to the testkey; flash vbmeta
-    // last because it ties the chain together.
+    // Rebuild vbmeta on the base with the re-signed partitions' chain descriptor public
+    // keys set to the testkey; flash vbmeta last because it ties the chain together.
     let out_vbmeta = work_dir.join("vbmeta.arb.img");
     let chain_partition_names: Vec<&str> = to_resign.iter().map(|c| c.name.as_str()).collect();
     ltbox_patch::avb::rebuild_vbmeta_with_chain_key_overrides(
@@ -483,26 +473,23 @@ pub(crate) enum DeviceFloors<'a> {
     ReadActiveSlot(&'a str),
 }
 
-/// Testkey re-sign overlays for an AVB flash — used by the TB323FU anti-rollback
-/// path and the non-TB323FU Lenovo-key / cross-region re-sign. The device-committed
-/// boot + vbmeta_system indices come from `device_floors` (component-wise across
-/// both slots on EDL-start) or are read from the active slot here.
+/// Testkey re-sign overlays for an AVB flash (anti-rollback downgrade, Lenovo-key
+/// firmware on a testkey device, cross-region install). The device-committed boot +
+/// vbmeta_system indices come from `device_floors`.
 ///
-/// Layout-aware: it re-signs exactly the partitions the (base) vbmeta chains —
-/// each needs a matching `<part>.img` — so packages without recovery (or with a
-/// different set of chained partitions) work too. In automatic mode,
-/// boot / vbmeta_system bump to the device floor (`max`, never lowered); manual
-/// mode writes the validated requested targets exactly. Other chained partitions
-/// (e.g. recovery) are re-signed only; the vbmeta is rebuilt with selected chain
-/// partition descriptor public keys updated to the testkey and flashed LAST (it
-/// ties the chain together — shrinks the partial-write brick window). For a Lenovo-key cross-region
-/// install, `vbmeta_base` overrides the rebuild base with the region-converted,
-/// testkey vbmeta so its recomputed vendor_boot hash is preserved; otherwise it
-/// uses the firmware's own `vbmeta.img`.
+/// Layout-aware: it re-signs exactly the partitions the (base) vbmeta chains, each
+/// needing a matching `<part>.img`, so packages without recovery or with a different
+/// chained set work too. Automatic mode raises boot / vbmeta_system to the device
+/// floor (`max`, never lowered); manual mode writes the validated targets exactly.
+/// Other chained partitions (e.g. recovery) are re-signed only. The vbmeta is rebuilt
+/// with the testkey chain keys and flashed LAST, which shrinks the partial-write
+/// brick window. For a cross-region install, `vbmeta_base` overrides the rebuild base
+/// with the region-converted testkey vbmeta so its recomputed vendor_boot hash is
+/// preserved; otherwise the firmware's own `vbmeta.img` is used.
 ///
 /// `force_resign` re-signs even without a downgrade (Lenovo-key firmware on a testkey
-/// device). Returns `(overlays, need)`; `need` is true when an automatic downgrade
-/// or a manual index change requires the `_arb` (testkey-root) GBL.
+/// device). Returns `(overlays, need)`; `need` is true when an automatic downgrade or a
+/// manual index change requires the `_arb` (testkey-root) GBL.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_testkey_arb_overlays(
     session: &mut ltbox_device::edl::EdlSession,
@@ -524,11 +511,9 @@ pub(crate) fn build_testkey_arb_overlays(
             .rollback_index)
     };
 
-    // Device-committed per-location indices (boot + vbmeta_system), passed to
-    // `build_testkey_arb_overlays_for_floors` as fixed floors. On an EDL-start
-    // flash the caller passes component-wise maxima already read across BOTH
-    // slots; otherwise read the ACTIVE slot here (a first-time user may still
-    // be on `_b`, so don't assume `_a`).
+    // Device-committed per-location indices (boot + vbmeta_system), used as fixed floors
+    // by `build_testkey_arb_overlays_for_floors`. `DeviceFloors::Known` carries values the
+    // caller already read; otherwise read the ACTIVE slot (a first-time user may be on `_b`).
     let (dev_boot_idx, dev_vbs_idx) = match device_floors {
         DeviceFloors::Known(boot, vbs) => (boot, vbs),
         DeviceFloors::ReadActiveSlot(slot) => {
@@ -577,12 +562,11 @@ pub(crate) fn build_testkey_arb_overlays_for_floors(
             .rollback_index)
     };
     let (dev_boot_idx, dev_vbs_idx) = device_floors;
-    // 1. Inspect base vbmeta (caller override for cross-region, else firmware's)
-    //    and the partitions it chains. Re-sign only the ones that qualify —
-    //    a plain partition name, an install image, and a resolvable A/B GPT
-    //    label/LUN — updating their chain partition descriptor public keys.
-    //    Other chained partitions (e.g. vbmeta_vendor) keep their stock chain
-    //    partition descriptor + stock image.
+    // 1. Inspect base vbmeta (caller override for cross-region, else firmware's) and the
+    //    partitions it chains. Re-sign only those with a plain partition name, an install
+    //    image and a resolvable A/B GPT label/LUN, updating their chain descriptor public
+    //    keys. Other chained partitions (e.g. vbmeta_vendor) keep their stock descriptor
+    //    and image.
     let inst_vbmeta = vbmeta_base
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| fw_dir.join("vbmeta.img"));
@@ -599,8 +583,8 @@ pub(crate) fn build_testkey_arb_overlays_for_floors(
                 .to_string(),
         );
     }
-    // The floor read + index bump below assume A/B slots for the rollback-
-    // protected partitions, so reject a non-A/B boot / vbmeta_system layout.
+    // The floor read + index bump assume A/B slots for the rollback-protected
+    // partitions, so reject a non-A/B boot / vbmeta_system layout.
     if chain_descriptors
         .iter()
         .any(|c| (c.name == "boot" || c.name == "vbmeta_system") && c.do_not_use_ab)
@@ -630,9 +614,8 @@ pub(crate) fn build_testkey_arb_overlays_for_floors(
         )
     );
 
-    // 3. Automatic mode preserves the max/floor behavior. Manual mode
-    // validates each requested target against its corresponding device floor
-    // and writes the exact requested value, including values below firmware.
+    // 3. Automatic mode keeps the max/floor behavior. Manual mode validates each
+    // target against its device floor and writes it exactly, even below firmware.
     let (rollback_targets, need) = select_arb_rollback_targets(
         ltbox_patch::rollback::RollbackIndices {
             boot: firmware_boot_idx,

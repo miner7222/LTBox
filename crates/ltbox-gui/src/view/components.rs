@@ -1,4 +1,4 @@
-//! Reusable view components (dialogs, cards, step bar, icon tiles, lucide helpers). Extracted from `main.rs`.
+//! Reusable view components (dialogs, cards, step bar, icon tiles, lucide helpers).
 
 use crate::focus_button::{self as button, button};
 use crate::*;
@@ -14,22 +14,18 @@ pub(crate) const PICKER_BODY_PADDING: iced::Padding = iced::Padding {
     left: 28.0,
 };
 
-/// Centered M3 dialog card on a scrim. Inner owns padding/width. MODAL: the
-/// whole layer is wrapped in `opaque`, so it captures every pointer event and
-/// nothing behind it reacts. Use for confirm dialogs (reboot, country,
-/// region-target, rescue, root prompts) that must block the panel behind them.
+/// Centered M3 dialog card on a scrim; `inner` owns padding/width. MODAL: the
+/// layer is wrapped in `opaque`, so nothing behind it reacts. Use for confirm
+/// dialogs and popups that must block the panel behind them.
 pub(crate) fn m3_dialog(inner: Element<'_, Message>) -> Element<'_, Message> {
-    // `opaque` makes the whole dialog layer capture every pointer event, so
-    // hover/click can't fall through the parent `Stack` to the panel behind it
-    // (the scrim alone only paints — it doesn't block). The card's own buttons
-    // still receive their clicks.
+    // The scrim only paints; `opaque` is what stops hover/click falling through
+    // the parent `Stack`. The card's own buttons still receive clicks.
     iced::widget::opaque(m3_dialog_layers(inner))
 }
 
-/// Like [`m3_dialog`] but MODELESS: no `opaque` wrapper, so pointer events fall
-/// through the scrim to the panel behind. Use for the busy progress dialog — a
-/// long-running flash must not trap the user; the sidebar (and current view)
-/// stay clickable so they can navigate back to the op's progress screen.
+/// Like [`m3_dialog`] but MODELESS: no `opaque`, so pointer events fall through
+/// the scrim to the panel behind. Used by the busy progress dialog so a
+/// long-running flash doesn't trap the user.
 pub(crate) fn m3_dialog_modeless(inner: Element<'_, Message>) -> Element<'_, Message> {
     m3_dialog_layers(inner)
 }
@@ -242,7 +238,7 @@ fn m3_dialog_layers(inner: Element<'_, Message>) -> Element<'_, Message> {
     let scrim = container(Space::new().width(Length::Fill).height(Length::Fill))
         .width(Length::Fill)
         .height(Length::Fill)
-        // M3 modal scrim: the `scrim` role (black) at 32%, not a hardcoded 45%.
+        // M3 modal scrim: the `scrim` role (black) at 32%.
         .style(|t: &Theme| container::Style {
             background: Some(with_alpha(pal_of(t).scrim, 0.32).into()),
             ..Default::default()
@@ -280,7 +276,7 @@ pub(crate) fn wizard_step_state(index: usize, current: usize) -> WizardStepState
 
 /// Expanded step bar row height; the trailing rule adds one more pixel.
 const WIZARD_STEP_BAR_HEIGHT: f32 = 52.0;
-/// Compact's settled condensed indicator keeps its original footprint.
+/// Compact's condensed step indicator row height.
 const COMPACT_WIZARD_STEP_BAR_HEIGHT: f32 = 48.0;
 
 pub(crate) fn wizard_step_bar(
@@ -636,10 +632,8 @@ pub(crate) fn info_kv<'a>(label: &str, value: &str) -> Element<'a, Message> {
         text(label.to_string())
             .size(theme::text_size::LABEL_SMALL)
             .style(muted_style),
-        // Value outranks its caption on weight and color rather than
-        // size — at 16 px the kv grid competed with the device
-        // name above it, which is what pushed that name oversized in the
-        // first place.
+        // Value outranks its caption on weight and color rather than size; at 16 px
+        // the kv grid competed with the device name above it.
         text(value.to_string())
             .size(theme::text_size::BODY_MEDIUM)
             .font(theme::emphasis::medium()),
@@ -824,9 +818,8 @@ pub(crate) fn skroot_icon(size: f32) -> Element<'static, Message> {
         .into()
 }
 
-/// Primary-coloured Lucide icon sized to `size`. Matches the colour
-/// role the old per-asset SVG glyphs used for wizard tiles, status
-/// markers, and confirm-step eyebrows.
+/// Primary-coloured Lucide icon sized to `size`, for wizard tiles, status
+/// markers and confirm-step eyebrows.
 pub(crate) fn lucide_primary(
     icon: iced::widget::Text<'static, Theme, iced::Renderer>,
     size: f32,
@@ -1278,7 +1271,7 @@ impl Provider {
 
 impl RootMode {
     pub(crate) fn icon(self, size: f32) -> Element<'static, Message> {
-        // Lucide chip/layers glyphs in place of the old bespoke SVGs.
+        // Lucide chip/layers glyphs.
         let glyph = match self {
             Self::Lkm => icon::root_lkm(),
             Self::Gki => icon::root_gki(),
@@ -1681,8 +1674,9 @@ pub(crate) fn picker_action_button(
     .into()
 }
 impl App {
-    /// Name the connected model's required loader; without a device, show
-    /// the standard MELF hint while the picker still accepts XML too.
+    /// Hint for the loader picker: the manifest (.xml / .x) hint when the model
+    /// needs a Sahara manifest, the standard .melf hint for a known model, else the
+    /// generic .melf / .xml / .x hint (no device or unknown model).
     pub(crate) fn loader_picker_subtitle(&self) -> String {
         let key = if self.device.connection == ConnectionStatus::None {
             "loader_picker_subtitle_unknown"

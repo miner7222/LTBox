@@ -195,10 +195,8 @@ impl canvas::Program<Message> for MaterialLoadingIndicator {
     }
 }
 
-/// M3 Expressive loading indicator — the specified replacement for an
-/// indeterminate circular progress indicator on short waits (roughly
-/// 200 ms to 5 s). Unlike a progress ring it communicates through shape
-/// and motion rather than an arc sweep, and it is never decorative.
+/// M3 Expressive loading indicator for short indeterminate waits (roughly 200 ms to
+/// 5 s). It conveys activity through shape and motion, and is never decorative.
 pub(crate) fn material_loading_indicator() -> Element<'static, Message> {
     canvas::Canvas::new(MaterialLoadingIndicator)
         .width(Length::Fixed(LOADING_INDICATOR_SIZE))
@@ -219,9 +217,8 @@ pub(crate) struct ExecActionLayout {
 }
 
 impl ExecActionLayout {
-    /// Whether this layout puts anything in the footer at all. While an
-    /// operation runs it does not, and rendering the bar anyway leaves an
-    /// empty band across the bottom of the execution screen.
+    /// Whether this layout puts anything in the footer. It does not while an operation
+    /// runs; rendering the bar anyway leaves an empty band across the bottom.
     pub(crate) const fn has_any(self) -> bool {
         self.primary.is_some() || self.start_over_utility
     }
@@ -486,19 +483,14 @@ fn m3_button<'a>(
 /// radius` rule.
 pub(crate) const DEVICE_CARD_PADDING: f32 = 24.0;
 
-/// Icon-button size. M3 requires extra-small and small icon buttons to
-/// carry a pointer target of at least 48x48 even when the painted
-/// container is smaller.
-///
-/// iced paints a button's style across the button's own rect, so a 32 px
-/// disc inside a 48 px target would leave the state layer on the
-/// invisible box instead of the visible shape. Rather than lose hover
-/// feedback, the container *is* the target: 48 px is a size M3 lists for
-/// icon buttons, so this stays on the scale instead of inventing one.
+/// Icon-button size. M3 requires at least a 48x48 pointer target for extra-small
+/// and small icon buttons. iced paints a button's style across its own rect, so the
+/// container *is* the target (48 px, a size M3 lists for icon buttons) and the
+/// state layer lands on the visible shape.
 pub(crate) const M3_ICON_BUTTON_SIZE: f32 = 48.0;
 
 /// Icon button at the M3 target size, with the glyph centred inside.
-/// Hand-built versions of this at two call sites came out at 32 px.
+/// Icon button at the M3 target size, with the glyph centred inside.
 pub(crate) fn m3_icon_button(
     glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
     glyph_size: f32,
@@ -565,9 +557,8 @@ fn wizard_nav_actions<'a>(
         .spacing(ACTION_BUTTON_SPACING)
         .align_y(iced::Alignment::Center)
         .height(Length::Fill);
-    // A tooltip alone only explains a disabled Next to someone who hovers
-    // it; without that, the step just looks broken. Spell the reason out
-    // beside the buttons while it applies.
+    // A tooltip only explains a disabled Next on hover; spell the reason out beside
+    // the buttons while it applies.
     if let Some(reason) = visible_disabled_reason(can_next, disabled_next_hint.as_deref()) {
         trailing = trailing.push(
             container(
@@ -648,10 +639,6 @@ pub(crate) fn wizard_nav<'a>(
     )
 }
 
-// =========================================================================
-// Reusable widgets
-// =========================================================================
-
 /// Navigation-drawer item and compact-rail geometry.
 pub(crate) const NAV_BTN_HEIGHT: f32 = 56.0;
 /// Keep the same item height during drawer expansion to avoid vertical jumps.
@@ -696,12 +683,9 @@ pub(crate) fn nav_btn<'a>(
         .spacing(12)
         .align_y(iced::Alignment::Center);
     if !collapsed && label_alpha > 0.0 {
-        // Resolve the base text color (hover / disabled apply via the
-        // button style below; here we just fade the label in along
-        // the spring), then re-apply alpha so the glyph fades in step
-        // with the sidebar width tween. The active row sits on a
-        // `secondary_container` pill, so its label takes the matching
-        // on-color; inactive rows sit on the bare panel.
+        // Resolve the base text color (hover / disabled apply via the button style), then
+        // re-apply alpha so the glyph fades in step with the sidebar width tween. The active
+        // row sits on a `secondary_container` pill, so its label takes the matching on-color.
         let alpha = label_alpha;
         let base_label_color = move |t: &Theme| -> iced::Color {
             let p = pal_of(t);
@@ -720,13 +704,9 @@ pub(crate) fn nav_btn<'a>(
         }
         inner = inner.push(
             label_text
-                // Forbid wrapping: during the sidebar spring there is
-                // a brief window where the panel is wide enough to
-                // mount the label but too narrow for long glyphs to
-                // fit on one line. Wrapping into 2 rows mid-tween then
-                // collapsing back to 1 row reads as a jank flicker.
-                // No-wrap lets the text overflow under the panel's
-                // clip rect instead — invisible until width settles.
+                // Forbid wrapping: during the sidebar spring the panel can fit the label's
+                // mount but not its glyphs on one line, and wrapping mid-tween flickers. Let
+                // the text overflow under the panel's clip rect until the width settles.
                 .wrapping(iced::widget::text::Wrapping::None)
                 .style(move |t: &Theme| iced::widget::text::Style {
                     color: Some(with_alpha(base_label_color(t), alpha)),
@@ -951,11 +931,8 @@ pub(crate) fn centered_max_width<'a>(
     .into()
 }
 
-/// Width-capped column centred horizontally and anchored to the top of its
-/// pane. M3 aligns pane content from the top — its ruler set runs Title then
-/// Content, fixing where content *begins* — and reserves vertical centring for
-/// dialogs. Centring here left a short list floating in the middle of the
-/// window with a wide band of dead space above and below it.
+/// Width-capped column centred horizontally and anchored to the top of its pane.
+/// M3 aligns pane content from the top and reserves vertical centring for dialogs.
 pub(crate) fn centered_step<'a>(
     content: impl Into<Element<'a, Message>>,
     max_width: f32,

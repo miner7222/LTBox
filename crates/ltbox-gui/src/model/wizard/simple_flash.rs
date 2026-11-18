@@ -4,8 +4,7 @@ use super::*;
 
 /// Minimal flash wizard for the "Firmware Simple Flasher" advanced op: pick a
 /// firmware folder, review a read-only confirm screen, flash. No region /
-/// rollback / data choices — the flash runs the
-/// firmware's own rawprogram verbatim.
+/// rollback / data choices: the firmware's own rawprogram runs verbatim.
 #[derive(Default)]
 pub(crate) struct SimpleFlashWizard {
     pub(crate) step: usize, // 0=Intro, 1=Confirm, 2=Exec

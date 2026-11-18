@@ -1,4 +1,4 @@
-//! Dashboard view (device status, action tiles). Extracted from `main.rs`.
+//! Dashboard view: device status and action tiles.
 
 use crate::focus_button::{self as button, button};
 use crate::*;
@@ -91,8 +91,7 @@ fn dashboard_quick_action<'a>(
     message: Message,
 ) -> Element<'a, Message> {
     button(
-        // `Fill` height so the label centres in the 38px button instead of
-        // resting against its top edge.
+        // `Fill` height so the label centres vertically in the button.
         container(
             text(label)
                 .size(theme::text_size::BODY_SMALL)
@@ -109,12 +108,11 @@ fn dashboard_quick_action<'a>(
 }
 
 impl App {
-    /// Not gated on Windows even though the process it reports is. The confirm
-    /// dialog behind it never was, so gating only the banner left
-    /// `ForceCloseSoftwareFix` without a constructor off Windows, which
-    /// `-D dead-code` rejects. Nothing here acts on its own: `poll_software_fix`
-    /// and `can_close_software_fix` hold the runtime `cfg!(windows)` guards, so
-    /// off Windows `running` can only become true through the demo scene.
+    /// Not `cfg`-gated: gating only the banner would leave
+    /// `ForceCloseSoftwareFix` unconstructed off Windows, which `-D dead-code`
+    /// rejects. `poll_software_fix` and `can_close_software_fix` hold the
+    /// runtime `cfg!(windows)` guards, so off Windows `running` is only set by
+    /// the demo scene.
     fn software_fix_banner(&self) -> Element<'_, Message> {
         let label = if self.software_fix.closing {
             "software_fix_closing"
@@ -173,9 +171,8 @@ impl App {
         } else {
             &self.device.firmware
         };
-        // The dashboard answers the policy question only. Committed rollback
-        // floors are deliberately not rendered here, even when fastboot has
-        // supplied them; the tooltip explains how that answer is established.
+        // Shows only the rollback policy; committed floors are deliberately not
+        // rendered here, even when fastboot supplied them.
         let arb_key = arb_from_model(&self.device.model);
         let arb_display = if arb_key.is_empty() {
             "—".to_string()
@@ -199,8 +196,8 @@ impl App {
             banners.push(self.software_fix_banner());
         }
 
-        // Unauthorized ADB wins over the platform warning — empty
-        // `ro.boot.hardware` otherwise reads as "unsupported platform".
+        // ADB access problems win over the platform warning: an unreadable
+        // `ro.boot.hardware` would otherwise read as "unsupported platform".
         if self.device.connection == ConnectionStatus::AdbServerBlocking {
             let msg = text(self.t("dash_adb_server_blocking").to_string())
                 .size(theme::text_size::BODY_MEDIUM)
@@ -288,9 +285,7 @@ impl App {
                     .into(),
             };
             identity = identity.push(
-                // `center_x(Fill)` would overwrite the fixed width and let the
-                // thumbnail slot absorb slack, indenting the image away from
-                // the definition-label column below it.
+                // Not `center_x(Fill)`: it would override the fixed width.
                 container(portrait)
                     .width(Length::Fixed(92.0))
                     .height(Length::Fixed(64.0))
@@ -401,33 +396,22 @@ impl App {
         .width(Length::Fill);
         content = content.push(
             container(
-                // Padding has to scale with the corner radius: M3 states
-                // the relationship as `outer radius - padding = inner
-                // radius`. An asymmetric 10/18 inset fits a 12 px corner but
-                // leaves text crowding the curve at this card's 32 px
-                // corner; a uniform 24 keeps a comfortable 8 px inner
-                // radius and reads evenly on all four sides.
+                // Padding scales with the corner radius (M3: outer radius -
+                // padding = inner radius); a small inset would crowd the curve.
                 container(device_card_inner)
                     .padding(DEVICE_CARD_PADDING)
                     .width(Length::Fill),
             )
             .width(Length::Fill)
             .style(|t: &Theme| {
-                // The hero uses a larger shape and the brightest surface
-                // the mode offers, while keeping the same elevation-zero
-                // outline treatment as the surrounding cards.
-                //
-                // Deliberately no type escalation: the connected device is
-                // the subject of the whole app, but the card is mostly
-                // reference data, and a shouted treatment would overstate
-                // that.
+                // Hero card: larger shape and the brightest surface, same
+                // zero-elevation outline as the other cards. No type escalation;
+                // the content is mostly reference data.
                 theme::surface_card_style(t, theme::SurfaceLevel::Brightest, theme::shape::LG)
             }),
         );
-        // Render from the source lines so the first entry stays at the top of
-        // the history card. The shared editor tracks the document end for
-        // execution views, which left a large blank band above short logs on
-        // the dashboard.
+        // Plain text, not the shared log editor: the editor tracks the document
+        // end, which leaves a blank band above short logs.
         let dash_log = iced::widget::scrollable(
             text(self.log_lines.join("\n"))
                 .size(theme::text_size::BODY_SMALL)
@@ -484,9 +468,8 @@ impl App {
         .style(|t: &Theme| {
             theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::MD)
         });
-        // Shown only while an operation runs: idle, a whole card spent on
-        // "nothing in progress" adds nothing; running, it is the only way
-        // back to a flow the user navigated away from, so it must stay.
+        // Shown only while an operation runs: the way back to a flow the user
+        // navigated away from.
         if busy_navigation_target(self.operation.is_running(), self.operation.view()).is_some() {
             let resume = button(
                 row![
@@ -535,8 +518,7 @@ impl App {
         if banners.is_empty() {
             content.into()
         } else {
-            // Give the cards the same viewport height they receive without a
-            // banner. Alerts extend the page instead of squeezing the log.
+            // Banners extend the page instead of squeezing the cards.
             iced::widget::scrollable(
                 column![
                     iced::widget::Column::with_children(banners).spacing(14.0),

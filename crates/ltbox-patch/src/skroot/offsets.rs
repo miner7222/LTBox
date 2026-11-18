@@ -124,13 +124,12 @@ fn track_loads(
 /// Decode an `ldr`/`ldrsw`/`add` (optionally `str`) into `Xd` off base `Xn`,
 /// returning the destination register and byte offset when `Xn == base`.
 ///
-/// Only X-destination forms are tracked, matching upstream (its text match
-/// keys on `"x%d"`). This is deliberate: the consumers take the first field
-/// past `0x400`, and `task_struct` holds many 32-bit `int` fields in that range
-/// — tracking `ldr wN` as well would surface one of those instead of the
-/// pointer/struct field actually wanted. The `cred` access is a 64-bit `ldr`,
-/// and `prctl_get_seccomp`'s `current->seccomp.mode` (an `int`) is read with
-/// `ldrsw` (sign-extended into an `Xd`), verified across the 5.10–6.12 targets.
+/// Only X-destination forms are tracked, as upstream does (its text match keys
+/// on `"x%d"`). Deliberate: consumers take the first field past `0x400`, and
+/// `task_struct` has many 32-bit `int` fields there that `ldr wN` tracking
+/// would surface instead. The `cred` access is a 64-bit `ldr`, and
+/// `current->seccomp.mode` (an `int`) is read with `ldrsw`, verified across the
+/// 5.10-6.12 targets.
 fn decode_base_offset(w: u32, base: u32, with_str: bool) -> Option<TrackedLoad> {
     let rn = (w >> 5) & 0x1F;
     if rn != base {

@@ -22,8 +22,8 @@ use super::RootProvider;
 /// against `.apk` asset names (e.g. `KernelSU_v3.2.4_32457-release.apk`).
 ///
 /// Spoofed variants go first so providers that ship both `-spoofed` and
-/// non-spoofed release APKs (KernelSU-Next today, SukiSU going forward)
-/// land on the spoofed one. Release lists can include prereleases.
+/// non-spoofed release APKs (KernelSU-Next, SukiSU) land on the spoofed one.
+/// Release lists can include prereleases.
 pub(super) fn ksu_manager_stable_preferences(provider: RootProvider) -> &'static [&'static str] {
     match provider {
         RootProvider::KernelSU => &["-release.apk"],
@@ -41,15 +41,12 @@ pub(super) fn ksu_manager_stable_preferences(provider: RootProvider) -> &'static
 pub(super) fn ksu_manager_nightly_preferences(provider: RootProvider) -> &'static [&'static str] {
     match provider {
         RootProvider::KernelSU => &["manager"],
-        // Upstream ships `manager-spoofed` + `manager`; prefer the spoofed
-        // one for Play Integrity / Widevine preservation.
+        // Prefer the spoofed manager for Play Integrity / Widevine preservation.
         RootProvider::KernelSUNext => &["manager-spoofed", "manager"],
-        // SukiSU doesn't currently emit `manager-spoofed`, but upstream has
-        // signalled intent — keep spoofed first so future runs pick it up
-        // without code changes.
+        // Spoofed first, as above; `manager` is picked when a run has no spoofed one.
         RootProvider::SukiSU => &["manager-spoofed", "manager"],
-        // BakaSU emits four variants; user preference is
-        // release > debug, spoofed > plain, checked in that order.
+        // BakaSU emits four variants; order is release before debug, spoofed
+        // before plain.
         RootProvider::BakaSU => &[
             "Spoofed-Manager-release",
             "Manager-release",
@@ -175,10 +172,8 @@ pub(super) fn extract_first_apk_from_zip(
             archive_path.display()
         ))
     })?;
-    // Pick `arm64-v8a` over generic / debug / x86 variants when the
-    // container ships multiple split APKs (release ZIPs from KSU
-    // family + BakaSU look like that). Falls back to first non-debug
-    // APK, then the first APK at all.
+    // Containers (KSU-family and BakaSU release ZIPs) may hold several APKs;
+    // see `pick_preferred_apk_name` for the order.
     let member_names: Vec<String> = archive
         .file_names()
         .collect::<zip::result::ZipResult<Vec<_>>>()

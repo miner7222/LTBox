@@ -37,10 +37,9 @@ pub(super) fn install_udev_rules() -> ! {
         }
         std::process::exit(1);
     }
-    // Force the rules world-readable. A hardened root umask (0077) would
-    // otherwise leave the file 0600, which udev can't apply and which the
-    // GUI's read-back verification (run as the normal user) would read as
-    // `UdevRulesNoPermission` — making reinstall appear to fail and loop.
+    // Force world-readable: a hardened root umask (0077) would leave 0600,
+    // which udev can't apply and the GUI's read-back (as the normal user)
+    // would report as `UdevRulesNoPermission`.
     use std::os::unix::fs::PermissionsExt;
     if let Err(e) =
         std::fs::set_permissions(UDEV_RULES_PATH, std::fs::Permissions::from_mode(0o644))
@@ -158,11 +157,8 @@ pub(super) fn install_desktop_file() -> ! {
         std::process::exit(1);
     }
 
-    // Best-effort cache refresh. Both commands are no-ops on
-    // sessions that don't have the corresponding cache file (e.g.
-    // KDE without `gtk-update-icon-cache`). Failure is logged but
-    // does not abort — the menu entry usually still shows up after
-    // the next desktop session restart.
+    // Best-effort cache refresh; a missing tool or cache file must not abort
+    // the install.
     let _ = std::process::Command::new("update-desktop-database")
         .arg(&apps_dir)
         .status();

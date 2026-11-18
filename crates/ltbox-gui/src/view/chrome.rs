@@ -1,4 +1,4 @@
-//! App shell: root view dispatcher, titlebar, sidebar, content frame, banners, toast, dialogs. Extracted from `main.rs`.
+//! App shell: root view dispatcher, titlebar, sidebar, content frame, banners, toast, dialogs.
 
 use crate::focus_button::{self as button, button};
 use crate::*;
@@ -189,12 +189,10 @@ impl App {
             *layer = focus_button::scope(previous, top_dialog.is_none_or(|top| index == top));
         }
 
-        // Resize handles last so the edge/corner hit areas at the window
-        // edges and corners sit above every popup/toast — the user can
-        // still grab the border while a dialog is open. Events outside
-        // each handle's bounding box pass through to the layers below
-        // so normal UI clicks aren't intercepted. macOS uses native resize
-        // edges, so the overlay handles are omitted there.
+        // Resize handles go last so edge/corner hit areas sit above every popup and
+        // toast, keeping the border grabbable while a dialog is open. Events outside
+        // a handle's bounds pass through. macOS uses native resize edges, so the
+        // overlay handles are omitted there.
         if !crate::SYSTEM_WINDOW_CHROME && !self.window_maximized {
             layers.push(self.resize_handles());
         }
@@ -406,11 +404,9 @@ impl App {
         const EDGE: f32 = 8.0;
         const CORNER: f32 = 14.0;
 
-        // Build one positioned, transparent handle.
-        // `dir`: which window edge / corner this handle resizes.
-        // `w` / `h`: handle hit-area size.
-        // `x` / `y`: alignment of the handle inside the Fill outer.
-        // `interaction`: cursor to show on hover.
+        // One positioned transparent handle: `dir` is the edge/corner it resizes,
+        // `w`/`h` its hit area, `x`/`y` its alignment in the Fill outer, `interaction`
+        // the hover cursor.
         let handle = |dir: iced::window::Direction,
                       w: Length,
                       h: Length,
@@ -590,9 +586,9 @@ impl App {
         }
         match size_class {
             WindowSizeClass::Compact => {
-                // Idle interaction prevents click-through to wizard cards
-                // under the Stack (Stack levitates the cursor for lower
-                // layers when top reports a non-None interaction).
+                // Idle interaction prevents click-through to wizard cards under the Stack
+                // (a Stack hides the cursor from lower layers when the top layer reports a
+                // non-None interaction).
                 iced::widget::mouse_area(shell)
                     .on_enter(Message::SidebarHoverEnter)
                     .on_exit(Message::SidebarHoverExit)
@@ -646,14 +642,10 @@ impl App {
             View::About => self.view_about(),
             _ => self.view_placeholder(),
         };
-        // Dashboard wants the log card to fill the leftover vertical space
-        // so the inner top + bottom margins stay symmetric. A `scrollable`
-        // gives its child unbounded height, which collapses every
-        // `Length::Fill` inside the dashboard tree to zero — so the
-        // dashboard skips the scrollable wrapper and lets its own
-        // `column.height(Fill)` claim the bounded viewport directly.
-        // Other views (Advanced, Settings, …) keep the scrollable wrapper
-        // because their content can legitimately grow past the viewport.
+        // Dashboard skips the scrollable wrapper: a `scrollable` gives its child
+        // unbounded height, collapsing every `Length::Fill` inside to zero, and the
+        // log card must fill the leftover height. Other views keep the wrapper since
+        // their content can grow past the viewport.
         let body: Element<'_, Message> = if self.current_view == View::Dashboard {
             container(inner)
                 .padding(24)
@@ -803,14 +795,11 @@ impl App {
                 .align_y(iced::Alignment::Center),
             );
         } else {
-            // Preserve the original child and metrics byte-for-byte when no
-            // update is available.
+            // Without an update, render the version text alone.
             status_row = status_row.push(text(version).size(12).style(muted_style));
         }
-        // Top divider via an explicit `horizontal_rule` (1 px) so
-        // the meeting point with the sidebar's right divider lands
-        // as a single line per direction (M3 bottom-app-bar
-        // guidance: one divider per shared edge).
+        // Top divider is an explicit 1 px rule so it meets the sidebar's right
+        // divider as a single line per direction (M3: one divider per shared edge).
         column![
             widget::rule::horizontal(1).style(shell_rule_style),
             container(status_row)
@@ -888,12 +877,11 @@ impl App {
             content = content.push(trailing);
         }
 
-        // CSS draws this as one rounded box whose left border is thicker,
-        // so the heavy edge follows the corner curve. iced has no
-        // per-side border width, and a 3px strip cannot render a 12px radius —
-        // it came out as a straight bar butted against a rounded box. Nest
-        // instead: an accent-filled outer box, and the container tone inset
-        // over it by the border widths. What shows through IS the border.
+        // CSS draws this as one rounded box with a thicker left border, so the heavy
+        // edge follows the corner curve. iced has no per-side border width and a 3px
+        // strip can't match a 12px radius, so nest: an accent-filled outer box with
+        // the container tone inset by the border widths; what shows through is the
+        // border.
         let inner = container(content)
             .width(Length::Fill)
             .style(move |t: &Theme| {
@@ -939,9 +927,8 @@ impl App {
             .into()
     }
 
-    /// Wrap a (disabled) driver button in a hover tooltip explaining the
-    /// download needs an internet connection — shown while offline so the
-    /// greyed-out button isn't a dead end with no explanation.
+    /// Hover tooltip for a disabled driver button, explaining the download
+    /// needs an internet connection.
     fn needs_internet_tooltip<'a>(
         &self,
         btn: impl Into<Element<'a, Message>>,
@@ -1075,12 +1062,9 @@ impl App {
         } else {
             self.t(install_key).to_string()
         };
-        // `Length::Shrink` width on the inner text + `wrapping::None` so
-        // a long localized label (e.g. Korean "다운로드 & 설치") never
-        // collapses into a per-grapheme vertical column when the parent
-        // row decides the button's natural width is wider than the slot
-        // it has — let the button overflow its slot instead of shredding
-        // the label.
+        // `Wrapping::None` so a long localized label (e.g. Korean) never collapses
+        // into a per-grapheme vertical column when the row gives the button less than
+        // its natural width; the button overflows instead.
         let btn_label_text = text(btn_label)
             .size(theme::text_size::BODY_MEDIUM)
             .wrapping(iced::widget::text::Wrapping::None);
@@ -1102,12 +1086,10 @@ impl App {
             Space::new().width(0).into()
         };
 
-        // `body` fills the remainder via `Length::Fill` so the button sits
-        // flush right with its natural width. A `Space::new().width(Fill)`
-        // between two `Shrink` siblings would instead size the row from
-        // each text's natural width, so a long desc string would overflow
-        // the banner and squeeze the button's label into a vertical glyph
-        // stack.
+        // `body` fills the remainder via `Length::Fill` so the button sits flush
+        // right at its natural width. A `Space` with `Fill` width between two
+        // `Shrink` siblings would size the row from each text's natural width, so a
+        // long desc would overflow the banner and squeeze the button label.
         let body = row![
             text(self.t(desc_key).to_string())
                 .size(theme::text_size::BODY_MEDIUM)
@@ -1205,9 +1187,8 @@ impl App {
         )
     }
 
-    /// Bottom-of-screen transient toast. Renders a low-attention pill
-    /// over a transparent passthrough container so the rest of the
-    /// view keeps responding to clicks while the toast is on screen.
+    /// Bottom-of-screen transient toast: a low-attention pill over a transparent
+    /// passthrough container so the rest of the view keeps responding to clicks.
     pub(crate) fn toast_view(&self) -> Element<'_, Message> {
         let Some(msg) = self.toast_msg.clone() else {
             return container(text("")).into();
@@ -1244,9 +1225,8 @@ impl App {
             .padding(iced::Padding {
                 top: 0.0,
                 right: 0.0,
-                // Sits ~100 px above the viewport floor — clears the
-                // device-info popup's close-button row without
-                // crowding the table content.
+                // Sits ~100 px above the viewport floor, clearing the device-info popup's
+                // close-button row.
                 bottom: 100.0,
                 left: 0.0,
             })
@@ -1303,10 +1283,8 @@ impl App {
         m3_dialog_modeless(content.into())
     }
 
-    /// Shared loading-state body for any `_popup_view` that fetches
-    /// upstream data. 48 px tall slim box with a centred progress ring —
-    /// every popup uses the same shape, so consolidate here instead
-    /// of duplicating the container chain in each call site.
+    /// Shared loading-state body for any `_popup_view` that fetches upstream
+    /// data: a 48 px slim box with a centred loading indicator.
     pub(crate) fn popup_loading_view(&self) -> Element<'_, Message> {
         // These popups wait on a single upstream fetch — squarely the
         // 200 ms to 5 s band where M3 specifies the loading indicator in

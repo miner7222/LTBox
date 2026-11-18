@@ -3,8 +3,8 @@
 //!
 //! Transport follows the configured Qualcomm driver mode:
 //!
-//! * userspace driver mode: `QdlBackend::Usb` (WinUSB stub on Windows via
-//!   `qcom-usb-userspace-drivers` / libusb-style access on Linux/macOS)
+//! * userspace driver mode: `QdlBackend::Usb` (`nusb`; WinUSB stub on Windows
+//!   via `qcom-usb-userspace-drivers`)
 //! * kernel driver mode: `QdlBackend::Serial` (Windows COM / Linux tty exposed
 //!   by `qcom-usb-kernel-drivers`)
 
@@ -34,23 +34,13 @@ use qdl::types::{
 const QUALCOMM_VID: u16 = 0x05C6;
 const QUALCOMM_EDL_PID: u16 = 0x9008;
 
-/// Stable identifier returned by [`find_edl_device`] / [`wait_for_edl_device`]
-/// when the EDL endpoint is visible via libusb. The actual `nusb::Device`
-/// is opened later by qdl's USB backend (`qdl::usb::setup_usb_device`);
-/// LTBox only needs a presence marker for logging + post-reset stability
-/// checks, so we return a small synthetic string instead of plumbing a
-/// raw `nusb` handle through the wait loop (which would tie the abstract
-/// `wait_for_stable_port_with` helper to a concrete USB type and break
-/// the unit tests that drive it with `String` ports).
+/// Presence marker returned by [`find_edl_device`] / [`wait_for_edl_device`]
+/// in userspace mode. qdl's USB backend opens the real `nusb` device later; a
+/// string keeps `wait_for_stable_port_with` generic and testable with `String` ports.
 const EDL_DEVICE_MARKER: &str = "USB:VID_05C6&PID_9008";
 
-/// Build + send a Firehose `<erase>` XML to the device.
-///
-/// Inlined here instead of calling a `qdl::firehose_erase_storage`
-/// wrapper so the dependency surface stays on the upstream-portable
-/// `qdl::firehose_write_getack` primitive. Mirrors the v2 Python
-/// flow that hand-writes a `FHLoaderErase.xml` and feeds it into
-/// the Firehose pass: same XML payload, same end behaviour.
+/// Send a Firehose `<erase>` command. Built on `qdl::firehose_write_getack`
+/// so the qdl dependency surface stays on upstream-portable primitives.
 fn send_firehose_erase(
     dev: &mut QdlDevice<dyn QdlReadWrite>,
     num_sectors: usize,
@@ -58,10 +48,8 @@ fn send_firehose_erase(
     start_sector: &str,
 ) -> std::result::Result<(), String> {
     let sector_size = dev.fh_cfg.storage_sector_size;
-    // Self-closed `<erase>` inside a `<data>` root with the XML
-    // declaration matches what xmltree emits in qdl's internal
-    // `firehose_xml_setup`. Firehose's parser is lenient about
-    // whitespace but strict about attribute names + spelling.
+    // Same shape xmltree emits in qdl's `firehose_xml_setup`. Firehose is
+    // lenient about whitespace but strict about attribute names.
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?><data><erase SECTOR_SIZE_IN_BYTES="{sector_size}" num_partition_sectors="{num_sectors}" physical_partition_number="{lun}" start_sector="{start_sector}" /></data>"#
     );
@@ -80,10 +68,8 @@ const EDL_SESSION_OPEN_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Latest per-partition firmware write progress for GUI consumers.
 ///
-/// Published by the rawprogram flash path (`EdlSession::flash_program_node`)
-/// without parsing terminal `pbr` output. The last value remains available
-/// until [`clear_flash_progress`] so short gaps between partitions do not
-/// flicker empty in the UI.
+/// The last value stays until [`clear_flash_progress`] so gaps between
+/// partitions do not flicker empty in the UI.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlashProgress {
     pub partition: String,
@@ -126,13 +112,9 @@ fn uploaded_loader_slot() -> &'static Mutex<Option<std::path::PathBuf>> {
 
 /// Take the loader whose Sahara upload most recently succeeded, clearing it.
 ///
-/// A loader that completed the upload is the only kind worth remembering: it
-/// is proof the file is the right programmer for the device that just accepted
-/// it, which no amount of filename or extension inspection can establish. The
-/// GUI polls this to record the loader against the connected model.
-///
-/// Take-once, because a second read would re-attribute the same upload to
-/// whatever device is connected by then.
+/// A completed upload is the only proof a file is the right programmer for the
+/// device; the GUI records it against the connected model. Take-once, so a
+/// later read cannot credit the upload to a different device.
 pub fn take_uploaded_loader() -> Option<std::path::PathBuf> {
     match uploaded_loader_slot().lock() {
         Ok(mut guard) => guard.take(),
@@ -218,7 +200,7 @@ fn flash_percent(completed: u64, total: u64) -> u8 {
         return 100;
     }
     let completed = completed.min(total);
-    // Prefer saturating math over `completed * 100` which can overflow u64.
+    // Widen to u128: `completed * 100` can overflow u64.
     let pct = ((completed as u128) * 100 / (total as u128)) as u64;
     pct.min(100) as u8
 }
@@ -259,16 +241,13 @@ pub enum EdlError {
 
 type Result<T> = std::result::Result<T, EdlError>;
 
-/// Scan for the Qualcomm 9008 EDL endpoint via libusb. Returns
-/// [`EDL_DEVICE_MARKER`] when exactly one matching device is enumerated,
-/// otherwise [`EdlError::PortNotFound`].
+/// Scan for the Qualcomm 9008 EDL endpoint via `nusb`. Returns
+/// [`EDL_DEVICE_MARKER`] for exactly one match, [`EdlError::PortNotFound`] for
+/// none, [`EdlError::MultipleDevices`] for several, and [`EdlError::Serial`]
+/// when enumeration fails.
 ///
-/// Implemented with `nusb::list_devices()` to mirror the discovery path
-/// `qdl::usb::setup_usb_device` will take when actually opening the
-/// transport — keeping both probes on the same enumeration source avoids
-/// a device being visible to the probe but invisible to open, which can
-/// happen when probing via `serialport::available_ports` and then opening
-/// a different transport on top of it.
+/// Uses the same enumeration as `qdl::usb::setup_usb_device`, so a device the
+/// probe sees is one the transport can open.
 pub fn find_edl_device() -> Result<String> {
     use nusb::MaybeFuture;
     let devices = nusb::list_devices()
@@ -319,13 +298,10 @@ fn select_edl_port(candidates: &mut Vec<String>) -> Result<String> {
     }
 }
 
-/// Windows-only: resolve the EDL 9008 serial COM port by hardware ID via
-/// SetupAPI, bypassing `serialport`'s USB classification (which fails on the
-/// WDF kernel driver's non-standard metadata). Enumerates only currently
-/// present devices in the Ports class (`DIGCF_PRESENT`), matches the hardware
-/// ID `VID_05C6&PID_9008`, and reads the assigned `PortName` (e.g. `COM3`) from
-/// the device's registry key. Returns an empty list when no such port exists — the
-/// device is absent, or bound to a non-serial driver that created no COM port.
+/// Resolve EDL 9008 COM ports by hardware ID via SetupAPI, because
+/// `serialport`'s USB classification fails on the WDF kernel driver's
+/// metadata. Reads `PortName` of present Ports-class devices matching
+/// `VID_05C6&PID_9008`; empty when the device is absent or has no COM port.
 #[cfg(windows)]
 fn find_qcom_edl_ports_windows() -> Result<Vec<String>> {
     use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
@@ -521,7 +497,7 @@ where
         }
     }
 
-    // Phase 2: wait for post-reset port to appear + stabilize.
+    // Phase 2: wait for the post-reset port to appear and stabilize.
     let mut last: Option<String> = None;
     while !deadline_exceeded() {
         sleep(EDL_STABILITY_INTERVAL);
@@ -627,24 +603,17 @@ impl EdlSession {
         let mode = qcom_driver_mode();
         ltbox_core::live!(log, "[EDL] {}", tr("log_edl_scanning"));
         let port = wait_for_stable_port(mode)?;
-        // In userspace mode `port` is a libusb marker string
-        // ("USB:VID_05C6&PID_9008"), not a COM port name; the log line
-        // wording is generic enough ("found on …") to cover either case.
+        // In userspace mode `port` is `EDL_DEVICE_MARKER`, not a COM port.
         ltbox_core::live!(
             log,
             "[EDL] {}",
             ltbox_core::tr_args!("log_edl_found_on", port = port)
         );
 
-        // An encrypted manifest (`qsahara_device_programmer.x`) is decrypted
-        // to the plaintext `.xml` beside it before use, so its per-id images
-        // (referenced relative to that directory) still resolve. Some Lenovo
-        // firmware packs ship the manifest only in this encrypted form. This
-        // is the single point loaders are consumed, so decrypting here covers
-        // every caller (Flash / Unroot / Rescue / DetectArb / Dump).
-        // Kept across the decryption shadow below: what the caller handed in is
-        // what a wizard holds and what gets remembered, not the sibling `.xml`
-        // an encrypted pick expands into.
+        // Some Lenovo packs ship the Sahara manifest only encrypted (`.x`). It
+        // is decrypted to the `.xml` beside it so its relative image paths
+        // resolve; every loader consumer passes through here. The caller's
+        // original pick is what gets remembered, not the decrypted sibling.
         let picked_loader = loader_path;
         let decrypted_holder;
         let loader_path: &Path =
@@ -662,7 +631,7 @@ impl EdlSession {
                 loader_path
             };
 
-        // Manifest (TB323FU): slot array indexed by Sahara image-id.
+        // Manifest: slot array indexed by Sahara image-id.
         // Single loader (.melf/.mbn/.elf): one-element slice at slot 0.
         let mut slots: Vec<Option<Vec<u8>>> =
             if ltbox_core::sahara_xml::is_manifest_filename(loader_path) {
@@ -756,9 +725,7 @@ impl EdlSession {
 
         ltbox_core::live!(log, "[EDL] {}", tr("log_edl_sahara_uploading"));
         // qdl `sahara_run` indexes `img_arr` by image-id when len>1, else slot 0.
-        // First attempt: trust PBL to emit Sahara HELLO. `sahara_run`'s loop
-        // blocks on the first `channel.read` waiting for the HELLO packet,
-        // then replies with HELLO_RESP (qdl `sahara.rs:489-509`).
+        // First attempt waits for the PBL's HELLO and answers with HELLO_RESP.
         let first_attempt = qdl::sahara::sahara_run(
             &mut dev,
             qdl::sahara::SaharaMode::WaitingForImage,
@@ -770,19 +737,10 @@ impl EdlSession {
         match first_attempt {
             Ok(_) => {}
             Err(e) => {
-                // Skip-HELLO fallback: mirrors qdl CLI's
-                // `--skip-hello-wait` (cli/src/main.rs:246-248): send an
-                // unsolicited HELLO_RESP to nudge the PBL state machine
-                // forward, then retry `sahara_run`. Only triggered on a
-                // timeout-shaped error so happy-path devices keep using the
-                // standard handshake (no behavior change unless the first
-                // attempt already failed).
-                //
-                // Primary check: structured downcast to
-                // `io::ErrorKind::TimedOut` (qdl-rs propagates the
-                // serialport read timeout as an `io::Error` wrapped in
-                // `anyhow::Error`). String fallback is defense-in-depth in
-                // case a future qdl-rs revision changes the wrapping.
+                // On a timeout only, mirror upstream qdl CLI's
+                // `--skip-hello-wait`: send an unsolicited HELLO_RESP to nudge
+                // the PBL forward, then retry. The string match backs up the
+                // `io::ErrorKind::TimedOut` downcast in case qdl's wrapping changes.
                 let timed_out = e
                     .downcast_ref::<std::io::Error>()
                     .map(|io| io.kind() == std::io::ErrorKind::TimedOut)
@@ -818,10 +776,8 @@ impl EdlSession {
             }
         }
         ltbox_core::live!(log, "[EDL] {}", tr("log_edl_sahara_uploaded"));
-        // The device accepted this programmer — the only proof that exists
-        // that it is the right loader for whatever is on the other end of the
-        // cable. Published here rather than on `Ok(Self)` so a later Firehose
-        // failure, which says nothing about the loader, still counts.
+        // Published here, not on `Ok(Self)`: a later Firehose failure says
+        // nothing about whether the loader was right.
         publish_uploaded_loader(picked_loader);
 
         // Keep qdl's own reset_on_drop false to dodge its recursive reset;
@@ -844,21 +800,13 @@ impl EdlSession {
         })
     }
 
-    /// Max plausible GPT metadata span (protective MBR + header + entry
-    /// array) in sectors. A malformed or hostile GPT can report a huge
-    /// `first_usable_lba`; passing it straight to `firehose_read_storage`
-    /// as a sector count would allocate/read gigabytes. Real GPTs fit in a
-    /// few dozen sectors, so 2048 is a generous ceiling.
+    /// Max GPT metadata span in sectors. A hostile `first_usable_lba` used
+    /// as a read count would allocate gigabytes; real GPTs fit in a few dozen.
     const MAX_GPT_METADATA_SECTORS: u64 = 2048;
 
-    /// Extra sectors appended to a GPT metadata read so the partition-entry
-    /// array is never the last sector delivered. The USB Firehose read can
-    /// return the final sector of a transfer short/garbled; a fully-populated
-    /// GPT (TB323FU LUN 4 carries 128 entries filling LBA 2..=5, i.e. up to
-    /// `first_usable_lba`) reads its entry array right up to the buffer's last
-    /// byte, so the flaky tail corrupts it and `gptman` fails to parse. Reading
-    /// a couple of slack sectors keeps the entry array in the reliable middle;
-    /// `gptman` ignores the trailing padding.
+    /// Slack sectors after a GPT metadata read. A USB Firehose read can garble
+    /// its final sector, and a full entry array (TB323FU LUN 4: 128 entries in
+    /// LBA 2..=5) ends exactly there; `gptman` ignores the trailing padding.
     const GPT_READ_TAIL_MARGIN: usize = 2;
 
     /// Clamp a GPT header's `first_usable_lba` to a sane Firehose read
@@ -873,8 +821,7 @@ impl EdlSession {
         Ok(first_usable_lba as usize)
     }
 
-    /// Read the GPT of a single LUN. Returns the parsed `gptman::GPT`.
-    /// Used by `scan_partitions` and `find_partition`.
+    /// Read and parse the GPT of a single LUN.
     fn read_gpt_for_lun(&mut self, slot: u8, lun: u8) -> Result<gptman::GPT> {
         let mut buf = Cursor::new(Vec::<u8>::new());
         qdl::firehose_read_storage(&mut self.dev, &mut buf, 1, slot, lun, 1)
@@ -894,9 +841,8 @@ impl EdlSession {
     }
 
     /// Read the GPT of every LUN in `lun_range` and flatten the named
-    /// partitions. GPT placeholder slots (empty name or zero size) are
-    /// dropped. Per-LUN failures are logged but do not abort the scan —
-    /// devices often expose only a subset of the 0..=5 LUN range.
+    /// partitions, dropping empty-name or zero-size slots. Per-LUN failures
+    /// are logged, not fatal: devices often expose only some of LUNs 0..=5.
     pub fn scan_partitions(
         &mut self,
         lun_range: std::ops::RangeInclusive<u8>,
@@ -944,22 +890,17 @@ impl EdlSession {
     }
 
     /// Resolve a partition's UFS LUN: the static [`ltbox_core::partition_lun`]
-    /// table first (no I/O), then a GPT scan across LUNs `0..=5` as a fallback
-    /// for partitions not in the table (a model whose rawprogram wasn't compared,
-    /// or a future layout). Slot suffix / case are normalised. Errors when the
-    /// label is on no LUN's GPT.
+    /// table first (no I/O), else a GPT scan of LUNs `0..=5` for labels not in
+    /// the table. Errors when no GPT has the label or it spans several LUNs.
     pub fn lun_for(&mut self, label: &str, log: &mut Vec<String>) -> Result<u8> {
         if let Some(lun) = ltbox_core::partition_lun::lun_for_partition(label) {
             return Ok(lun);
         }
         let parts = self.scan_partitions(0..=5, log)?;
-        // Resolve from the device GPT: an EXACT label match first, then the
-        // slot-stripped base. Within each tier the matches MUST agree on one LUN.
-        // A deliberately multi-LUN label (e.g. `xbl` on LUN 1+2, `last_parti` on
-        // every LUN) is omitted from the static map precisely because it has no
-        // single LUN, so returning an arbitrary first hit would defeat that
-        // omission — error on ambiguity instead. A slot-suffixed `xbl_a` / `xbl_b`
-        // resolves through the exact tier to its own entry.
+        // Exact label first, then the slot-stripped base; each tier must agree
+        // on one LUN. Multi-LUN labels (`xbl` on LUNs 1+2, `last_parti` on every
+        // LUN) are absent from the static map for that reason, so error on
+        // ambiguity rather than take a first hit. `xbl_a` resolves exactly.
         let exact: Vec<u8> = parts
             .iter()
             .filter(|p| p.name.eq_ignore_ascii_case(label))
@@ -980,11 +921,9 @@ impl EdlSession {
             .ok_or_else(|| EdlError::PartitionNotFound(label.to_string()))
     }
 
-    /// Collapse the LUNs of GPT entries that matched a label into a single LUN.
-    /// `Ok(None)` = no match (caller tries the next tier or reports not-found);
-    /// `Ok(Some(lun))` = every match shares one LUN; `Err(AmbiguousPartitionLun)`
-    /// = the label spans more than one distinct LUN and cannot be targeted
-    /// unambiguously (a multi-LUN label deliberately absent from the static map).
+    /// Collapse the LUNs of GPT entries that matched a label: `Ok(None)` for no
+    /// match, `Ok(Some(lun))` when all agree, `Err(AmbiguousPartitionLun)` when
+    /// the label spans several LUNs.
     fn single_matching_lun(luns: &[u8], label: &str) -> Result<Option<u8>> {
         match luns.first() {
             None => Ok(None),
@@ -1096,10 +1035,7 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Dump with pre-resolved (LUN, start, length); skips GPT lookup.
-    /// Needed because some Lenovo devices put boot/init_boot on non-zero
-    /// LUNs that the LUN-0 GPT can't describe. Mirrors v2
-    /// `EdlPartitionService.dump_partition`.
+    /// Dump with pre-resolved (LUN, start, length); skips the GPT lookup.
     pub fn dump_partition_at(
         &mut self,
         part_name: &str,
@@ -1154,11 +1090,8 @@ impl EdlSession {
             ));
         }
         let image_sectors = file_len.div_ceil(sector_size);
-        // Refuse to program past the partition — an oversized image would
-        // spill into the next partition and brick the device. The by-name
-        // `flash_partition` resolves the span from the GPT; this explicit-
-        // start variant relies on the caller's prior partition scan, passed
-        // in as `partition_sectors`.
+        // An oversized image would spill into the next partition and brick
+        // the device. `partition_sectors` comes from the caller's prior scan.
         if image_sectors > partition_sectors {
             return Err(EdlError::Session(format!(
                 "Flash {part_name}: image is {image_sectors} sectors but the partition spans only {partition_sectors}"
@@ -1203,11 +1136,8 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Total sector count of a physical LUN. Probes the primary GPT
-    /// header (sector 1) and returns `backup_lba + 1`, since
-    /// `backup_lba` points at the backup header (last sector of the
-    /// disk). Used by the Physical Storage Dump wizard to size a
-    /// whole-LUN read without an explicit disk-size query.
+    /// Total sector count of a physical LUN: the primary GPT header's
+    /// `backup_lba + 1`, since the backup header is the disk's last sector.
     pub fn physical_lun_sector_count(&mut self, lun: u8, log: &mut Vec<String>) -> Result<u64> {
         let mut buf = Cursor::new(Vec::<u8>::new());
         qdl::firehose_read_storage(&mut self.dev, &mut buf, 1, 0, lun, 1)
@@ -1229,10 +1159,8 @@ impl EdlSession {
         Ok(total)
     }
 
-    /// Whole-LUN dump to a file. Reads every sector from LUN `lun`
-    /// (count derived from the GPT header's `alternate_lba`) straight
-    /// into `output`. Mirrors qdlrs `Dump` but without GPT decoding —
-    /// the caller gets a raw physical image.
+    /// Raw whole-LUN dump to `output`, sized by
+    /// [`Self::physical_lun_sector_count`]; no GPT decoding.
     pub fn dump_physical_storage(
         &mut self,
         lun: u8,
@@ -1265,10 +1193,8 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Whole-LUN raw flash. Mirrors qdlrs `OverwriteStorage`: empty
-    /// partition name + start sector "0", file sector count derived
-    /// from the image length. Queries the target LUN capacity first and
-    /// refuses images that would program past the end of the disk.
+    /// Whole-LUN raw flash from sector 0, like qdlrs `OverwriteStorage`.
+    /// Refuses an image larger than the LUN's capacity.
     pub fn flash_physical_storage(
         &mut self,
         lun: u8,
@@ -1285,10 +1211,8 @@ impl EdlSession {
             ));
         }
         let image_sectors = file_len.div_ceil(sector_size);
-        // Capacity probe before the write: an oversized image would spill
-        // past the last LBA (and on some Firehose implementations wrap or
-        // corrupt adjacent storage). Mirrors the partition-span check in
-        // `flash_partition` / `flash_partition_at`.
+        // An oversized image would spill past the last LBA (some Firehose
+        // implementations wrap or corrupt adjacent storage).
         let lun_capacity = self.physical_lun_sector_count(lun, log)?;
         ensure_image_fits_physical_lun(image_sectors, lun_capacity, lun)?;
         let num_sectors = usize::try_from(image_sectors).map_err(|_| {
@@ -1331,9 +1255,8 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Erase a sector range. Used by the Flash Partitions wizard when
-    /// the user flags a row as "erase". `start_sector` is passed through
-    /// Firehose as a string so negative offsets (e.g. "-1") stay valid.
+    /// Erase a sector range (`efisp` is zero-filled instead). `start_sector`
+    /// is passed to Firehose as a string so negative offsets (e.g. "-1") stay valid.
     pub fn erase_partition_at(
         &mut self,
         part_name: &str,
@@ -1354,10 +1277,9 @@ impl EdlSession {
             )
         );
         if part_name == "efisp" {
-            // On GBL devices, Firehose <erase> can read back as zero within
-            // the session yet expose the old EFISP image after reboot. Use a
-            // full zero-image program instead. Stream it rather than creating
-            // a partition-sized allocation or temporary file. No readback.
+            // On GBL devices a Firehose <erase> can read back as zero in-session
+            // yet expose the old EFISP image after reboot, so program zeros,
+            // streamed to avoid a partition-sized allocation. No readback.
             let sector_size = self.dev.fh_config().storage_sector_size;
             if num_sectors == 0
                 || sector_size == 0
@@ -1422,9 +1344,7 @@ impl EdlSession {
             })
     }
 
-    /// Erase a whole partition resolved by name from the device GPT. Looks up
-    /// the partition's start/end LBA (like [`Self::flash_partition`]) and erases
-    /// every sector it spans.
+    /// Erase every sector of a partition resolved by name from the device GPT.
     pub fn erase_partition_by_name(
         &mut self,
         part_name: &str,
@@ -1470,8 +1390,8 @@ impl EdlSession {
         }
         let num_sectors = usize::try_from(file_len.div_ceil(sector_size))
             .map_err(|_| EdlError::Session("Image sector count exceeds usize".into()))?;
-        // Refuse to program past the partition — an oversized image would
-        // spill into the next partition and brick the device.
+        // An oversized image would spill into the next partition and brick
+        // the device.
         if num_sectors > span {
             return Err(EdlError::Session(format!(
                 "Flash {part_name}: image is {num_sectors} sectors but the partition spans only {span}"
@@ -1524,12 +1444,8 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Best-effort system reset for end-of-flow cleanup.
-    ///
-    /// v2 called qdl reset with `check=False`; some devices successfully
-    /// reset the USB endpoint while qdl still reports an error. Use this
-    /// after all destructive writes have already completed and the only
-    /// remaining action is booting the device back to system.
+    /// Best-effort system reset for end-of-flow cleanup: some devices reset
+    /// while qdl still reports an error. Use only after every write is done.
     pub fn reset_tolerant(&mut self, log: &mut Vec<String>) {
         if let Err(e) = self.reset(log) {
             ltbox_core::live!(
@@ -1541,8 +1457,8 @@ impl EdlSession {
     }
 
     /// Bounce back to Sahara (does NOT boot system). Required after a
-    /// dump-only session so the next `open()` gets a fresh Hello —
-    /// otherwise Sahara times out. Mirrors v2 qdl-rs default behavior.
+    /// dump-only session so the next `open()` gets a fresh Hello;
+    /// otherwise Sahara times out.
     pub fn reset_to_edl(&mut self, log: &mut Vec<String>) -> Result<()> {
         self.exited = true;
         ltbox_core::live!(log, "[EDL] {}", tr("log_edl_reset_to_edl_cmd"));
@@ -1552,17 +1468,9 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Mark `xbl_a`'s LUN as the boot drive (Firehose
-    /// `<setbootablestoragedrive value="1"/>`, equivalent to fh_loader's
-    /// `setactivepartition=1`). LUN 1 is hardcoded — every supported
-    /// Lenovo Qualcomm tablet (TB320FC / TB321FU / TB322FC / TB323FU /
-    /// TB520FU / TB710FU) places `xbl_a` on LUN 1.
-    ///
-    /// Lenovo firmware rawprograms only target `_a`, so a full firmware
-    /// flash always lands on `_a`. Call this after the flash so the SoC
-    /// boots from the freshly-written `_a` on the next reset; without
-    /// it a device that was previously running on `_b` would continue
-    /// booting `_b`'s pre-flash firmware.
+    /// Mark LUN 1 as the boot drive: every model in
+    /// `ltbox_core::model::SUPPORTED_MODELS` places `xbl_a` there.
+    /// Call after flashing Lenovo's `_a` firmware so the next reset boots it.
     pub fn set_active_slot_a(&mut self, log: &mut Vec<String>) -> Result<()> {
         const XBL_A_LUN: u8 = 1;
         ltbox_core::live!(
@@ -1672,8 +1580,7 @@ mod tests {
             100
         );
         assert_eq!(EdlSession::partition_span_sectors("p", 5, 5).unwrap(), 1);
-        // Start LBAs past the historical Firehose u32 limit must still
-        // compute an inclusive span correctly (no hardware / no truncation).
+        // Start LBAs past u32::MAX must not truncate.
         let start = u64::from(u32::MAX) + 1;
         assert_eq!(
             EdlSession::partition_span_sectors("p", start, start + 99).unwrap(),
@@ -1713,8 +1620,7 @@ mod tests {
             EdlSession::gpt_read_sectors(EdlSession::MAX_GPT_METADATA_SECTORS).unwrap(),
             EdlSession::MAX_GPT_METADATA_SECTORS as usize
         );
-        // Zero and implausibly large values (a malformed or hostile GPT) are
-        // rejected before they can drive an unbounded Firehose read.
+        // Zero and hostile-GPT values must not drive an unbounded read.
         assert!(EdlSession::gpt_read_sectors(0).is_err());
         assert!(EdlSession::gpt_read_sectors(EdlSession::MAX_GPT_METADATA_SECTORS + 1).is_err());
         assert!(EdlSession::gpt_read_sectors(u64::MAX).is_err());
@@ -1760,8 +1666,8 @@ mod tests {
 
     #[test]
     fn phase1_name_change_forces_phase2() {
-        // Regression: Phase 1 that only checks Ok/Err presence would latch
-        // the dead COM6 handle across a reset-to-EDL renumeration.
+        // A presence-only Phase 1 would latch the dead COM6 handle across a
+        // reset-to-EDL re-enumeration.
         let port = run_with_deadline_never(vec![
             Ok("COM6".to_string()),
             Ok("COM7".to_string()), // phase 1 name change → fall through

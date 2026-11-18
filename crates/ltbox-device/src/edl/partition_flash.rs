@@ -102,10 +102,10 @@ impl EdlSession {
     /// the writes, so a later pathname replacement cannot substitute an image.
     /// Call after any rawprogram/GPT updates; source image size is not capacity.
     ///
-    /// `on_partition` runs before each program operation, after the entire batch
-    /// passes preflight. `on_write_start` runs at the transport's first command
-    /// write attempt for each partition, even if that attempt fails. It does not
-    /// imply successful programming. A failure stops the remaining writes.
+    /// `on_partition` runs before each program operation, after the whole batch
+    /// passes preflight. `on_write_start` runs at each partition's first command
+    /// write attempt, even a failed one; it does not imply success. A failure
+    /// stops the remaining writes.
     pub fn flash_partition_batch(
         &mut self,
         partitions: &[PartitionFlash<'_>],
@@ -181,9 +181,8 @@ impl EdlSession {
             })?);
         }
 
-        // The whole batch is known after preflight, so publish its complete
-        // denominator before the first write. This keeps cumulative progress
-        // stable across the generated overlay images in a full flash.
+        // Register the whole batch before the first write so cumulative
+        // progress stays stable across a full flash's overlay images.
         let sector_size = self.dev.fh_config().storage_sector_size;
         for image in &prepared {
             if image.file.is_none() {

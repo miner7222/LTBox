@@ -23,9 +23,7 @@ pub mod ksu;
 pub mod magisk;
 pub mod skroot;
 
-// Re-exports preserving the pre-split flat public API:
-// `ltbox_patch::root_pipeline::stage_root_manager_apk` etc. continue to
-// resolve unchanged for external callers (notably the GUI).
+// Flat public API, e.g. `ltbox_patch::root_pipeline::stage_root_manager_apk`.
 pub use apatch::{download_apatch_payload, download_apatch_payload_nightly};
 pub use ksu::{
     download_ksu_payload, download_ksu_payload_nightly, ksu_gki_branch,
@@ -147,20 +145,18 @@ pub fn resolve_root_image_target(
 
 /// Whether the root target is hash-verified by a parent that must be rebuilt.
 ///
-/// AVB binds a partition to vbmeta one of two ways. When vbmeta carries the
-/// partition's own **Hash descriptor**, the digest of the patched image has to
-/// be imported back into vbmeta and vbmeta re-signed, or the bootloader checks
-/// the patched image against the stock digest and rejects it. When vbmeta
-/// **chains** the partition, its footer is self-describing: vbmeta only pins
-/// the signing key, which re-signing with the same `KEY_MAP` key preserves, so
-/// vbmeta must be left alone.
+/// AVB binds a partition to vbmeta in one of two ways. With a **Hash
+/// descriptor** in vbmeta, the patched image's digest must be imported back and
+/// vbmeta re-signed, or the bootloader rejects it against the stock digest. With
+/// a **chain** descriptor, vbmeta pins only the signing key, which re-signing
+/// with the same `KEY_MAP` key preserves, so vbmeta is left alone.
 ///
-/// Every supported model chains `boot` except TB320FC-equivalents, which hash
-/// it — their stock `boot.img` footer is `NONE`-signed precisely because vbmeta
+/// `boot` is chained except on models with `boot_vbmeta_is_hash` (currently
+/// TB320FC), whose stock `boot.img` footer is `NONE`-signed because vbmeta
 /// carries the digest. `init_boot` is always hashed by a parent; descriptor
-/// inspection determines whether vbmeta or vbmeta_system owns it. Root runs with the
-/// model already detected over ADB or Fastboot, so this resolves before EDL and
-/// the dump step can skip vbmeta entirely when it plays no part.
+/// inspection decides whether vbmeta or vbmeta_system owns it. The model is
+/// already known over ADB or Fastboot, so this resolves before EDL and the dump
+/// can skip vbmeta when it plays no part.
 pub fn root_run_rebuilds_vbmeta(target: RootImageTarget, device_model: &str) -> bool {
     match target {
         RootImageTarget::InitBoot => true,
@@ -199,9 +195,8 @@ pub struct RootPipelineConfig {
     /// Device kernel version (`major.minor.patch` from `uname -r`) —
     /// used by KSU to pick the matching `.ko` release asset.
     pub kernel_version: Option<String>,
-    /// GKI branch read off the device's own kernel release (`android12`), when
-    /// ADB could supply one. `None` falls back to matching on the kernel
-    /// version alone — see [`ksu_gki_branch`].
+    /// GKI branch from the device's kernel release (`android12`), when ADB
+    /// supplied one; `None` matches on kernel version alone, see [`ksu_gki_branch`].
     pub kernel_gki_branch: Option<String>,
     /// GKI mode → patch `boot.img` via `gki::patch_boot` instead of the
     /// Magisk/KSU ramdisk path.
@@ -211,11 +206,11 @@ pub struct RootPipelineConfig {
     /// APatch: empty for default signature/UID auth, or an optional user key
     /// (8..=63 ASCII alphanumeric). Ignored for FolkPatch.
     pub superkey: String,
-    /// Magisk Forks: user-picked variant APK (local-APK-only in v2 parity).
+    /// Magisk Forks: user-picked variant APK (forks are local-APK-only).
     pub magisk_forks_apk: Option<PathBuf>,
     /// Nightly: manual workflow run ID. `None` → auto-detect latest.
     pub nightly_run_id: Option<u64>,
-    /// Stable-channel release selected in the GUI. None preserves latest behavior.
+    /// Stable-channel release tag selected in the GUI; `None` means latest.
     pub release_tag: Option<String>,
 }
 
@@ -280,10 +275,9 @@ pub fn provider_workflow(provider: RootProvider) -> Option<(&'static str, &'stat
 }
 
 /// Workflows that build a KernelSU-family provider's **release tags**, in
-/// preference order. Tagged payloads come from these runs only, never from a
-/// nightly. `release.yml` is the tag pipeline for every provider here; the
-/// build workflow is a fallback for tags it also builds (BakaSU does, the
-/// KernelSU-Next `-ci` workflow does not).
+/// preference order; tagged payloads never come from a nightly. `release.yml`
+/// is the tag pipeline; the build workflow is a fallback for tags it also
+/// builds (BakaSU does, the KernelSU-Next `-ci` workflow does not).
 pub fn provider_release_workflows(provider: RootProvider) -> &'static [&'static str] {
     match provider {
         RootProvider::KernelSU | RootProvider::SukiSU | RootProvider::BakaSU => {
@@ -396,11 +390,11 @@ pub fn ensure_nightly_run_id(cfg: &mut RootPipelineConfig, log: &mut Vec<String>
     Ok(())
 }
 
-/// Build the `nightly.link` public-mirror URL for a workflow artifact ID.
-/// Response is always ZIP-wrapped.
+/// Build the `nightly.link` public-mirror URL for a workflow artifact ID. The
+/// response is always ZIP-wrapped.
 ///
-/// The run + name form (`/actions/runs/{run}/{name}.zip`) 404s for existing,
-/// unexpired artifacts, so downloads always go through the artifact ID.
+/// The run + name form (`/actions/runs/{run}/{name}.zip`) 404s for existing
+/// artifacts, so downloads go through the artifact ID.
 pub(super) fn nightly_artifact_url(repo: &str, artifact_id: u64) -> String {
     format!("https://nightly.link/{repo}/actions/artifacts/{artifact_id}.zip")
 }
@@ -430,12 +424,12 @@ pub fn provider_repo(provider: RootProvider) -> Option<&'static str> {
         RootProvider::Magisk => "topjohnwu/Magisk",
         RootProvider::MagiskFork | RootProvider::KernelSULocal => return None,
         RootProvider::KernelSU => "tiann/KernelSU",
-        // Upstream moved to the KernelSU-Next org; the old `rifsxd/KernelSU-Next`
-        // redirects but its release assets aren't mirrored, so pin the new slug.
+        // The old `rifsxd/KernelSU-Next` slug redirects, but its release assets
+        // aren't mirrored there.
         RootProvider::KernelSUNext => "KernelSU-Next/KernelSU-Next",
         RootProvider::SukiSU => "SukiSU-Ultra/SukiSU-Ultra",
-        // Formerly `ReSukiSU/ReSukiSU`. GitHub redirects the old slug, but
-        // nightly.link does not, so artifact downloads need the new one.
+        // The old `ReSukiSU/ReSukiSU` slug redirects on GitHub but not on
+        // nightly.link, so artifact downloads need this one.
         RootProvider::BakaSU => "Baka-SU/BakaSU",
         RootProvider::APatch => "bmax121/APatch",
         RootProvider::FolkPatch => "LyraVoid/FolkPatch",
@@ -457,8 +451,7 @@ pub fn stage_root_payload(cfg: &RootPipelineConfig, log: &mut Vec<String>) -> Re
             }
             let apk_path = cfg.work_dir.join("magisk.apk");
             let manager_apk = cfg.work_dir.join("manager.apk");
-            // Reuse stage_root_manager_apk's bytes when available
-            // — saves a duplicate ~10 MB fetch in the common path.
+            // Reuse the APK from stage_root_manager_apk to avoid a second download.
             if !apk_path.exists() {
                 if matches!(cfg.provider, RootProvider::MagiskFork) {
                     let src = cfg.magisk_forks_apk.as_ref().ok_or_else(|| {
@@ -561,13 +554,12 @@ pub fn stage_root_payload(cfg: &RootPipelineConfig, log: &mut Vec<String>) -> Re
             }
         }
         RootFamily::APatch => {
-            // stage_root_manager_apk for APatch already downloads the
-            // APK and extracts kpimg via download_apatch_payload — no
-            // additional payload fetch needed here.
+            // stage_root_manager_apk already fetched the APK and kpimg
+            // (via download_apatch_payload).
         }
         RootFamily::Skroot => {
-            // SKRoot Lite patches the dumped kernel directly. The manager
-            // APK is fetched by stage_root_manager_apk; no extra payload.
+            // SKRoot Lite patches the dumped kernel directly; only the manager
+            // APK (stage_root_manager_apk) is needed.
         }
     }
     Ok(())
@@ -576,7 +568,7 @@ pub fn stage_root_payload(cfg: &RootPipelineConfig, log: &mut Vec<String>) -> Re
 /// Offline pipeline outcome — everything before the EDL flash step.
 pub struct PatchedArtifacts {
     pub patched_root_image: PathBuf,
-    /// `None` when AVB is skipped (e.g. TB323FU GBL root bypasses stock AVB).
+    /// `None` when vbmeta is left untouched (GBL root, or vbmeta chains the target).
     pub patched_vbmeta: Option<PathBuf>,
     pub manager_apk: Option<PathBuf>,
     /// Target partition name (`init_boot_a`, `boot_a`, …).
@@ -629,18 +621,15 @@ pub fn build_patched_artifacts(
             "work_dir is missing the stock {stock_filename} dump"
         )));
     }
-    // vbmeta is dumped only when it actually takes part: TB323FU GBL root
-    // flashes the repacked boot as-is, and a chained target is verified by its
-    // own footer. Both leave vbmeta out of the workspace.
+    // vbmeta is dumped only when it takes part: GBL root leaves vbmeta alone and
+    // a chained target is verified by its own footer.
     if rebuild_vbmeta && !vbmeta_src.exists() {
         return Err(LtboxError::Patch(format!(
             "work_dir is missing the stock {owner_name} dump"
         )));
     }
-    // Defensive: GUI Phase 2 prefetches the manager APK + payload
-    // before EDL, but headless callers (and the stable test
-    // surface) shouldn't have to remember the order. Both helpers
-    // are idempotent against already-staged files.
+    // The GUI prefetches these before EDL; fetch here too for headless callers.
+    // Both helpers skip already-staged files.
     let staged_manager_apk = cfg.work_dir.join("manager.apk");
     if !cfg.gki_mode && !staged_manager_apk.exists() {
         stage_root_manager_apk(cfg, log)?;
@@ -740,12 +729,9 @@ pub fn build_patched_artifacts(
         )
     );
 
-    // Slot suffix must be poll-resolved by the caller. Defaulting to `_a`
-    // here would land the patched artifact on the wrong slot whenever the
-    // device is actually running `_b`, reporting "root succeeded" while the
-    // active slot stays unmodified. The GUI threads
-    // `controller::poll_active_slot` through `RootPipelineConfig.slot_suffix`;
-    // reject an empty value rather than picking a guess.
+    // The caller must resolve the active slot (`controller::poll_active_slot`).
+    // Guessing `_a` would patch the wrong slot on a device running `_b` and
+    // report success while the active slot stays stock.
     if cfg.slot_suffix.is_empty() {
         return Err(LtboxError::Patch(
             "slot_suffix is empty; caller must resolve the active slot via \
@@ -755,8 +741,8 @@ pub fn build_patched_artifacts(
     }
     let suffix = cfg.slot_suffix.clone();
 
-    // GBL preserves signed stock metadata, including the key pinned by vbmeta.
-    // Unsigned GBL and non-GBL images use the existing footer rebuild policy.
+    // GBL with a signed stock image keeps its metadata, including the key pinned
+    // by vbmeta; otherwise a new hash footer is added.
     let stock_info = avb::extract_image_avb_info(&stock_root_image_src)?;
     if stock_info.partition_name.as_deref() != Some(cfg.root_image_target.partition_base()) {
         return Err(LtboxError::Avb(format!(
@@ -802,8 +788,8 @@ pub fn build_patched_artifacts(
     };
 
     let (patched_vbmeta, vbmeta_partition) = if uses_gbl {
-        // The ABL/efisp gate above still applies. GBL needs a consistent signed
-        // root image, but its separate vbmeta partition must remain untouched.
+        // GBL needs a consistently signed root image; its vbmeta partition stays
+        // untouched.
         (None, None)
     } else {
         // A chained target carries its own signature; that signature is the
@@ -817,10 +803,9 @@ pub fn build_patched_artifacts(
             )));
         }
 
-        // vbmeta chains the target on every model but the TB320FC family, and
-        // a chain descriptor pins the signing key, not the digest — re-signing
-        // with the same key leaves it valid. Nothing to rebuild, and the caller
-        // never dumped vbmeta to rebuild from.
+        // A chained target (every model without `boot_vbmeta_is_hash`) is pinned
+        // by key, not digest, so same-key re-signing keeps it valid. There is
+        // nothing to rebuild and no vbmeta dump.
         if !rebuild_vbmeta {
             ltbox_core::live!(
                 log,
@@ -832,9 +817,8 @@ pub fn build_patched_artifacts(
             );
             (None, None)
         } else {
-            // Refresh vbmeta from the descriptor embedded in final_root_image. The
-            // vbmeta pubkey may differ from the root image pubkey, so verify it
-            // against KEY_MAP.
+            // Refresh vbmeta from the descriptor in final_root_image. Its pubkey
+            // may differ from the root image's, so check it against KEY_MAP.
             let stock_vbmeta_info = avb::extract_image_avb_info(&vbmeta_src)?;
             let vbmeta_key = resolve_signing_key(
                 stock_vbmeta_info.public_key_sha1.as_deref(),
@@ -864,9 +848,8 @@ pub fn build_patched_artifacts(
                     );
                 }
                 None => {
-                    // Unsigned vbmeta: copy stock through. A stale Hash/Hashtree
-                    // descriptor is fine because NONE-algorithm bootloaders skip
-                    // verification.
+                    // Unsigned vbmeta is copied as is; a stale Hash/Hashtree
+                    // descriptor is fine because NONE-algorithm vbmeta is not verified.
                     fs::copy(&vbmeta_src, &final_vbmeta)?;
                     ltbox_core::live!(
                         log,

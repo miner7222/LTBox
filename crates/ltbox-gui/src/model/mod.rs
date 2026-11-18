@@ -1,4 +1,4 @@
-//! GUI model types extracted from `main.rs`.
+//! GUI model types.
 
 pub(crate) mod country;
 pub(crate) mod device;

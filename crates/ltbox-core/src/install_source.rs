@@ -1,25 +1,23 @@
 //! Detects how the running LTBox executable was installed.
 //!
-//! Packages published by LTBox place a plain-text marker named
-//! `ltbox.install-source` next to the executable (Scoop and the macOS app
-//! bundle), or at `/usr/share/ltbox/ltbox.install-source` for Unix system
-//! packages. Its single line is one of `scoop`, `winget`, `homebrew`, `deb`, or
-//! `rpm`. Parsing is ASCII case-insensitive and ignores surrounding whitespace.
-//! Package-managed locations remain package-managed without a valid marker,
-//! because a third-party package must never be mistaken for a directly
-//! downloaded copy.
+//! LTBox packages place a plain-text marker named `ltbox.install-source` next
+//! to the executable, in `Contents/Resources` of a macOS app bundle, or at
+//! `/usr/share/ltbox/ltbox.install-source` for Unix system packages. Its single
+//! line is one of `scoop`, `winget`, `homebrew`, `deb` or `rpm`; see
+//! `parse_source` for the other accepted spellings. Parsing is ASCII
+//! case-insensitive and ignores surrounding whitespace. A package-managed
+//! location stays package-managed without a valid marker, so a third-party
+//! package is never mistaken for a direct download.
 //!
-//! `LTBOX_INSTALL_SOURCE` accepts the same values, plus `other` and `direct`,
-//! and takes precedence over both the marker and executable location. This is
-//! useful to packagers with an otherwise unrecognised layout as well as tests.
+//! `LTBOX_INSTALL_SOURCE` accepts the same values and takes precedence over
+//! both the marker and the executable location.
 
 use std::path::{Path, PathBuf};
 
 /// Filename installed next to the executable by LTBox-owned packages.
 pub const INSTALL_SOURCE_MARKER_FILE: &str = "ltbox.install-source";
 
-/// Marker location for Unix packages whose executable is installed under
-/// `/usr`. Data files do not belong beside executables in `/usr/bin`.
+/// Marker location for Unix packages whose executable is under `/usr`.
 pub const SYSTEM_INSTALL_SOURCE_MARKER_PATH: &str = "/usr/share/ltbox/ltbox.install-source";
 
 /// Environment override understood by [`install_source`].
@@ -152,14 +150,12 @@ fn is_package_managed_path(executable_path: &Path) -> bool {
         .replace('\\', "/")
         .to_ascii_lowercase();
 
-    // Scoop can be relocated, so recognise its manager-owned directory shape
-    // instead of assuming a home-directory prefix.
+    // Scoop can be relocated, so match its directory shape, not a home prefix.
     if path.contains("/apps/ltbox/") {
         return true;
     }
 
-    // WinGet's package root is below LocalAppData, but matching its stable
-    // suffix keeps this pure and does not require reading that environment.
+    // Match WinGet's stable path suffix to stay pure (no LocalAppData lookup).
     if path.contains("/microsoft/winget/packages/") {
         return true;
     }

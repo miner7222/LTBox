@@ -52,10 +52,9 @@ struct ImageIdentity {
     unidentified_as: Option<&'static str>,
 }
 
-/// Resolve the profile for an image dumped from the connected device. A
-/// fingerprint naming no known model cannot contradict the device, so a known
-/// detected model's profile is used instead; a fingerprint naming a model keeps
-/// its own profile, preferring a GBL one as before.
+/// Resolve the profile for an image dumped from the connected device. A fingerprint naming no
+/// known model cannot contradict the device, so a known detected model's profile is used instead;
+/// a fingerprint naming a model keeps its own profile, preferring a GBL one.
 fn image_identity(fingerprint: Option<&str>, device_model: &str) -> ImageIdentity {
     use ltbox_core::model::{
         capabilities, fingerprint_capabilities, fingerprint_names_known_model, known_model,
@@ -301,9 +300,8 @@ fn execute_inspection<B: KonaBessInspectionBackend>(
     backend.dump_partition(&vendor_boot_partition, &vendor_boot, log)?;
     backend.dump_partition(&vbmeta_partition, &vbmeta, log)?;
 
-    // Gate only after both source images exist. TB323FU takes the shared efisp
-    // path; every other model resolves vbmeta through KEY_MAP and permits an
-    // absent key as unsigned.
+    // Gate only after both source images exist. GBL-route models (TB323FU) take the shared efisp
+    // path; every other model resolves vbmeta through KEY_MAP and permits an absent key as unsigned.
     backend.run_exploit_gate(&slot_suffix, &vendor_boot, &vbmeta, &paths.work_dir, log)?;
 
     live!(log, "[KonaBess] {}", phases.marker(3));

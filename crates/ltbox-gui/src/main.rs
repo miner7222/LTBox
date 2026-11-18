@@ -1,11 +1,10 @@
 #![windows_subsystem = "windows"]
 //! LTBox GUI — iced desktop shell.
 //!
-//! Orchestrates `ltbox-core`, `ltbox-device`, `ltbox-patch` through a
-//! sidebar + wizard UX. [`main`] handles startup (single-instance lock,
-//! AppUserModelID, window + font bundle); [`App`] owns every wizard
-//! state machine, the device poll subscription, persisted settings,
-//! and the active palette.
+//! Orchestrates `ltbox-core`, `ltbox-device` and `ltbox-patch` through a
+//! sidebar and wizard UX. [`main`] handles startup (single-instance lock, AppUserModelID,
+//! window + font bundle); [`App`] owns every wizard state machine, the device
+//! poll subscription, persisted settings and the active palette.
 //!
 //! Wizards: Flash · SystemUpdate · Root · Unroot · KonaBess · Reboot · Advanced.
 //! Sub-modules: [`theme`] M3 tokens · [`settings_store`] `settings.json`
@@ -64,8 +63,7 @@ pub(crate) use poll_state::*;
 pub(crate) use root_choice::*;
 pub(crate) use settings_state::*;
 
-// Extracted items live in their own modules; re-export so the rest of the
-// crate keeps referring to them unqualified.
+// Re-exported so the rest of the crate refers to these unqualified.
 pub(crate) use arb::{detect_arb_run, format_unix_date_utc, format_unix_timestamp_utc};
 pub(crate) use arb_overlay::*;
 pub(crate) use device_name::*;
@@ -116,56 +114,48 @@ fn pal_of(t: &Theme) -> Palette {
 const LOG_MAX_LINES: usize = 500;
 const EXEC_ERROR_SUMMARY_MAX_CHARS: usize = 180;
 
-/// 32×32 RGBA image handle for the custom title-bar brand icon. Built once,
-/// cheap to clone (ref-counted). Only used by the custom borderless title bar
-/// (Windows / Linux); macOS uses the native system title bar (see
-/// [`SYSTEM_WINDOW_CHROME`]).
+/// 32×32 RGBA handle for the custom title-bar brand icon (Windows / Linux;
+/// macOS uses the native title bar, see [`SYSTEM_WINDOW_CHROME`]).
 static TITLE_BAR_ICON_HANDLE: std::sync::LazyLock<iced::widget::image::Handle> =
     std::sync::LazyLock::new(|| {
         let bytes: &'static [u8] = include_bytes!("../assets/icon_32.bin");
         iced::widget::image::Handle::from_rgba(32, 32, bytes.to_vec())
     });
 
-/// Reverse-DNS app id. Becomes Wayland `app_id` / X11 `WM_CLASS` via
-/// iced `Settings::id`; matches the shipped `.desktop`'s
-/// `StartupWMClass=` so the window binds to the launcher entry.
+/// Reverse-DNS app id: Wayland `app_id` / X11 `WM_CLASS` via iced
+/// `Settings::id`; matches the shipped `.desktop`'s `StartupWMClass=` so the
+/// window binds to the launcher entry.
 const APP_ID: &str = "io.github.miner7222.LTBox";
 
-/// Initial window dimensions on first run (logical pixels). Used both
-/// by `main`'s `window::Settings::size` fallback and by `App::new` when
-/// no persisted size exists yet — they must stay in lockstep.
+/// Initial window size on first run (logical pixels), used by `main`'s
+/// `window::Settings::size` fallback and by `App::default`; keep them equal.
 const DEFAULT_WINDOW_WIDTH: f32 = 820.0;
 const DEFAULT_WINDOW_HEIGHT: f32 = 720.0;
-/// Floor for cursor-drag resize and for the launch-time geometry
-/// (`window::Settings::min_size`). Anything below the width stops laying out
-/// cleanly — wizard cards overlap, the sidebar tween jumps.
+/// Floor for cursor-drag resize and the launch-time geometry
+/// (`window::Settings::min_size`). Below the width, wizard cards overlap and
+/// the sidebar tween jumps.
 ///
-/// The 720px height fits the common Flash-confirm step without scrolling.
-/// Taller step bodies and the navigation list scroll within their panels.
+/// The 720px height fits the Flash-confirm step without scrolling; taller
+/// step bodies and the navigation list scroll within their panels.
 const MIN_WINDOW_WIDTH: f32 = 820.0;
 const MIN_WINDOW_HEIGHT: f32 = 720.0;
-/// macOS uses the native window chrome (system title bar + traffic lights +
-/// native resize edges); Windows / Linux keep LTBox's custom borderless title
-/// bar and the 8 overlaid resize handles. Gates both the
-/// `window::Settings::decorations` flag and the custom-chrome widgets in
-/// `view::chrome`, so the two stay in lockstep.
+/// macOS uses native window chrome (title bar, traffic lights, resize edges);
+/// Windows / Linux use LTBox's borderless title bar plus 8 overlaid resize
+/// handles. Gates both `window::Settings::decorations` and the custom-chrome
+/// widgets in `view::chrome`.
 pub(crate) const SYSTEM_WINDOW_CHROME: bool = cfg!(target_os = "macos");
-/// Minimum interval between window-size persistence writes. Cursor-drag
-/// resize fires `Event::Window(Resized)` continuously; throttling to
-/// ~250 ms keeps the JSON file from being rewritten 60 times per second
-/// while still capturing the final geometry quickly after the drag ends.
+/// Quiet period after the last resize before the window size is written.
+/// Cursor-drag resize emits `Event::Window(Resized)` continuously.
 const WINDOW_SIZE_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Upstream repo for the status-bar update affordance.
 const UPDATE_REPO: &str = "miner7222/LTBox";
 
-/// Background probe for the status-bar update affordance. Walks
-/// `/releases?per_page=100`, returns the latest non-draft /
-/// non-prerelease whose semver beats `CARGO_PKG_VERSION`. `None` on
-/// network/parse failure or already-current — the status bar stays unchanged.
-///
-/// Runs synchronously on a `spawn_blocking` worker so the async runtime
-/// stays free; the result lands as `Message::UpdateCheckDone`.
+/// Background probe for the status-bar update affordance: the latest
+/// non-draft, non-prerelease release (via `/releases?per_page=100`) whose
+/// semver beats `CARGO_PKG_VERSION`. `None` on network/parse failure or when
+/// already current. Blocking; runs on a `spawn_blocking` worker and lands as
+/// `Message::UpdateCheckDone`.
 fn check_for_update() -> Option<ltbox_core::github::StableRelease> {
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
     let client = ltbox_core::github::GitHubClient::new(UPDATE_REPO).ok()?;
@@ -178,10 +168,8 @@ fn check_for_update() -> Option<ltbox_core::github::StableRelease> {
     }
 }
 
-/// Package-manager command shown by the update dialog.
-///
-/// Keeping this mapping independent of GUI state makes every install channel
-/// explicit and leaves unknown package managers without a guessed command.
+/// Package-manager command shown by the update dialog. Independent of GUI
+/// state; unknown package managers get no guessed command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PackageUpgradeCommand {
     command: &'static str,
@@ -228,22 +216,18 @@ fn main() -> iced::Result {
         // Register before any worker starts. GUI releases need no companion binary.
         let _ = ltbox_patch::boot::register_magiskboot_host(executable);
     }
-    // Linux/X11 renderer default. On some X11 + Mesa/driver combos wgpu
-    // selects a Vulkan adapter whose X11 surface/device creation fails, so
-    // the window never appears and `./ltbox` looks dead. OpenGL is robust
-    // there and more than enough for this UI, so default the wgpu
-    // backend to GL on an X11 session when the user hasn't picked one. Wayland
-    // keeps the wgpu default (Vulkan), which the Linux roadmap relies on for
-    // recent Nvidia. Override anytime, e.g. `WGPU_BACKEND=vulkan ./ltbox`.
+    // Linux/X11 renderer default: on some X11 + Mesa/driver combos wgpu picks a
+    // Vulkan adapter whose surface creation fails and the window never appears.
+    // Default to GL on an X11 session when the user hasn't picked a backend;
+    // Wayland keeps the wgpu default (Vulkan), relied on for recent Nvidia.
+    // Override with e.g. `WGPU_BACKEND=vulkan ./ltbox`.
     #[cfg(target_os = "linux")]
     {
         // Treat a var as set only when it is non-empty — winit reads these
         // the same way (an empty value means "unset").
         let non_empty = |key: &str| std::env::var_os(key).is_some_and(|v| !v.is_empty());
-        // Only the singular WGPU_BACKEND is read by this iced/wgpu stack, so
-        // that alone counts as the user picking a backend. Checking the plural
-        // WGPU_BACKENDS would let a value wgpu ignores silently suppress the
-        // fallback below.
+        // Only the singular WGPU_BACKEND is read by this iced/wgpu stack; honoring
+        // the plural WGPU_BACKENDS would let an ignored value suppress the fallback.
         let backend_chosen = non_empty("WGPU_BACKEND");
         // winit selects Wayland when WAYLAND_DISPLAY or WAYLAND_SOCKET is set,
         // otherwise X11 via DISPLAY — mirror that to scope the override to
@@ -251,24 +235,21 @@ fn main() -> iced::Result {
         let wayland_session = non_empty("WAYLAND_DISPLAY") || non_empty("WAYLAND_SOCKET");
         let is_x11_session = !wayland_session && non_empty("DISPLAY");
         if !backend_chosen && is_x11_session {
-            // SAFETY: first statement in `main`, before the stdout tap, the
-            // tracing writer, tokio, or iced spawn any threads — so the
-            // process is still single-threaded as `set_var` requires.
+            // SAFETY: still among the first statements of `main`, before the stdout
+            // tap, tracing writer, tokio or iced spawn any threads, so the process is
+            // single-threaded as `set_var` requires.
             unsafe {
                 std::env::set_var("WGPU_BACKEND", "gl");
             }
         }
     }
 
-    // Windows renderer default. Left to itself, wgpu may pick its OpenGL
-    // backend, which on hybrid laptops routes through the integrated GPU's
-    // OpenGL ICD (e.g. AMD's `atio6axx.dll`) — a fragile path that crashes
-    // with an access violation (c0000005) on some driver/GPU combos. DX12 is
-    // the native, robust path on Windows 10+ (including AMD/Intel iGPUs) and
-    // covers this UI fully, so default the wgpu backend to DX12 when the user
-    // hasn't picked one. The software renderer stays reachable via
-    // `ICED_BACKEND=tiny-skia` for hosts with broken GPU drivers; override the
-    // backend anytime, e.g. `WGPU_BACKEND=vulkan ltbox.exe`.
+    // Windows renderer default: left alone wgpu may pick OpenGL, which on hybrid
+    // laptops goes through the integrated GPU's OpenGL ICD (e.g. AMD's
+    // `atio6axx.dll`) and crashes with an access violation (c0000005) on some
+    // driver/GPU combos. Default to DX12 when the user hasn't picked a backend.
+    // `ICED_BACKEND=tiny-skia` selects the software renderer; override the
+    // backend with e.g. `WGPU_BACKEND=vulkan ltbox.exe`.
     #[cfg(target_os = "windows")]
     {
         // Treat a var as set only when non-empty (an empty value reads as
@@ -284,10 +265,9 @@ fn main() -> iced::Result {
         }
     }
 
-    // Pre-iced CLI subcommands. Each handler exits the process so
-    // the iced setup path runs only when no subcommand fires. Kept
-    // tiny + dep-free (no `clap`) — there's exactly one flag and it
-    // doesn't need argument parsing beyond presence detection.
+    // Pre-iced CLI flags (`--install-udev`, `--install-desktop`); each handler
+    // exits the process, so iced setup runs only when neither is given. Plain
+    // presence checks, no `clap`.
     let args: Vec<String> = std::env::args().collect();
     let post_update_relaunch = args
         .iter()
@@ -321,15 +301,13 @@ fn main() -> iced::Result {
     };
     self_update::cleanup_stale_update_backups();
 
-    // libusb (via `adb_client` → `rusb`) probes for optional backends by
-    // calling LoadLibrary on `%SystemRoot%\System32\libusbK.dll`, and it
-    // already treats a NULL handle as "backend unavailable". But when that
-    // system DLL is present and corrupt, the Windows hard-error handler
-    // raises a modal "Bad Image" box (0xc000012f) on every probe, which the
-    // user cannot dismiss for good and which LTBox never gets to explain.
-    // SEM_FAILCRITICALERRORS turns that into the plain NULL libusb already
-    // handles, leaving the WinUSB backend — and every `nusb` EDL path, which
-    // never touches libusbK — working. Must run before the first USB probe.
+    // libusb (via `adb_client` → `rusb`) calls LoadLibrary on
+    // `%SystemRoot%\System32\libusbK.dll` and treats a NULL handle as "backend
+    // unavailable". If that DLL is present but corrupt, the Windows hard-error
+    // handler raises an undismissable "Bad Image" box (0xc000012f) on every
+    // probe. SEM_FAILCRITICALERRORS turns it into the NULL libusb handles, leaving
+    // WinUSB and every `nusb` EDL path (which never touches libusbK) working.
+    // Must run before the first USB probe.
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Diagnostics::Debug::{
@@ -356,13 +334,12 @@ fn main() -> iced::Result {
     ltbox_core::live_sink::attach_gui();
     stdout_tap::install();
 
-    // `_log_guard` MUST live for the whole process — dropping it
-    // flushes the non-blocking writer; losing it loses the last
-    // minute of events on a crash.
+    // `_log_guard` must live for the whole process: dropping it flushes the
+    // non-blocking writer, and losing it loses the last events on a crash.
     let _log_guard = init_tracing();
 
     // Package-manager upgrades replace/prune executable directories. Move any
-    // v3 executable-adjacent data before the first worker can create the new
+    // v3 executable-adjacent data before the first worker creates the new
     // `%LOCALAPPDATA%\ltbox` destinations. Individual failures are non-fatal.
     #[cfg(windows)]
     for error in ltbox_core::app_paths::migrate_legacy_windows_data() {
@@ -398,10 +375,9 @@ fn main() -> iced::Result {
     let win_icon =
         iced::window::icon::from_rgba(include_bytes!("../assets/icon_32.bin").to_vec(), 32, 32)
             .ok();
-    // Restore the user's previous window geometry if persisted (clamped
-    // to ≥ `MIN_WINDOW_*` so corrupted / pre-min-size config files can
-    // never launch a sub-floor window). Falls back to the default size
-    // on first run.
+    // Restore the persisted window geometry, clamped to `MIN_WINDOW_*` so a
+    // corrupt or pre-min-size config can't launch a sub-floor window; default
+    // size on first run.
     let persisted = settings_store::load();
     let persisted_size = persisted
         .window_size
@@ -414,16 +390,11 @@ fn main() -> iced::Result {
     theme::set_font_family(theme::font_family_for_language(&persisted.language));
     let window_settings = iced::window::Settings {
         size: persisted_size,
-        // Cursor-drag resize: `MIN_WINDOW_*` is the floor; anything
-        // below is unsupported (sidebar + wizard cards stop laying out
-        // cleanly). On Windows / Linux the borderless decorations strip
-        // native resize edges off the window, so the GUI overlays 8 invisible
-        // resize handles on the root Stack which emit
-        // `WindowMsg::WindowResize(direction)` and call
-        // `iced::window::drag_resize` on the host window. (macOS keeps native
-        // decorations + resize, so those handles are not rendered there.) The
-        // user's resized geometry is persisted to `PersistedSettings::window_size`
-        // and restored above on the next launch on every platform.
+        // `MIN_WINDOW_*` is the resize floor. With borderless decorations (Windows /
+        // Linux) the GUI overlays 8 invisible resize handles that emit
+        // `WindowMsg::WindowResize` and call `iced::window::drag_resize`; macOS keeps
+        // native resize. The geometry persists to `PersistedSettings::window_size`
+        // and is restored above on the next launch.
         min_size: Some(iced::Size::new(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)),
         icon: win_icon,
         // macOS → native decorations (system title bar + resize); other
@@ -431,20 +402,13 @@ fn main() -> iced::Result {
         decorations: SYSTEM_WINDOW_CHROME,
         ..Default::default()
     };
-    // Bundle Noto Sans CJK at compile time so cosmic-text can fall
-    // back for Hangul / Hanzi glyphs. Noto's Latin + Cyrillic cover
-    // English and Russian UI through the same family.
+    // Noto subsets are bundled at compile time so cosmic-text can fall back for
+    // Hangul / Hanzi glyphs; the same family covers Latin + Cyrillic.
     let mut app = iced::application(App::new, App::update, App::view)
         .title("LTBox")
-        // Application id propagates to winit:
-        //   * Wayland → `app_id` on the xdg-shell toplevel
-        //   * X11     → `WM_CLASS` (instance + class)
-        // Matches `StartupWMClass=` in the shipped `.desktop` file
-        // so GNOME / KDE / etc bind the running window to the
-        // launcher entry. Without this they fall back to the binary
-        // name (`ltbox`) which would only match if the desktop file
-        // also said `StartupWMClass=ltbox` — using a reverse-DNS id
-        // keeps it future-proof against a renamed binary.
+        // Application id propagates to winit (Wayland `app_id`, X11 `WM_CLASS`) and
+        // matches `StartupWMClass=` in the shipped `.desktop` file so GNOME / KDE bind
+        // the window to the launcher entry instead of falling back to the binary name.
         .settings(iced::Settings {
             id: Some(APP_ID.to_string()),
             default_font: theme::default_font(),
@@ -472,9 +436,8 @@ fn main() -> iced::Result {
     ] {
         app = app.font(bytes);
     }
-    // Subset Lucide TTF generated at build time from
-    // `fonts/lucide.toml`. Registered under the family `"lucide"` so
-    // the text-based icon widgets from `mod icon` resolve against it.
+    // Subset Lucide TTF generated at build time from `fonts/lucide.toml`,
+    // registered as family "lucide" for the text-based icon widgets (`mod icon`).
     app = app.font(icon::FONT);
     let result = app.run();
     settings_store::flush();
@@ -504,15 +467,16 @@ pub(crate) fn log_dir() -> std::path::PathBuf {
 const DEFAULT_LOG_FILTER: &str =
     "info,adb_client=warn,iced_winit=warn,iced_wgpu=warn,iced_futures::subscription::tracker=error";
 
-/// Global tracing subscriber writing daily-rotated files under
-/// `%APPDATA%\ltbox\logs\`. Caller must hold the returned `WorkerGuard`
-/// for the process lifetime — dropping it flushes queued entries.
-/// Filter: `RUST_LOG` env var, falling back to `info`.
+/// Global tracing subscriber writing daily-rotated files under [`log_dir`].
+/// Caller must hold the returned `WorkerGuard` for the process lifetime;
+/// dropping it flushes queued entries. Filter: `RUST_LOG`, else
+/// [`DEFAULT_LOG_FILTER`].
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     use camino::Utf8PathBuf;
     use tracing_subscriber::{EnvFilter, fmt};
 
-    // Fall back to `%TEMP%\ltbox-logs` on non-UTF-8 APPDATA paths.
+    // `log_dir()` already falls back to the temp dir; this relative `ltbox-logs`
+    // applies only if that path is not UTF-8 either.
     let log_dir: Utf8PathBuf =
         Utf8PathBuf::from_path_buf(log_dir()).unwrap_or_else(|_| Utf8PathBuf::from("ltbox-logs"));
     if std::fs::create_dir_all(&log_dir).is_err() {
@@ -525,11 +489,9 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
 
-    // `init` rather than `set_global_default`: it also installs the
-    // `log` -> `tracing` bridge, so records from dependencies that use
-    // the `log` crate reach the file. `adb_client` reports the device's
-    // CNXN banner — the string that carries the real connection state,
-    // `device::` / `recovery::` / `sideload::` — only through `log`.
+    // `init` rather than `set_global_default`: it also installs the `log` ->
+    // `tracing` bridge. `adb_client` reports the device's CNXN banner (the real
+    // connection state: `device::` / `recovery::` / `sideload::`) only through `log`.
     fmt()
         .with_env_filter(filter)
         .with_writer(non_blocking)

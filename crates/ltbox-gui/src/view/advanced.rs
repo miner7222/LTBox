@@ -1,4 +1,4 @@
-//! Advanced menu + generic adv wizard views + steps + image-info exec. Extracted from `main.rs`.
+//! Advanced menu, generic Advanced wizard views and steps, and image-info exec.
 
 use crate::focus_button::button;
 use crate::*;
@@ -141,10 +141,9 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let is_start = is_confirm || detect_arb_step0;
-            // DetectArb's Start gets a generic reachability gate. Change Country
-            // Code (PatchDevinfo) runs over EDL but is launched from system/ADB
-            // (the model is read there), so its Start requires an ADB connection.
-            // Other advanced ops are folder-only (no device).
+            // DetectArb's Start needs a reachable device. Change Country Code
+            // (PatchDevinfo) runs over EDL but is launched from ADB, where the
+            // model is read, so its Start requires ADB. Other ops need no device.
             let needs_device = matches!(self.adv_wizard.action, Some(AdvAction::DetectArb));
             let needs_system =
                 is_start && matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo));
@@ -318,9 +317,8 @@ impl App {
             .into()
     }
 
-    /// Step 1 for `RegionConvert`: card that opens the target picker popup,
-    /// kept as a selection card so the wizard rendering stays consistent
-    /// with the other "needs option" flow (PatchDevinfo).
+    /// Step 1 for `RegionConvert`: selection card that opens the target picker
+    /// popup.
     pub(crate) fn adv_wiz_region_target_step(&self) -> Element<'_, Message> {
         let selected = self.adv_wizard.region_target.is_some();
         let status = match self.adv_wizard.region_target {
@@ -627,11 +625,10 @@ impl App {
         .into()
     }
 
-    /// Confirm step — mirrors the firmware-flash confirm, but fixed: region
-    /// edit and rollback bypass are OFF, and device region, flash target,
-    /// and data-wipe outcome are all "unknown" because Simple Flash does no
-    /// detection or modification (the wipe outcome is up to the firmware's
-    /// own rawprogram).
+    /// Confirm step, as the firmware-flash confirm but fixed: region edit and
+    /// rollback bypass are off, and device region, target and wipe outcome are
+    /// "unknown" because Simple Flash detects and modifies nothing (the wipe is
+    /// up to the firmware's own rawprogram).
     fn simple_flash_confirm_step(&self) -> Element<'_, Message> {
         let unknown = self.t("common_unknown").to_string();
         let off = self.t("flash_confirm_rb_off").to_string();

@@ -1,4 +1,4 @@
-//! System-update wizard view + steps + the shared exec-step view. Extracted from `main.rs`.
+//! System-update wizard view and steps, plus the shared exec-step view.
 
 use crate::focus_button::button;
 use crate::*;
@@ -22,9 +22,8 @@ use ltbox_core::tr_args;
 /// Height of the rule separating two metric cells.
 const METRIC_DIVIDER_HEIGHT: f32 = 34.0;
 
-/// Divider between metric cells. A bare `rule::vertical` asks for `Fill`
-/// height, which would stretch the whole metrics strip down the card and
-/// strand its values at the top.
+/// Divider between metric cells. Fixed height: a bare `rule::vertical` fills
+/// and would stretch the metrics strip down the card.
 fn metric_divider() -> Element<'static, Message> {
     container(iced::widget::rule::vertical(1).style(shell_rule_style))
         .height(Length::Fixed(METRIC_DIVIDER_HEIGHT))
@@ -45,8 +44,7 @@ fn format_exec_duration(duration: std::time::Duration) -> String {
 
 impl App {
     pub(crate) fn view_sysupdate_wizard(&self) -> Element<'_, Message> {
-        // Exec-step log popup overlay, so the exec card's "Show log" button
-        // works for System Update the same as it does for Flash/Root/Unroot.
+        // Log popup overlay for the exec card's "Show log" button.
         if self.log_popup_open && self.sysupdate.is_in_exec() {
             return self.log_popup_view();
         }
@@ -152,13 +150,10 @@ impl App {
         let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let off_icon = lucide_list_primary(icon::tile_update_off(), icon_size);
         let on_icon = lucide_list_primary(icon::tile_update_on(), icon_size);
-        // TB323FU's vendor_boot/vbmeta sit on a different UFS LUN than the
-        // Boot Recovery worker targets, so the flow can't run on it — disable
-        // the row (alongside the non-Qualcomm platform gate).
+        // Rescue is disabled without the `rescue` capability and on
+        // non-Qualcomm platforms.
         let rescue_disabled =
             self.device.platform_supported == Some(false) || !self.model_capabilities().rescue;
-        // Gray the icon when disabled, matching the other wizards' disabled
-        // list rows.
         let rescue_icon = if rescue_disabled {
             lucide_list_disabled(icon::tile_rescue(), icon_size)
         } else {
@@ -220,8 +215,7 @@ impl App {
             &action,
         )];
         let mut trailing_rows = Vec::new();
-        // Rescue: echo the chosen firmware folder + region so the user
-        // confirms exactly what's about to flash.
+        // Rescue: echo the chosen firmware folder and region for confirmation.
         if self.sysupdate.is_rescue() {
             let folder = self
                 .sysupdate
@@ -274,22 +268,20 @@ impl App {
         }
     }
 
-    /// The execution app bar retains only the safety guidance from the
-    /// shared status copy. Completion and failure details stay in the body.
+    /// App-bar subtitle during execution: only the safety guidance from the
+    /// shared status copy; completion and failure details stay in the body.
     pub(crate) fn exec_app_bar_subtitle(&self) -> Option<String> {
         self.operation
             .is_running()
             .then(|| self.t("exec_executing_subtitle").to_string())
     }
 
-    /// Shared execution view: current activity, operation-phase checklist,
-    /// and a continuously mounted log.
+    /// Shared execution view: current activity, phase checklist and live log.
     pub(crate) fn exec_step_view(&self) -> Element<'_, Message> {
         self.exec_step_view_layout()
     }
 
-    /// Kept as the full-flash call-site name; every flow uses the same
-    /// live-log execution layout.
+    /// Alias of [`Self::exec_step_view`] kept for the full-flash call sites.
     pub(crate) fn exec_step_view_with_inline_log(&self) -> Element<'_, Message> {
         self.exec_step_view_layout()
     }
@@ -304,11 +296,10 @@ impl App {
             .firmware_write_progress_phase_active()
             .then(|| self.flash_progress.as_ref().map(cumulative_flash_percent))
             .flatten()
-            // Full-flash overlays are generated in several batches, so their
-            // final byte denominator is not known at the phase boundary. Keep
-            // that phase at its weighted start rather than letting a growing
-            // denominator move the overall track backwards. The rawprogram
-            // and Simple Flash plans are known up front and remain determinate.
+            // Full-flash overlays are generated in batches, so the byte total
+            // is unknown at the phase boundary; hold that phase at its start so
+            // a growing denominator cannot move the track backwards.
+            // Rawprogram and Simple Flash totals are known up front.
             .filter(|_| !(phase_kind == Some(OperationPhaseKind::Flash) && current_phase == 7));
         let progress = phase_kind.map_or_else(
             || {
@@ -357,8 +348,8 @@ impl App {
         ]
         .spacing(3.0)
         .width(Length::Fill);
-        // Only when the checklist is hidden (compact): the checklist itself
-        // numbers the steps, so this counter would repeat that position.
+        // Compact only: the checklist is hidden there, and otherwise numbers
+        // the steps itself.
         if self.window_size_class() == WindowSizeClass::Compact && !self.operation.steps.is_empty()
         {
             now_copy = now_copy.push(
@@ -541,9 +532,8 @@ impl App {
                     ..Default::default()
                 }
             });
-            // 12, not 14: these are phase sentences ("펌웨어 입력 파일 검증"),
-            // not the mockup's one-word partition names, and at 14 every row
-            // wrapped to two lines.
+            // Small size: rows are phase sentences and wrap to two lines at a
+            // larger one.
             let mut phase = text(step.label.clone())
                 .size(theme::text_size::BODY_SMALL)
                 .width(Length::Fill)
@@ -559,10 +549,7 @@ impl App {
             if state == WizardStepState::Active {
                 phase = phase.font(theme::emphasis::medium());
             }
-            // No trailing status word: the marker already shows a row's state
-            // (filled check done, ringed number running, flat number
-            // waiting), and repeating it in text would take width the label
-            // needs.
+            // No status word: the marker already shows the row's state.
             checklist_rows = checklist_rows.push(
                 row![marker, phase]
                     .spacing(12)
@@ -570,10 +557,8 @@ impl App {
                     .align_y(iced::Alignment::Center),
             );
         }
-        // M3's canonical supporting-pane layout fixes the secondary pane at
-        // 360dp with a 24dp gutter on expanded windows. It also says compact
-        // should show one pane rather than split — kept split here by request,
-        // just narrower so the log still has room.
+        // Expanded windows show the checklist as a side pane next to the log;
+        // compact windows show the log alone (see `details` below).
         let checklist_width = match self.window_size_class() {
             WindowSizeClass::Expanded => Length::Fixed(340.0),
             WindowSizeClass::Compact => Length::Fixed(260.0),
@@ -618,9 +603,8 @@ impl App {
                 .height(Length::Fill)
                 .align_y(iced::Alignment::Start)
                 .into(),
-            // M3's supporting-pane layout shows one pane at compact rather
-            // than splitting. Position moves into the card heading below,
-            // which is why that counter is compact-only.
+            // One pane at compact; the step position moves into the card
+            // heading.
             WindowSizeClass::Compact => log_card,
         };
 
@@ -675,9 +659,8 @@ impl App {
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Top);
 
-        // While the operation runs there is nothing to offer here (Save lives
-        // in the log card's header), so the footer would otherwise render as
-        // an empty band across the bottom of the screen.
+        // No actions while running (Save is in the log header); skip the footer
+        // so it does not render as an empty band.
         if !action_layout.has_any() {
             return body.into();
         }

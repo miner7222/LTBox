@@ -74,8 +74,8 @@ fn power_requests(writes: &[u8]) -> usize {
     String::from_utf8_lossy(writes).matches("<power").count()
 }
 
-/// Every NAK used to trigger another reset, recursing until the stack
-/// overflowed and the process aborted.
+/// A NAKed reset must not retry recursively: unbounded retries overflow the
+/// stack and abort the process.
 #[test]
 fn reset_that_is_always_nakked_fails_after_one_nested_attempt() {
     let mut channel = LoopingChannel::new(b"<data><response value=\"NAK\"/></data>");

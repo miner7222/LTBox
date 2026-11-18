@@ -1,4 +1,4 @@
-//! System-update wizard handler (OTA disable/enable, Rescue). Extracted from `main.rs`.
+//! System-update wizard handler (OTA disable/enable, Rescue).
 
 use crate::*;
 use iced::Task;
@@ -8,14 +8,12 @@ impl App {
     pub(crate) fn update_sys(&mut self, msg: SysMsg) -> Task<Message> {
         match msg {
             SysMsg::SysAction(a) => {
-                // TB323FU can't run Boot Recovery (vendor_boot/vbmeta LUN
-                // mismatch). The card is disabled, but drop a stale dispatch
-                // here too so the action can never latch.
+                // Models without the `rescue` capability can't run Boot
+                // Recovery. The card is disabled; also drop a stale dispatch.
                 if a == SysUpdateAction::Rescue && !self.model_capabilities().rescue {
                     return Task::none();
                 }
-                // Switching action resets Rescue-specific state so a stale
-                // folder/region can't leak into a fresh flow.
+                // Reset Rescue state so a stale folder/region can't leak.
                 self.sysupdate.action = Some(a);
                 self.sysupdate.rescue_folder = None;
                 self.sysupdate.rescue_region = None;
@@ -24,17 +22,13 @@ impl App {
                 Task::none()
             }
             SysMsg::SysNext => {
-                // Rescue flow: Action(0) → Folder(1) → Confirm(2) → Exec(3).
-                // Gate: popping the region popup between Folder and Confirm.
+                // Rescue flow: Action(0) → Folder(1) → Confirm(2) → Exec(3), with
+                // the region popup between Folder and Confirm.
                 if self.sysupdate.is_rescue() {
                     if self.sysupdate.step == 1 && !self.sysupdate.rescue_region_confirmed {
-                        // Pre-select rescue region from the polled
-                        // device's PTSTPD `SaleArea` when we have it,
-                        // mirroring how Flash seeds `device_region`
-                        // from `inferred_flash_region`. The popup
-                        // still opens — users get to see/confirm —
-                        // but the matching radio is checked on entry
-                        // so a CN device doesn't force a blind pick.
+                        // Pre-select the region from the polled device's PTSTPD
+                        // `SaleArea` (as Flash does via `inferred_flash_region`);
+                        // the popup still opens for confirmation.
                         if self.sysupdate.rescue_region.is_none()
                             && let Some(inferred) = self.inferred_flash_region()
                         {
@@ -66,21 +60,17 @@ impl App {
                 Task::none()
             }
             SysMsg::SysRescueSelectFolder => {
-                // Rescue dump+flash resolves vendor_boot / vbmeta against
-                // the device's on-storage GPT (LUN 0), so the wizard only
-                // needs the EDL loader binary — `rawprogram*.xml` was
-                // never read in this path. File picker with the standard
-                // loader extension filter, recents shared with the rest
-                // of the loader pickers via the File bucket.
+                // Rescue resolves vendor_boot / vbmeta through the shared LUN
+                // map and GPT-by-name, so only an EDL loader is picked, not a
+                // firmware folder with `rawprogram*.xml`.
                 self.pick_loader(|__v| Message::Sys(SysMsg::SysRescueFolderChosen(__v)))
             }
             SysMsg::SysRescueFolderChosen(path) => {
                 if let Some(p) = path {
                     self.remember_recent(pickers::PickerKind::File, &p);
                     self.sysupdate.rescue_folder = Some(p);
-                    // Force re-pick of region when loader changes — a stale
-                    // region from a prior firmware could target the wrong
-                    // hardware.
+                    // Re-pick the region when the loader changes; a stale one
+                    // could target the wrong hardware.
                     self.sysupdate.rescue_region = None;
                     self.sysupdate.rescue_region_confirmed = false;
                 }
@@ -90,8 +80,7 @@ impl App {
                 self.sysupdate.rescue_region = Some(r);
                 self.sysupdate.rescue_region_confirmed = true;
                 self.sysupdate.rescue_region_popup_open = false;
-                // Auto-advance out of Folder step into Confirm — picking
-                // the region is the implicit "Next" of the popup.
+                // Picking the region is the popup's implicit "Next".
                 if self.sysupdate.step == 1 {
                     self.sysupdate.next();
                 }
@@ -105,8 +94,8 @@ impl App {
                 let Some(action) = self.sysupdate.action else {
                     return Task::none();
                 };
-                // Final guard: never start Boot Recovery on TB323FU even if a
-                // stale Rescue selection slipped past the disabled card.
+                // Final guard: never start Boot Recovery without the `rescue`
+                // capability, even if a stale selection slipped past the card.
                 if action == SysUpdateAction::Rescue && !self.model_capabilities().rescue {
                     self.error_msg = Some(tr_args!(
                         "model_unsupported",
@@ -114,9 +103,7 @@ impl App {
                     ));
                     return Task::none();
                 }
-                // Rescue captures folder + region into the blocking task.
-                // Cloning here keeps `self` untouched while the async move
-                // takes ownership.
+                // Clone the Rescue inputs for the async task.
                 let rescue_folder = self.sysupdate.rescue_folder.clone();
                 let rescue_region = self.sysupdate.rescue_region;
                 if action == SysUpdateAction::Rescue
@@ -124,8 +111,8 @@ impl App {
                 {
                     return Task::none();
                 }
-                // Capture model for AVB fingerprint validation — prevents
-                // flashing firmware built for other models.
+                // Model for AVB fingerprint validation, so firmware built for
+                // another model is not flashed.
                 let device_model = self.device.model.clone();
                 let conn = self.device.connection;
                 let phase_kind = match action {

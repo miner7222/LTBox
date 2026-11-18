@@ -1,17 +1,16 @@
-//! i18n — localized log lines for backend crates via a translator the GUI
-//! installs at startup (and re-installs on every language switch). Backends
-//! call [`tr`] without depending on the GUI's language state.
+//! Localized log lines for backend crates via a translator the GUI installs at
+//! startup and re-installs on every language switch. Backends call [`tr`]
+//! without depending on the GUI's language state.
 
 use std::sync::{OnceLock, RwLock};
 
 type TranslatorFn = dyn Fn(&str) -> String + Send + Sync;
 
-/// Optional translator installed by the GUI so backend crates can emit
-/// localized log lines without depending on the GUI's language state.
+/// Translator installed by the GUI; absent in non-GUI contexts.
 static TRANSLATOR: OnceLock<RwLock<Box<TranslatorFn>>> = OnceLock::new();
 
-/// Install or swap the translator. Live language switches are supported
-/// via the RwLock-held boxed closure.
+/// Install or swap the translator (the closure sits behind an `RwLock`, so
+/// language switches take effect live).
 pub fn set_translator<F>(f: F)
 where
     F: Fn(&str) -> String + Send + Sync + 'static,
@@ -29,9 +28,8 @@ where
     }
 }
 
-/// Resolve `key` via the installed translator, falling back to the key
-/// itself so calls are never destructive — e.g. before the GUI installs a
-/// translator, or in a non-GUI context.
+/// Resolve `key` via the installed translator; without one, return the key
+/// itself.
 pub fn tr(key: &str) -> String {
     if let Some(lock) = TRANSLATOR.get()
         && let Ok(guard) = lock.read()

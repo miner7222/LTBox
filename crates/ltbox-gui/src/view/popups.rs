@@ -1,4 +1,4 @@
-//! Modal popup views (device info, OTA, ARB index, country, region, rescue region, log). Extracted from `main.rs`.
+//! Modal popup views: device info, OTA, QFIL, rollback index, country, region, serial prompt, log.
 
 use crate::focus_button::{self as button, button};
 use crate::*;
@@ -190,9 +190,8 @@ impl App {
             })
         };
 
-        // Every dual-USB model ships the same 500x300 front-on portrait, so a
-        // 300x180 box holds it edge to edge with no letterboxing and a marker
-        // pinned to one side names the same physical port on all of them.
+        // Every dual-USB model shares one 500x300 portrait; a 300x180 box fits it
+        // exactly, so a side-pinned marker names the same port on all of them.
         const PORTRAIT_W: f32 = 300.0;
         const PORTRAIT_H: f32 = 180.0;
         const MARKER_H: f32 = 48.0;
@@ -225,8 +224,7 @@ impl App {
                 .spacing(4)
                 .align_x(iced::Alignment::Center)
         };
-        // Hangs just past the portrait's lower edge, as the mockup drops its
-        // bottom-port marker below the tablet outline.
+        // Hangs just past the portrait's lower edge, like the mockup's bottom-port marker.
         let bottom_layer = container(marker(
             true,
             self.t("dual_usb_help_bottom_label").to_string(),
@@ -235,8 +233,7 @@ impl App {
         .height(Length::Fill)
         .align_x(iced::Alignment::Center)
         .align_y(iced::Alignment::End);
-        // Centred on the portrait rather than on the taller stack, so it meets
-        // the side port instead of drifting down with the caption row.
+        // Centred on the portrait, not the taller stack, so it meets the side port.
         let side_layer = container(
             container(marker(
                 false,
@@ -253,9 +250,7 @@ impl App {
 
         let portrait_guide = container(
             widget::stack![portrait_layer, bottom_layer, side_layer]
-                // Only a marker's width of overhang past the portrait, so the
-                // side dot lands on the edge it names instead of floating off
-                // in the card's margin.
+                // Overhangs the portrait by one marker width so the dot sits on the edge it names.
                 .width(Length::Fixed(PORTRAIT_W + 40.0))
                 .height(Length::Fixed(figure_h)),
         )
@@ -412,8 +407,7 @@ impl App {
             .size(theme::text_size::DIALOG_HEADLINE)
             .line_height(32.0 / 24.0);
         let version = text(
-            // Tags carry a leading `v`; the string already says "version",
-            // so trim it rather than rendering "Version v3.3.0".
+            // Tags carry a leading `v`; trim it to avoid "Version v3.3.0".
             tr_args!(
                 "update_dialog_version",
                 version = release.tag.trim_start_matches('v')
@@ -433,8 +427,7 @@ impl App {
 
         let command_area: Element<'_, Message> = if upgrade.available {
             let command = iced::widget::text_input("", upgrade.command)
-                // Keep the field selectable without allowing the displayed
-                // package-manager command to be changed.
+                // Selectable but read-only: the package-manager command must not be editable.
                 .on_input(|_| Message::Noop)
                 .padding([8, 12])
                 .line_height(iced::widget::text::LineHeight::Absolute(24.0.into()))
@@ -575,8 +568,8 @@ impl App {
                     .width(Length::Fill),
             );
         }
-        // Browsing release notes is supplementary, not a third dialog decision.
-        // Keep the dismiss/confirm pair adjacent in both ready and failed states.
+        // Release notes are supplementary, not a third dialog decision; keep dismiss/confirm
+        // adjacent in both ready and failed states.
         if matches!(
             &self.operation.direct_update,
             DirectUpdateState::Ready | DirectUpdateState::Failed(_)
@@ -590,10 +583,8 @@ impl App {
         m3_dialog(content)
     }
 
-    /// Device-info popup: render the Lenovo PTSTPD `data` block as a
-    /// 2-column key/value table. Branches on `DeviceInfoState` so the
-    /// modal stays open through Loading / Error / Ready transitions
-    /// without flashing in/out of existence.
+    /// Device-info popup: the Lenovo PTSTPD `data` block as a two-column key/value
+    /// table. Stays open through `DeviceInfoState` Loading / Error / Ready.
     pub(crate) fn device_info_popup_view(&self) -> Element<'_, Message> {
         let Some((serial, state)) = self.device_info_popup.clone() else {
             return container(text("")).into();
@@ -601,9 +592,8 @@ impl App {
         let title = text(self.t("device_info_popup_title").to_string())
             .size(theme::text_size::DIALOG_HEADLINE)
             .line_height(32.0 / 24.0);
-        // Copy-icon button — only enabled once the upstream payload is
-        // cached; clicking copies the unmodified `data` JSON to the
-        // clipboard and surfaces a toast.
+        // Copy button, enabled once the payload is cached; copies the unmodified `data`
+        // JSON and shows a toast.
         let copy_payload: Option<String> = self
             .queries
             .info_cache
@@ -665,11 +655,10 @@ impl App {
         m3_dialog(content)
     }
 
-    /// Lenovo OTA "querynewfirmware" popup. Opens when the user clicks
-    /// the dashboard firmware version. Mirrors `device_info_popup_view`
-    /// for header / progress / error / close-button shape, but renders
-    /// the OTA payload as a stacked card (From / To / Size / MD5 /
-    /// Changelog / Download) instead of a flat key-value table.
+    /// Lenovo OTA "querynewfirmware" popup, opened from the dashboard firmware
+    /// version. Same header / progress / error / close shape as
+    /// `device_info_popup_view`, but the payload is a stacked card (From / To / Size /
+    /// MD5 / Changelog / Download).
     pub(crate) fn ota_popup_view(&self) -> Element<'_, Message> {
         let Some((_serial, _firmware_id, state)) = self.ota_popup.clone() else {
             return container(text("")).into();
@@ -698,12 +687,9 @@ impl App {
             .center_y(48)
             .into(),
             OtaPopupState::Ready(update) => {
-                // Changelog text lives in `self.ota_changelog_editor`,
-                // seeded by the `OtaFetched` handler from `desc_cn`
-                // (Chinese GUI locale, when populated) or `desc_en`.
-                // Rendered here through `text_editor` so drag-select +
-                // Ctrl+C work — a plain `text` widget is a static label
-                // and won't surface a selection.
+                // Changelog text lives in `self.ota_changelog_editor`, seeded by
+                // `seed_ota_changelog_editor` (`desc_cn` for the Chinese locale when non-empty,
+                // else `desc_en`). A `text_editor` is used so the text can be selected and copied.
                 let size_str = ltbox_core::lenovo_ota::format_size(update.size_bytes);
 
                 let from_to_row = column![
@@ -774,8 +760,8 @@ impl App {
             }
         };
 
-        // Both buttons live on the fixed dialog footer below the scrollable.
-        // Dismiss stays outlined to the left of the filled download action.
+        // Both buttons sit on the fixed footer below the scrollable; dismiss is outlined,
+        // left of the filled download action.
         let download_url: Option<String> = match &state {
             OtaPopupState::Ready(u) if !u.download_url.is_empty() => Some(u.download_url.clone()),
             _ => None,
@@ -854,8 +840,7 @@ impl App {
                 if !updated.is_empty() {
                     rows = rows.push(info_kv(self.t("qfil_popup_updated"), &updated));
                 }
-                // Archive password (fixed constant) with a copy affordance —
-                // it isn't discoverable and the user needs it to extract.
+                // Archive password (fixed constant), copyable: the user needs it to extract.
                 let pw = ltbox_core::lenovo_qfil::package_password();
                 let pw_row = row![
                     info_kv(self.t("qfil_popup_password"), &pw),
@@ -924,10 +909,8 @@ impl App {
 
     /// One `<partition> = <value>` row of the rollback-index popup.
     ///
-    /// The value is a button rather than static text: pressing it steps
-    /// the shared format cycle, so the same click target answers "what
-    /// number is this really" and "what date is that". The copy button
-    /// beside it copies exactly the string currently on screen.
+    /// The value is a button that steps the shared format cycle; the copy button
+    /// beside it copies exactly the string on screen.
     fn rollback_floor_row<'a>(&'a self, partition: &str, index: u64) -> Element<'a, Message> {
         let rendered = self.rollback_value_format.render(index);
         let value_btn = button(
@@ -977,12 +960,9 @@ impl App {
         .into()
     }
 
-    /// Rollback-index breakdown for a device in bootloader mode.
-    ///
-    /// The Dashboard cell only answers "is rollback protection on"; this
-    /// is where the two committed floors live, since a raw index is
-    /// meaningless without knowing which partition it guards and what
-    /// the number represents.
+    /// Rollback-index breakdown for a device in bootloader mode: the two committed
+    /// floors, each labelled with the partition it guards. The Dashboard cell only
+    /// shows whether rollback protection is on.
     pub(crate) fn rollback_detail_popup_view(&self) -> Element<'_, Message> {
         let Some(floors) = self.device.rollback_floors else {
             return container(text("")).into();
@@ -998,8 +978,7 @@ impl App {
             .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
             .width(Length::Fill);
 
-        // Naming the active form turns the cycle from a hidden trick into
-        // a legible control.
+        // Naming the active form makes the cycle a visible control.
         let format_hint = row![
             text(self.t("rollback_format_label").to_string())
                 .size(theme::text_size::LABEL_SMALL)
@@ -1072,9 +1051,8 @@ impl App {
         let boot_result = self.parse_manual_rollback(boot_buffer);
         let vbmeta_result = self.parse_manual_rollback(vbmeta_buffer);
         let both_valid = boot_result.is_ok() && vbmeta_result.is_ok();
-        // The hint under each field reports what the *image* carries, so it has
-        // to be read from the firmware every time; deriving it from the field
-        // would just echo whatever the user typed.
+        // The hint under each field reports what the *image* carries, so it is read from
+        // the firmware every time, not derived from the typed value.
         let advanced_originals = self.adv_wizard.arb_inspect.map(|(a, b)| (Ok(a), Ok(b)));
         let originals = if self.current_view == View::Advanced
             && self.adv_wizard.action == Some(AdvAction::PatchArb)
@@ -1163,8 +1141,7 @@ impl App {
         let input = container(input).height(Length::Fixed(40.0)).center_y(40);
 
         let status: Element<'_, Message> = match (&result, original) {
-            // What the user typed is what they can act on, so its error wins
-            // the one line this row has.
+            // The user's own input error wins the row's single line.
             (Err(reason), _) => dialog_field_error(self.t(reason).to_string()),
             (Ok(_), Some(Ok(index))) => text(tr_args!(
                 "rollback_manual_original",
@@ -1173,7 +1150,7 @@ impl App {
             .size(12)
             .style(success_style)
             .into(),
-            // Unreadable image: say why rather than inventing an index.
+            // Unreadable image: say why rather than invent an index.
             (Ok(_), Some(Err(reason))) => text(self.t(reason).to_string())
                 .size(12)
                 .style(muted_style)
@@ -1254,9 +1231,8 @@ impl App {
         let mut list = column![].spacing(0).width(Length::Fill);
         let mut has_row = false;
 
-        // Flash wizard only — hide "Do not change" from the Advanced
-        // PatchDevinfo flow because that action requires a concrete target.
-        // Once search starts, only matching countries remain in the results.
+        // Flash wizard only: Advanced PatchDevinfo needs a concrete target, so
+        // "Do not change" is hidden there. Also hidden while searching, so only matches remain.
         if !self.adv_needs_country && query.is_empty() {
             let no_change_selected = self.country_popup_draft.is_skipped()
                 || (matches!(self.country_popup_draft, CountryAction::Unset)
@@ -1272,8 +1248,8 @@ impl App {
             has_row = true;
         }
 
-        // TB322FC PRC-only: only CN is selectable in the Flash wizard. The
-        // Advanced operation permits every country, so the gate is lifted there.
+        // `prc_only` models (TB322FC, TB324ZC): only CN is selectable in the Flash
+        // wizard. Advanced permits every country, so the gate is lifted there.
         let tb322fc = self.model_capabilities().prc_only && !self.adv_needs_country;
         for entry in &filtered {
             if has_row {
@@ -1377,9 +1353,8 @@ impl App {
         m3_dialog(popup_content)
     }
 
-    /// PRC / ROW radio popup for the Advanced RegionConvert wizard.
-    /// Smaller than the country popup (only two choices) so the
-    /// content uses M3 radio rows in a fixed-width card.
+    /// PRC / ROW radio popup for the Advanced RegionConvert wizard: two choices,
+    /// so a fixed-width card of M3 radio rows.
     pub(crate) fn region_target_popup_view(&self) -> Element<'_, Message> {
         let selected = self.adv_wizard.region_target;
         let mut list = column![].spacing(2);
@@ -1411,11 +1386,10 @@ impl App {
         m3_dialog(popup_content)
     }
 
-    /// Flash-confirm "hidden dropdown" editor. A small radio popup (same
-    /// shape as `region_target_popup_view`) listing the alternatives for
-    /// whichever confirm row was clicked. Each pick writes straight to
-    /// `wf_config`. `Country` is handled by the country popup, so it never
-    /// reaches here.
+    /// Flash-confirm "hidden dropdown" editor: a small radio popup (same shape as
+    /// `region_target_popup_view`) listing the alternatives for the clicked confirm
+    /// row. Each pick writes straight to `wf_config`. `Country` never reaches here;
+    /// the country popup handles it.
     pub(crate) fn flash_confirm_edit_popup(&self, field: ConfirmField) -> Element<'_, Message> {
         // (label, selected, on_press, disabled)
         let cfg = &self.wf_config;
@@ -1471,8 +1445,8 @@ impl App {
                         .to_string(),
                         cfg.modify_region == on,
                         Message::Flash(FlashMsg::FlashConfirmSetRegionEdit(on)),
-                        // PRC-only TB322FC can't cross regions — disable "On"
-                        // to match the Target editor's OtherRegion gate.
+                        // `prc_only` models (TB322FC, TB324ZC) can't cross regions: disable "On",
+                        // matching the Target editor's OtherRegion gate.
                         tb322 && on,
                     )
                 })
@@ -1662,8 +1636,7 @@ impl App {
         m3_dialog(popup_content)
     }
 
-    /// Full-viewport log popup. Replaces the wizard body while open;
-    /// dismissed via Close.
+    /// Full-viewport log popup; replaces the wizard body while open.
     pub(crate) fn log_popup_view(&self) -> Element<'_, Message> {
         let editor = iced::widget::text_editor(&self.log_editor)
             .on_action(Message::LogEditorAction)
@@ -1719,9 +1692,8 @@ impl App {
     }
 }
 
-// The locale guard measures these popup buttons through shared layout
-// constants, but the buttons take their size from their type role. Pin them
-// together so the guard cannot measure a size the buttons stopped using.
+// The locale guard measures these buttons via shared layout constants, but the
+// buttons size from their type role. Pin the two together.
 const _: () = {
     assert!(DIRECT_UPDATE_DIALOG_ACTION_SIZE.to_bits() == theme::text_size::BODY_MEDIUM.to_bits());
     assert!(REGION_TARGET_POPUP_ACTION_SIZE.to_bits() == theme::text_size::BODY_MEDIUM.to_bits());

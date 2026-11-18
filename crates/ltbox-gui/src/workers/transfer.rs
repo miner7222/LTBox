@@ -8,13 +8,11 @@ use crate::{
 };
 use ltbox_core::tr_args;
 
-/// Shared scan phase for the Flash/Dump Partitions wizards: route to EDL,
-/// open Sahara, read GPTs on LUN 0..=5. On success returns the scanned
-/// partitions plus the still-open session so the caller can map its rows
-/// and then bounce the device back to EDL. On failure it logs (and, for a
-/// scan error, resets) and returns the error string. `tag` is the log
-/// channel prefix; `open_failed_key` / `scan_failed_key` are the i18n keys
-/// for the two failure messages (the only per-wizard text difference).
+/// Shared scan phase for the Flash/Dump Partitions wizards: route to EDL, open Sahara, read GPTs on
+/// LUN 0..=5. On success returns the scanned partitions plus the still-open session so the caller
+/// can map its rows and then bounce the device back to EDL. On failure it logs (and, for a scan
+/// error, resets) and returns the error string. `tag` is the log channel prefix; `open_failed_key`
+/// / `scan_failed_key` are the i18n keys for the two failure messages.
 fn scan_lun_partitions(
     conn: ConnectionStatus,
     loader_path: &str,
@@ -394,8 +392,8 @@ pub(crate) fn dump_parts_scan(conn: ConnectionStatus, loader_path: String) -> Du
         })
         .collect();
 
-    // Bounce back to Sahara so the next `open()` on the dump pass gets
-    // a fresh Hello. Without this Sahara times out.
+    // Bounce back to Sahara so the next `open()` on the dump pass gets a fresh Hello; otherwise
+    // Sahara times out.
     if let Err(e) = session.reset_to_edl(&mut log) {
         ltbox_core::live!(
             log,
@@ -416,17 +414,13 @@ pub(crate) fn dump_parts_scan(conn: ConnectionStatus, loader_path: String) -> Du
     }
 }
 
-/// Post-dump stability window before the next EDL op. Large partition
-/// reads (e.g. boot_a ~96 MB) leave the USB endpoint in a lingering state;
-/// a subsequent reset/open can race a still-draining read and surface as
-/// "stale COM port" or Sahara timeout. Mirrors v2 `post_sleep=15` in
-/// `bin/ltbox/actions/edl.py::dump_partitions`.
+/// Post-dump stability window before the next EDL op. Large partition reads (e.g. boot_a ~96 MB)
+/// leave the USB endpoint lingering; a following reset/open can race the draining read and surface
+/// as a "stale COM port" or Sahara timeout.
 const EDL_POST_DUMP_STABILIZE: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Partition bases whose dump failure must be surfaced as a critical
-/// error, not a per-row log line. These carry region/board state that a
-/// subsequent rescue flow cannot reconstruct from scratch. Mirrors v2
-/// `critical_targets` set in `bin/ltbox/actions/edl.py::dump_partitions`.
+/// Partition bases whose dump failure must surface as a critical error, not a per-row log line:
+/// they carry region/board state that a later rescue flow cannot reconstruct.
 const CRITICAL_DUMP_BASES: &[&str] = &["devinfo", "persist", "oemowninfo", "proinfo"];
 
 /// Match a partition label (possibly slot-suffixed) against the critical

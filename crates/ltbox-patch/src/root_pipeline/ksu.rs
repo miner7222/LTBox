@@ -1,9 +1,8 @@
 //! KernelSU-family (KernelSU / KSU-Next / SukiSU / BakaSU) manager APK,
 //! kernel `.ko`, and `ksuinit` payload acquisition.
 //!
-//! Also hosts the manager-APK orchestration entry point
-//! [`stage_root_manager_apk`], which dispatches across all root families
-//! and lives here because the KSU branches are the bulk of its logic.
+//! Also hosts [`stage_root_manager_apk`], the manager-APK entry point for
+//! every root family.
 
 use std::path::{Path, PathBuf};
 
@@ -264,8 +263,8 @@ pub fn stage_root_manager_apk(
     Ok(Some(manager_apk))
 }
 
-// KSU payload: `.ko` is a release asset (per-kernel), `ksuinit` is a
-// workflow artifact fetched via `nightly.link` (GitHub API needs auth).
+// KSU payload: the `.ko` is a per-kernel release asset; `ksuinit` is a workflow
+// artifact fetched via `nightly.link` (artifact zips need auth on the GitHub API).
 
 /// Reduce kernel version to `major.minor` for KSU asset matching
 /// (e.g. `6.6.118` → `6.6`). Already-short strings pass through.
@@ -288,7 +287,7 @@ pub fn normalize_ksu_kernel_version(kver: &str) -> Option<String> {
 }
 
 /// True iff `lower_filename` embeds `kver` between `-{kver}_` delimiters.
-/// Prevents unanchored `"6.1"` from matching 6.10 / 6.11 / etc.
+/// The delimiters stop `"6.1"` matching 6.10 / 6.11.
 fn ksu_ko_kver_matches(lower_filename: &str, kver: &str) -> bool {
     let needle = format!("-{kver}_");
     lower_filename.contains(&needle)
@@ -297,11 +296,9 @@ fn ksu_ko_kver_matches(lower_filename: &str, kver: &str) -> bool {
 /// The GKI branch embedded in a kernel release string — `android12` out of
 /// `5.10.198-android12-9-gabc1234`.
 ///
-/// A kernel version alone does not identify a GKI: 5.10 ships as both
-/// `android12-5.10` and `android13-5.10`, and an LKM built for the wrong one
-/// loads and then leaves no root after a reboot, with no error to show for
-/// it. `/proc/version` carries the branch, so read it rather than guessing
-/// from the version.
+/// The version alone is ambiguous (5.10 ships as `android12-5.10` and
+/// `android13-5.10`) and an LKM for the wrong branch loads silently but gives
+/// no root after reboot, so the branch is read from `/proc/version`.
 pub fn ksu_gki_branch(kernel_release: &str) -> Option<String> {
     let lower = kernel_release.to_ascii_lowercase();
     let start = lower.find("android")?;
@@ -314,11 +311,10 @@ pub fn ksu_gki_branch(kernel_release: &str) -> Option<String> {
 
 /// Whether an asset's GKI branch disqualifies it for this device.
 ///
-/// With the device branch known, the asset has to name that exact branch —
-/// nothing else can be right. Without it (manual kernel-version entry, or a
-/// `/proc/version` with no branch at all) fall back to the one pairing that is
-/// known-wrong on every tablet LTBox supports: their 5.10 kernels are all the
-/// Android 12 GKI, so an android13 module never belongs on one.
+/// With a known device branch the asset must name it. Without one (manual
+/// kernel-version entry, or no branch in `/proc/version`) only the pairing
+/// assumed wrong for every supported tablet is rejected: an android13 module on
+/// 5.10, which is taken to be the Android 12 GKI.
 fn branch_rejected(lower_filename: &str, kver: &str, device_branch: Option<&str>) -> bool {
     match device_branch {
         Some(branch) => !lower_filename.contains(branch),
@@ -387,8 +383,8 @@ fn select_ksu_nightly_ko_artifact(
     kver: &str,
     device_branch: Option<&str>,
 ) -> Option<String> {
-    // Accept legacy `_kernelsu.ko`, `-{kver}-lkm`, and `-{kver}-ksu-lkm` naming.
-    // The `-` after kver prevents `6.1` matching `6.10/6.11/6.12`.
+    // Accepts `_kernelsu.ko`, `-{kver}-lkm` and `-{kver}-ksu-lkm` names; the `-`
+    // after kver keeps `6.1` from matching `6.10`.
     let want = kver.to_lowercase();
     let lkm_marker = format!("-{want}-lkm");
     let ksu_lkm_marker = format!("-{want}-ksu-lkm");
@@ -402,7 +398,7 @@ fn select_ksu_nightly_ko_artifact(
         if lower.contains("_kernelsu.ko") && ksu_ko_kver_matches(&lower, &want) {
             return true;
         }
-        // ZIP wrappers carry the real .ko inside, with optional arch prefixes.
+        // Artifact is a ZIP wrapper around the .ko, optionally arch-prefixed.
         lower.contains(&lkm_marker) || lower.contains(&ksu_lkm_marker)
     })
 }
@@ -432,8 +428,8 @@ fn compare_artifact_digest(
     let Some(reported) = reported_digest.filter(|digest| !digest.is_empty()) else {
         return Ok(ArtifactDigestStatus::Skipped);
     };
-    // A digest that is present but not a well-formed SHA-256 cannot vouch for
-    // the download; reject it rather than treating it as absent.
+    // A present but malformed digest cannot vouch for the download: reject it,
+    // do not treat it as absent.
     let Some(expected) = reported
         .strip_prefix("sha256:")
         .filter(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -574,13 +570,11 @@ struct TagPayloadRun {
     conclusion: TagRunConclusion,
 }
 
-/// The first tag run supplying what the release assets lack. All successful
-/// runs, across workflows in order, take precedence over any failed run.
+/// The first tag run whose artifacts supply what the release assets lack.
+/// Successful runs across all workflows take precedence over failed ones.
 ///
-/// One tag push starts several runs (release, build, lint), so a run is
-/// chosen by what it carries rather than by list position: an artifact-less
-/// lint run can never be picked, and a workflow that does not build tags is
-/// simply passed over.
+/// One tag push starts several runs (release, build, lint), so runs are chosen
+/// by the artifacts they carry, not by position.
 fn resolve_tag_payload_run(
     client: &GitHubClient,
     provider: RootProvider,
@@ -762,9 +756,8 @@ pub(super) fn download_ksu_release_payload(
         tr_args!("log_ksu_latest_release", tag = tag)
     );
 
-    // Per-kernel `.ko` from release assets.
-    // KSU tags assets by kernel branch (`android15-6.6_kernelsu.ko`);
-    // strip patch suffix from device kver before matching.
+    // Release assets are named by GKI branch and `major.minor`
+    // (`android15-6.6_kernelsu.ko`), so drop the patch level from kver.
     let kver = kernel_version
         .and_then(normalize_ksu_kernel_version)
         .ok_or_else(|| {
@@ -807,8 +800,8 @@ pub(super) fn download_ksu_release_payload(
         return Ok(());
     }
 
-    // Resolve the one tag run that supplies whatever the release omitted:
-    // ksuinit, and the LKM when there is no release module asset.
+    // One tag run supplies what the release omitted: ksuinit, and the LKM if
+    // there is no release module asset.
     let TagPayloadRun {
         run_id,
         workflow,
@@ -885,7 +878,6 @@ pub(super) fn download_ksu_release_payload(
     if release_init.is_some() {
         return Ok(());
     }
-    // `ksuinit` binary via nightly.link.
     let ksuinit_artifact = select_ksuinit_artifact(&artifact_names).ok_or_else(|| {
         LtboxError::Download(format!(
             "No arm64-safe `ksuinit*` workflow artifact on run {run_id} of {repo}"
@@ -929,7 +921,7 @@ pub(super) fn download_ksu_release_payload(
     let mut entry = archive
         .by_name(&member_name)
         .map_err(|e| LtboxError::Patch(format!("ksuinit zip entry: {e}")))?;
-    // magiskboot expects `init`, not `ksuinit`.
+    // The ramdisk entry magiskboot adds is named `init`.
     let init_path = staging_dir.join("init");
     let copied = crate::zip_util::copy_capped(
         &mut entry,
@@ -948,8 +940,8 @@ pub(super) fn download_ksu_release_payload(
 }
 
 /// Download `.ko` + `init` from a KSU nightly run into `staging_dir`.
-/// LKM selection requires an exact kernel major.minor match.
-/// `manual_run_id = None` → latest successful run on provider's workflow.
+/// The LKM must match the kernel `major.minor` exactly.
+/// `manual_run_id = None` uses the latest successful run on the provider's workflow.
 pub fn download_ksu_payload_nightly(
     provider: RootProvider,
     kernel_version: Option<&str>,
@@ -981,7 +973,6 @@ pub fn download_ksu_payload_nightly(
             )
         })?;
 
-    // Kernel `.ko`.
     let ko_artifact = select_ksu_nightly_ko_artifact(&artifact_names, &kver, device_branch)
         .ok_or_else(|| {
             LtboxError::Patch(format!(
@@ -1003,7 +994,6 @@ pub fn download_ksu_payload_nightly(
         log,
     )?;
 
-    // ksuinit → `init`.
     let init_artifact = select_ksuinit_artifact(&artifact_names).ok_or_else(|| {
         LtboxError::Patch(format!(
             "{repo} run {run_id}: no arm64-safe ksuinit artifact (got {artifact_names:?})"
@@ -1168,7 +1158,7 @@ mod tests {
                 );
             }
         }
-        // Successful tag runs retain the existing optional-digest behavior.
+        // A successful tag run tolerates a missing digest.
         std::fs::write(&path, bytes).unwrap();
         let mut log = Vec::new();
         verify_nightly_artifact_zip(
@@ -1191,7 +1181,7 @@ mod tests {
 
     #[test]
     fn longer_minor_does_not_match_shorter_prefix() {
-        // An unanchored `contains("6.1")` would also match 6.10/6.11/etc.
+        // A bare `contains("6.1")` would also match 6.10/6.11.
         assert!(!ksu_ko_kver_matches("android15-6.10_kernelsu.ko", "6.1"));
         assert!(!ksu_ko_kver_matches("android15-6.11_kernelsu.ko", "6.1"));
         assert!(!ksu_ko_kver_matches("android15-6.12_kernelsu.ko", "6.1"));
@@ -1289,8 +1279,7 @@ mod tests {
             select_ksu_nightly_ko_artifact(&artifacts, "5.15", None),
             Some("android14-5.15-lkm".to_string())
         );
-        // 6.1 must not steal 6.10 / 6.11 / 6.12 — kver match anchors
-        // both sides via the surrounding `-` markers.
+        // 6.1 must not match 6.10 / 6.11 / 6.12: the surrounding `-` markers anchor kver.
         assert_eq!(
             select_ksu_nightly_ko_artifact(&artifacts, "6.1", None),
             Some("android14-6.1-lkm".to_string())
@@ -1418,8 +1407,7 @@ mod tests {
 
     #[test]
     fn a_repo_without_the_devices_branch_finds_nothing() {
-        // Failing loudly beats silently loading a module that then drops
-        // root on the next boot.
+        // Fail loudly rather than load a module that drops root on the next boot.
         let artifacts = vec!["android13-5.10-lkm".to_string()];
         assert_eq!(
             select_ksu_nightly_ko_artifact(&artifacts, "5.10", Some("android12")),
@@ -1429,9 +1417,8 @@ mod tests {
 
     #[test]
     fn an_unknown_branch_still_refuses_android13_on_5_10() {
-        // Manual kernel-version entry has no branch to match on. Every 5.10
-        // tablet LTBox supports is the Android 12 GKI, so this pairing stays
-        // barred even then.
+        // Manual entry has no branch; android13 on 5.10 stays rejected (the
+        // supported 5.10 tablets are the Android 12 GKI).
         let artifacts = vec![
             "android13-5.10-lkm".to_string(),
             "android12-5.10-lkm".to_string(),
@@ -1740,18 +1727,11 @@ mod tests {
         assert!(select_skroot_manager_asset(&pro_only).is_none());
     }
 
-    /// Network-dependent end-to-end probe of every LKM provider's
-    /// manager-APK fetch path (Stable + Nightly auto). Each iteration
-    /// uses an isolated tempdir so failures don't poison subsequent
-    /// runs. Marked `#[ignore]` so CI / `cargo test` skip it; run
-    /// locally with:
+    /// Network probe of every KSU-family provider's manager-APK fetch (Stable and
+    /// Nightly auto), each in its own tempdir. Passes when the fetch returns
+    /// `Ok` and `manager.apk` exists and is non-empty. Run manually:
     ///
     ///     cargo test -p ltbox-patch --lib -- --ignored --nocapture lkm_manager_download_smoke
-    ///
-    /// Pass criteria per provider/channel:
-    /// 1. Function returns `Ok(_)`.
-    /// 2. `manager.apk` exists at the expected path.
-    /// 3. The file is non-empty (full APK download / extraction).
     #[test]
     #[ignore = "hits GitHub releases + nightly.link; run manually"]
     fn lkm_manager_download_smoke() {
@@ -1765,7 +1745,6 @@ mod tests {
         let mut report: Vec<(String, String)> = Vec::new();
 
         for (provider, repo) in providers.iter().copied() {
-            // ----- Stable -----
             let stable_label = format!("{repo} stable");
             {
                 let tmp = tempfile::tempdir().expect("tempdir");
@@ -1795,7 +1774,6 @@ mod tests {
                 report.push((stable_label, outcome));
             }
 
-            // ----- Nightly auto-detect -----
             let nightly_label = format!("{repo} nightly");
             let tmp = tempfile::tempdir().expect("tempdir");
             let manager_apk = tmp.path().join("manager.apk");
@@ -1842,10 +1820,8 @@ mod tests {
         );
     }
 
-    /// Network-dependent probe for the full `download_ksu_payload`
-    /// path — `.ko` (kernel module) + `ksuinit` artifact extraction —
-    /// against kernel `6.6` for every KSU-family provider that ships
-    /// release artifacts.
+    /// Network probe of `download_ksu_payload` (`.ko` + `ksuinit`) against kernel
+    /// `6.6` for every KSU-family provider that ships release artifacts.
     ///
     ///     cargo test -p ltbox-patch --lib -- --ignored --nocapture lkm_payload_download_smoke
     #[test]
@@ -1907,10 +1883,8 @@ mod tests {
         );
     }
 
-    /// Nightly counterpart to `lkm_payload_download_smoke` — exercises
-    /// `download_ksu_payload_nightly` so the per-kernel `.ko` artifact
-    /// selection + ksuinit extraction get checked against every
-    /// provider's actual nightly run, including BakaSU.
+    /// Nightly counterpart of `lkm_payload_download_smoke`, using
+    /// `download_ksu_payload_nightly`.
     ///
     ///     cargo test -p ltbox-patch --lib -- --ignored --nocapture lkm_payload_nightly_download_smoke
     #[test]

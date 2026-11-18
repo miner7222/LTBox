@@ -119,8 +119,8 @@ pub(crate) fn partition_label_matches(label: &str, query: &str) -> bool {
     query.is_empty() || label.to_lowercase().contains(&query.to_lowercase())
 }
 
-/// Column the partition table is currently sorted by. Header click
-/// fires `*SortBy(col)`; clicking the active column toggles direction.
+/// Column the partition table is sorted by; a header click fires
+/// `*SortBy(col)`, and clicking the active column toggles direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum PartsSortColumn {
     #[default]
@@ -128,9 +128,7 @@ pub(crate) enum PartsSortColumn {
     Label,
     Start,
     Size,
-    /// File-path column — only meaningful for FlashParts; DumpParts has
-    /// no file-path column so this variant is never produced from its
-    /// header buttons.
+    /// File-path column; FlashParts only (DumpParts has none).
     File,
 }
 
@@ -148,9 +146,8 @@ pub(crate) struct FlashPartsWizard {
     /// leading action must not infer this from the live post-scan EDL state.
     pub(crate) entry_connection: Option<ConnectionStatus>,
     pub(crate) sort_col: PartsSortColumn,
-    /// `true` → descending. Default `false` (ascending) on first scan
-    /// so initial layout matches the device's GPT order well enough
-    /// for LUN-then-label browsing.
+    /// `true` → descending. Defaults to ascending so the first layout roughly
+    /// follows GPT order (LUN, then label).
     pub(crate) sort_desc: bool,
     /// Select-step table filter; hides rows without changing their state.
     pub(crate) search: String,
@@ -185,17 +182,15 @@ impl FlashPartsWizard {
             .collect()
     }
 
-    /// Stable-sort `rows` by current `sort_col` / `sort_desc`. Tie-break
-    /// on (lun, label) so identical primary keys land in a deterministic
-    /// order.
+    /// Stable-sort `rows` by `sort_col` / `sort_desc`, tie-breaking on
+    /// (lun, label) for a deterministic order.
     pub(crate) fn apply_sort(&mut self) {
         let col = self.sort_col;
         let desc = self.sort_desc;
         self.rows.sort_by(|a, b| {
             let ord = match col {
                 PartsSortColumn::Lun => a.lun.cmp(&b.lun),
-                // ASCII byte order — uppercase (A-Z, 0x41-0x5A) sorts
-                // before lowercase (a-z, 0x61-0x7A) by user request.
+                // ASCII byte order: uppercase sorts before lowercase.
                 PartsSortColumn::Label => a.label.cmp(&b.label),
                 PartsSortColumn::Start => a.start_sector.cmp(&b.start_sector),
                 PartsSortColumn::Size => a.size_bytes.cmp(&b.size_bytes),
@@ -261,10 +256,6 @@ pub(crate) struct FlashPartsScanResult {
     pub(crate) rows: Vec<FlashPartRow>,
     pub(crate) error: Option<String>,
 }
-
-// =========================================================================
-// Dump Partitions wizard state (Advanced → Dump Partitions)
-// =========================================================================
 
 #[derive(Debug, Clone)]
 pub(crate) struct DumpPartRow {
@@ -362,8 +353,7 @@ impl DumpPartsWizard {
         self.rows.sort_by(|a, b| {
             let ord = match col {
                 PartsSortColumn::Lun => a.lun.cmp(&b.lun),
-                // ASCII byte order — uppercase (A-Z, 0x41-0x5A) sorts
-                // before lowercase (a-z, 0x61-0x7A) by user request.
+                // ASCII byte order: uppercase sorts before lowercase.
                 PartsSortColumn::Label => a.label.cmp(&b.label),
                 PartsSortColumn::Start => a.start_sector.cmp(&b.start_sector),
                 PartsSortColumn::Size => a.size_bytes.cmp(&b.size_bytes),

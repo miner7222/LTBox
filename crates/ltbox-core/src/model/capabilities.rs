@@ -127,9 +127,9 @@ const TB323FU: ModelCapabilities = ModelCapabilities {
     country_partitions: &["oemowninfo", "persist"],
     ..GENERIC
 };
-/// TB324ZC — Y700 5G. Shares TB323FU's efisp/GBL route, multi-image Sahara
-/// manifest and dual USB-C ports, but ships PRC-only firmware and, like
-/// TB322FC, does not enforce rollback protection (confirmed on hardware).
+/// TB324ZC shares TB323FU's efisp/GBL route, multi-image Sahara manifest and
+/// dual USB-C ports, but ships PRC-only firmware and, like TB322FC, does not
+/// enforce rollback protection (confirmed on hardware).
 const TB324ZC: ModelCapabilities = ModelCapabilities {
     rescue: false,
     root_uses_gbl: true,
@@ -264,9 +264,8 @@ pub fn fingerprint_model_lacking(
 mod tests {
     use super::*;
 
-    /// TB324ZC shares TB323FU's exploit route and its dual USB-C hardware but
-    /// not its region or its rollback protection, so it is pinned against
-    /// that profile rather than described twice.
+    /// TB324ZC shares TB323FU's exploit route and dual USB-C hardware but not
+    /// its region or rollback protection.
     #[test]
     fn tb324zc_shares_the_gbl_route_and_dual_usb_but_is_prc_only_and_unprotected() {
         let tb324zc = capabilities("TB324ZC");

@@ -104,11 +104,9 @@ pub(crate) fn unroot_worker(
     };
     live!(log, "[Unroot] {}", restored_label);
 
-    // Slot resolution must succeed — unroot writes the filename-resolved root
-    // target + vbmeta_<slot> from the user's backup folder. Defaulting to
-    // `_a` when the device is on `_b` would restore stale stock blobs to the
-    // wrong slot and leave the active slot still rooted, with no clear
-    // signal to the user.
+    // Slot resolution must succeed: unroot writes the root target + vbmeta_<slot> from the backup
+    // folder, and defaulting to `_a` on a `_b` device would restore stale stock blobs to the wrong
+    // slot and leave the active slot rooted.
     let slot =
         ltbox_device::controller::poll_active_slot(std::time::Duration::from_secs(30), &mut log)
             .map_err(|e| tr_args!("err_unroot_slot_resolve_failed", error = e))?;
@@ -131,12 +129,9 @@ pub(crate) fn unroot_worker(
         )
     );
 
-    // The root image + vbmeta resolve through the
-    // hardcoded LUN map; GPT-by-name reads
-    // the slot's start sector from the
-    // device. No rawprogram parse needed —
-    // the loader's parent dir may not even
-    // contain a firmware XML pair.
+    // The root image + vbmeta resolve through the static LUN map; GPT-by-name reads the slot's start
+    // sector from the device. No rawprogram parse is needed; the loader's parent dir may hold no
+    // firmware XML.
     let root_image_label = format!("{base_part}{slot}");
     let vbm_label = backup
         .vbmeta_owner
@@ -270,15 +265,6 @@ enum AbortReason {
     FingerprintMismatch,
 }
 
-/// Decide what to do with the selected backup image given what the device
-/// actually holds. Pure, so the brick-critical policy is testable without an
-/// EDL session.
-///
-/// A user who restores from *some* folder of the same firmware version rather
-/// than their own backup gets images that never received this device's
-/// rollback-bypass treatment; flashing those unchanged is what bricks the
-/// device. The payload retains its existing Boot-only reconciliation policy;
-/// the descriptor-detected owner is checked independently below.
 /// Self-check a GBL-route backup, which cannot be compared with the device:
 /// the patched image on the device carries no AVB metadata.
 ///
@@ -333,6 +319,12 @@ fn check_gbl_backup(
     }
 }
 
+/// Decide what to do with the selected backup image given what the device actually holds.
+/// Pure, so the brick-critical policy is testable without an EDL session.
+///
+/// A backup from another folder of the same firmware version never got this device's
+/// rollback-bypass treatment, and flashing it unchanged bricks the device. The payload keeps its
+/// Boot-only reconciliation policy; the descriptor-detected owner is checked independently.
 fn unroot_prep(
     target: BackupRootTarget,
     device_fingerprint: Option<&str>,

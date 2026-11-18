@@ -760,11 +760,9 @@ fn gpu_table_view<'a>(
         groups = groups.push(column![group_heading, table_rows].spacing(6.0));
     }
 
-    // Everything above the table is fixed height, so a `Fill` table is the
-    // first thing squeezed out when the window is short — at the minimum it
-    // would collapse to nothing at all. Only claim the remaining height when
-    // there is enough of it; otherwise take the natural height and let the
-    // step scroll as one page, which the caller arranges.
+    // Everything above the table is fixed height, so a `Fill` table would
+    // collapse in a short window. Fill only when there is room; otherwise take
+    // the natural height and let the caller scroll the step as one page.
     let vertical = if fill_height {
         Length::Fill
     } else {

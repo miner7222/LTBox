@@ -14,11 +14,9 @@ use ltbox_core::{LtboxError, Result, tr_args};
 use crate::boot;
 use crate::root_pipeline::RootImageTarget;
 
-/// Map the three crypto getprops to the `encrypt_type` v2 uses to gate
-/// `/data` eligibility. `"none"` = unencrypted, `"file"` = FBE,
-/// `"block"` = full-disk, `"metadata"` = metadata crypto. Matches the
-/// cascade in `_find_magisk_preinit_device_from_mountinfo` from
-/// `bin/ltbox/patch/root.py`.
+/// Map the three crypto getprops to the `encrypt_type` that gates `/data`
+/// eligibility in [`resolve_preinit_device`]. `"none"` = unencrypted,
+/// `"file"` = FBE, `"block"` = full-disk, `"metadata"` = metadata crypto.
 pub fn derive_encrypt_type(
     crypto_state: &str,
     crypto_type: &str,
@@ -45,11 +43,10 @@ pub fn derive_encrypt_type(
 /// `encrypt_type` gates `/data` eligibility: `"none"` (plain) and `"file"`
 /// (FBE) keep `/data` eligible; `"block"` / `"metadata"` devices cannot use
 /// userdata for preinit because the partition is unavailable pre-unlock.
-/// Mirrors `bin/ltbox/patch/root.py::_find_magisk_preinit_device_from_mountinfo`.
 ///
-/// Also drops dynamic-major partitions (majors 240-254) unless the source
-/// path carries `/by-name/` or contains `/vd` — prevents grabbing a
-/// super-partition lvm mapping that disappears at next boot.
+/// Dynamic-major partitions (majors 240-254) are dropped unless the source path
+/// carries `/by-name/` or contains `/vd`, so a super-partition lvm mapping that
+/// disappears at next boot is never picked.
 pub fn resolve_preinit_device(mountinfo: &str, encrypt_type: &str) -> Option<String> {
     const PRIO_METADATA: u32 = 5;
     const PRIO_PERSIST: u32 = 4;
@@ -292,11 +289,9 @@ pub fn patch_root_image(
     config.push_str(&format!("SHA1={sha1}\n"));
     fs::write(work_dir.join("config"), &config)?;
 
-    // Patch ramdisk in one cpio pass. `KEEPVERITY` / `KEEPFORCEENCRYPT`
-    // must be set or magiskboot's patcher strips dm-verity and
-    // forceencrypt flags from fstab — bricks devices that expect AVB
-    // + metadata encryption. v2 `bin/ltbox/patch/root.py` sets the
-    // same env via `_get_tool_env()` before invoking magiskboot.
+    // Patch ramdisk in one cpio pass. `KEEPVERITY` / `KEEPFORCEENCRYPT` must be
+    // set or magiskboot strips dm-verity and forceencrypt from fstab, which
+    // bricks devices that expect AVB + metadata encryption.
     ltbox_core::live!(log, "[Magisk] {}", tr("log_magisk_cpio_patch"));
     let mut cpio_cmds: Vec<&str> = vec![
         "add 0750 init magiskinit",

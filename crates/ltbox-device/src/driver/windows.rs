@@ -32,12 +32,9 @@ fn silent_command(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
-/// Trusted system Windows PowerShell host. Prefer this over a PATH-resolved
-/// `powershell` so signature verification and UAC elevation cannot be
-/// redirected through a same-named executable earlier on PATH.
-///
-/// Resolves System32 via `GetSystemDirectoryW` rather than the mutable
-/// `SystemRoot` environment variable, and never falls back to PATH.
+/// System Windows PowerShell, resolved via `GetSystemDirectoryW` (never PATH
+/// or `SystemRoot`) so signature checks and UAC elevation cannot be redirected
+/// to a same-named executable.
 fn windows_powershell_exe() -> Result<PathBuf> {
     let system32 = windows_system32_dir()?;
     Ok(system32
@@ -60,8 +57,7 @@ fn windows_system32_dir() -> Result<PathBuf> {
     let mut buf = vec![0u16; needed as usize];
     let written = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), needed) };
     if written == 0 || written >= needed {
-        // 0 = failure; written >= needed means the buffer was too small
-        // (directory changed between calls — extremely rare, still fatal).
+        // 0 = failure; written >= needed = buffer too small (path changed).
         let err = if written == 0 {
             std::io::Error::last_os_error()
         } else {
@@ -148,11 +144,9 @@ struct WindowsDriverSpec {
     owner_repo: &'static str,
     required_infs: &'static [&'static str],
     version_inf: &'static str,
-    /// Add/Remove Programs `DisplayName` of the installed package. When set,
-    /// the update check reads its `DisplayVersion` from the uninstall registry
-    /// so it can compare in the GitHub release tag's version namespace.
-    /// `None` falls back to the INF `DriverVer`. Presence detection always uses
-    /// the required INF files, regardless of this update-version source.
+    /// Add/Remove Programs `DisplayName` whose `DisplayVersion` the update check
+    /// compares with the release tag; `None` uses the INF `DriverVer`. Presence
+    /// detection always uses the required INF files.
     uninstall_display_name: Option<&'static str>,
     asset_x64: &'static str,
     asset_arm64: &'static str,
@@ -166,15 +160,13 @@ const USERSPACE_SPEC: WindowsDriverSpec = WindowsDriverSpec {
     owner_repo: "qualcomm/qcom-usb-userspace-drivers",
     required_infs: &["qcserlib.inf"],
     version_inf: "qcserlib.inf",
-    // The userspace package can advance independently of `qcserlib.inf`
-    // (package/release 1.0.2.2 still ships INF DriverVer 1.0.2.1). Read the
-    // installer's package version to avoid a perpetual false update banner.
+    // The package version can run ahead of `qcserlib.inf` (1.0.2.2 ships INF
+    // DriverVer 1.0.2.1); comparing the INF would show a permanent update banner.
     uninstall_display_name: Some("Qualcomm USB Userspace Drivers"),
     asset_x64: "qcom_usb_userspace_drivers_x64.exe",
     asset_arm64: "qcom_usb_userspace_drivers_arm64.exe",
     asset_x86: "qcom_usb_userspace_drivers_x86.exe",
-    // release-win-v1.0.2.3 ships only this bundle, while its README still
-    // documents the per-arch installers as the package.
+    // release-win-v1.0.2.3 ships only this bundle, not per-arch installers.
     bundle_stem: "qcom_usb_userspace_drivers",
 };
 
@@ -182,11 +174,9 @@ const KERNEL_SPEC: WindowsDriverSpec = WindowsDriverSpec {
     owner_repo: "qualcomm/qcom-usb-kernel-drivers",
     required_infs: &["qcwdfser.inf"],
     version_inf: "qcwdfser.inf",
-    // The kernel `qcwdfser.inf` DriverVer (e.g. "1.0.3.6") is a different
-    // namespace than the QUD release tag / package version (e.g. "1.00.94.6"),
-    // so comparing the two always reports an update. The installer registers
-    // the QUD package version under this Add/Remove Programs name; read it for
-    // a like-for-like comparison instead.
+    // `qcwdfser.inf` DriverVer ("1.0.3.6") is a different namespace from the
+    // release/package version ("1.00.94.6"), which the installer registers
+    // under this Add/Remove Programs name.
     uninstall_display_name: Some("Qualcomm USB Kernel Drivers"),
     asset_x64: "qcom_usb_kernel_drivers_x64.exe",
     asset_arm64: "qcom_usb_kernel_drivers_arm64.exe",
@@ -211,8 +201,7 @@ struct GithubRelease {
     draft: bool,
     #[serde(default)]
     prerelease: bool,
-    /// ISO-8601 publish time, used to pick the newest matching release
-    /// deterministically instead of trusting the order GitHub lists them in.
+    /// ISO-8601 publish time; picks the newest release independent of API order.
     #[serde(default)]
     published_at: String,
 }
@@ -321,9 +310,8 @@ struct SelectedRelease {
     source: InstallerSource,
 }
 
-/// Fetch the latest Windows release that ships the host-arch installer,
-/// directly or inside its bundle zip, excluding drafts and prereleases.
-/// Shared by the installer and the update check so both resolve to the same release.
+/// Latest stable Windows release with the host-arch installer. Shared by the
+/// installer and the update check so both resolve to the same release.
 fn fetch_latest_win_release() -> Result<SelectedRelease> {
     let spec = driver_spec(qcom_driver_mode());
     let releases = fetch_win_releases(spec)?;
@@ -331,10 +319,8 @@ fn fetch_latest_win_release() -> Result<SelectedRelease> {
         .ok_or(DriverError::NoAsset)
 }
 
-/// Pick the newest published stable Windows release that carries
-/// `asset_name`, either as an asset or inside its `<bundle_stem>_<version>.zip`.
-/// Drafts and prereleases are rejected before tag/asset matching; among the
-/// remaining candidates the highest `published_at` wins.
+/// Newest (by `published_at`) non-draft, non-prerelease Windows release that
+/// carries `asset_name`, as an asset or inside `<bundle_stem>_<version>.zip`.
 fn select_latest_win_release(
     releases: Vec<GithubRelease>,
     asset_name: &str,
@@ -352,9 +338,8 @@ fn select_latest_win_release(
         .map(|(_, tag, source)| SelectedRelease { tag, source })
 }
 
-/// The release's own installer asset wins; the bundle zip is the fallback and
-/// must be named exactly for this release's version, so an unrelated archive
-/// (an older package format, or a drivers-only zip) never matches.
+/// The installer asset wins; else the bundle zip, which must be named for this
+/// release's version so an unrelated archive never matches.
 fn installer_source(
     release: &GithubRelease,
     asset_name: &str,
@@ -439,11 +424,9 @@ fn extract_bundled_installer(zip_path: &Path, asset_name: &str, out_path: &Path)
     Ok(())
 }
 
-/// Check whether a newer signed driver release exists than the one
-/// installed. Returns `Some` only when a driver is present locally AND the
-/// latest Windows release is strictly newer. Any failure — no driver
-/// installed, version unparseable, offline, GitHub unreachable — collapses
-/// to `None` so the caller can fail silently (no banner).
+/// `Some` only when a driver is installed and the latest Windows release is
+/// strictly newer. Any failure (not installed, unparseable, offline) is `None`,
+/// so the caller shows no banner.
 pub fn check_driver_update() -> Option<DriverUpdate> {
     let current = installed_driver_version()?;
     let latest = version_from_tag(&fetch_latest_win_release().ok()?.tag)?;
@@ -490,17 +473,12 @@ fn parse_driver_ver(inf_text: &str) -> Option<String> {
         if !key.trim().eq_ignore_ascii_case("DriverVer") {
             continue;
         }
-        // INF allows the whole value to be wrapped in one quote pair
-        // (`DriverVer = "date,version"`). Strip a *balanced* pair only — an
-        // unbalanced quote is left in place so it fails the strict parse.
+        // INF may quote the whole value (`DriverVer = "date,version"`).
         let val = strip_balanced_quotes(val.trim());
-        // `DriverVer` is `date,version` (or just `version`). Take everything
-        // after the FIRST comma — a stray extra comma then stays inside a
-        // component (`1.+2,1.2` → component `+2,1`) and fails the parse,
-        // rather than `rsplit` silently grabbing a clean trailing fragment.
+        // Split at the FIRST comma, so a stray extra comma stays inside the
+        // version and fails the parse instead of yielding a clean fragment.
         let ver = val.split_once(',').map(|(_, v)| v).unwrap_or(val).trim();
-        // Strict parse: a malformed `DriverVer` version yields `None`
-        // rather than a truncated comparison value.
+        // A malformed version yields `None`, not a truncated value.
         if parse_version(ver).is_some() {
             return Some(ver.to_string());
         }
@@ -508,13 +486,10 @@ fn parse_driver_ver(inf_text: &str) -> Option<String> {
     None
 }
 
-/// Installed driver version for the active mode, in the same version namespace
-/// as [`version_from_tag`], or `None` when the driver is not installed / the
-/// version is unparseable (which collapses the update check to no banner).
-///
-/// Both Windows packages read their installer `DisplayVersion` from the
-/// uninstall registry because their INF `DriverVer` values can differ from the
-/// corresponding release tags (see [`USERSPACE_SPEC`] and [`KERNEL_SPEC`]).
+/// Installed driver version for the active mode, in the namespace of
+/// [`version_from_tag`]; `None` when not installed or unparseable. Both
+/// packages use the uninstall-registry `DisplayVersion`, since their INF
+/// `DriverVer` differs from the release tag (see [`USERSPACE_SPEC`], [`KERNEL_SPEC`]).
 pub fn installed_driver_version() -> Option<String> {
     let spec = driver_spec(qcom_driver_mode());
     match spec.uninstall_display_name {
@@ -523,14 +498,11 @@ pub fn installed_driver_version() -> Option<String> {
     }
 }
 
-/// Read the installed package `DisplayVersion` from the Windows "Add/Remove
-/// Programs" (uninstall) registry by matching `display_name` across the 64-bit,
-/// 32-bit (`WOW6432Node`), and per-user hives. Returns `None` when the package
-/// is not registered or its version is unparseable. PowerShell is reused here
-/// (as for the elevated installer) to avoid a registry-crate dependency.
+/// `DisplayVersion` of the uninstall entry named `display_name` in the 64-bit,
+/// `WOW6432Node` and per-user hives; `None` when absent or unparseable. Uses
+/// PowerShell to avoid a registry-crate dependency.
 fn installed_version_from_registry(display_name: &str) -> Option<String> {
-    // Escape for a PowerShell single-quoted literal (`'` → `''`). The names are
-    // static constants without quotes, but escape defensively.
+    // Static names without quotes, but escape defensively.
     let needle = escape_powershell_single_quoted(display_name);
     let script = format!(
         "$ErrorActionPreference='SilentlyContinue'; \
@@ -555,10 +527,8 @@ fn installed_version_from_registry(display_name: &str) -> Option<String> {
     parse_version(&version).is_some().then_some(version)
 }
 
-/// Highest `DriverVer` among installed `version_inf` DriverStore copies,
-/// or `None` when the driver is not installed. Windows may stage several
-/// `*.inf_*` folders (multiple versions); the max is the effective
-/// one for an update comparison.
+/// Highest `DriverVer` among the DriverStore copies of `version_inf` (Windows
+/// may stage several versions), or `None` when not installed.
 fn installed_inf_driver_version(spec: WindowsDriverSpec) -> Option<String> {
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
     let repo = Path::new(&system_root)
@@ -586,7 +556,7 @@ fn installed_inf_driver_version(spec: WindowsDriverSpec) -> Option<String> {
     best
 }
 
-/// Download the host-arch userspace-driver installer and run it elevated.
+/// Download the host-arch installer for the active driver mode and run it elevated.
 pub fn download_and_install(log: &mut Vec<String>) -> Result<()> {
     live!(log, "[Driver] {}", tr("live_driver_fetch_meta"));
     let spec = driver_spec(qcom_driver_mode());
@@ -611,11 +581,8 @@ pub fn download_and_install(log: &mut Vec<String>) -> Result<()> {
         )
     );
 
-    // Private, exclusive temp dir under the process temp root. A predictable
-    // `temp_dir()/ltbox_qcom_drv_{pid}` path is a classic local symlink /
-    // content-swap race before the elevated installer runs; exclusive
-    // create_dir with a unique name rejects pre-created paths and keeps the
-    // downloaded package private until install completes.
+    // Exclusive, uniquely named temp dir: a predictable path would allow a
+    // symlink / content-swap race before the elevated installer runs.
     let tmp_dir = PrivateTempDir::create("ltbox_qcom_drv")?;
     let exe_path = tmp_dir.path().join(asset_name);
 
@@ -642,11 +609,10 @@ pub fn download_and_install(log: &mut Vec<String>) -> Result<()> {
     result
 }
 
-/// Require a Valid Authenticode signature whose signer Subject names Qualcomm
-/// before launching the elevated installer. Failures map to actionable
-/// `DriverError::Parse` messages (no new error variants).
+/// Require a Valid Authenticode signature from a Qualcomm signer before
+/// launching the elevated installer. Failures are `DriverError::Parse`.
 fn verify_qualcomm_authenticode(exe: &Path, log: &mut Vec<String>) -> Result<()> {
-    // Escape for a PowerShell single-quoted string literal (`'` -> `''`).
+    // Escape for a PowerShell single-quoted literal (`'` -> `''`).
     let exe_str = escape_powershell_single_quoted(&exe.to_string_lossy());
     // Emit a single parseable line: STATUS|SUBJECT. STATUS is the
     // `SignatureStatus` enum name (Valid, NotSigned, HashMismatch, ...).
@@ -1023,18 +989,13 @@ fn run_elevated(exe: &Path) -> Result<std::process::Output> {
 }
 
 /// Non-elevated PowerShell that starts `file_name` through the UAC prompt and
-/// exits with its exit code. With `inner`, `file_name` is PowerShell and runs
-/// that script hidden; the script travels as `-EncodedCommand` (encoded by
-/// the launcher from a literal here-string), so no quoting crosses the UAC
+/// exits with its exit code. With `inner`, `file_name` is PowerShell running
+/// that script hidden via `-EncodedCommand`, so no quoting crosses the UAC
 /// boundary.
 ///
-/// `Process.Start` rather than `Start-Process`: the cmdlet rethrows launch
-/// errors as InvalidOperationException and drops the Win32 code, so a UAC
-/// cancel could not be told apart from any other failure. Only
-/// ERROR_CANCELLED (1223) is a cancel; other launch failures exit 1 with
-/// their message on stderr (UTF-8, so localized text survives any code
-/// page). A `$null` process (no handle to wait on) is a failure, never a
-/// silent success over a driver that did not install.
+/// Uses `Process.Start` because `Start-Process` drops the Win32 code, hiding a
+/// UAC cancel (1223). Other launch failures exit 1 with a UTF-8 message on
+/// stderr; a `$null` process is a failure, never a silent success.
 fn elevated_launcher_script(file_name: &Path, inner: Option<&str>) -> Result<String> {
     // Escape for a PowerShell single-quoted string literal (`'` → `''`).
     let file_name = escape_powershell_single_quoted(&file_name.to_string_lossy());
@@ -1162,9 +1123,9 @@ struct PrivateTempDir {
 }
 
 impl PrivateTempDir {
-    /// Create an exclusive, non-symlink directory under `std::env::temp_dir()`
-    /// with a random name. Mirrors the Linux driver installer's private
-    /// staging helper so the elevated installer cannot race a pre-planted path.
+    /// Create an exclusive, randomly named, non-symlink directory under
+    /// `std::env::temp_dir()`, so the elevated installer cannot race a
+    /// pre-planted path.
     fn create(prefix: &str) -> Result<Self> {
         let dir = tempfile::Builder::new()
             .prefix(&format!("{prefix}_"))
@@ -1204,11 +1165,8 @@ fn verify_private_dir(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// Weekly network smoke test for every installer LTBox may select. It is
-    /// deliberately ignored: CI enables it with `weekly_fetch`. Downloaded
-    /// installers stay in `tempfile` and only have their Authenticode signer
-    /// read — never started — so this test cannot touch the driver store or
-    /// hardware. It pins the production signer check to the real certificates.
+    /// Weekly network test (CI runs it via `weekly_fetch`) pinning the signer
+    /// check to the real certificates. Installers are only read, never started.
     #[test]
     #[ignore = "weekly_fetch: downloads published Qualcomm Windows installers"]
     fn weekly_fetch_windows_driver_installers_all_arches() {
@@ -1265,9 +1223,7 @@ mod tests {
         );
     }
 
-    /// `Missing(...)` must never carry an empty vec — empty list
-    /// would make the GUI banner say "missing nothing" which is
-    /// confusing.
+    /// `Missing(...)` must never be empty: the GUI banner would list nothing.
     #[test]
     fn missing_list_is_empty_when_all_present() {
         if let DriverStatus::Missing(list) = check_required_drivers() {
@@ -1275,8 +1231,7 @@ mod tests {
         }
     }
 
-    /// Host-arch installer asset name resolves to one of the three
-    /// shipped variants.
+    /// The host-arch asset name is one of the shipped variants.
     #[test]
     fn arch_asset_is_known() {
         for spec in [USERSPACE_SPEC, KERNEL_SPEC] {
@@ -1298,7 +1253,6 @@ mod tests {
 
     #[test]
     fn select_latest_win_release_ignores_drafts_and_prereleases() {
-        // Shared fixture shape for both USERSPACE_SPEC and KERNEL_SPEC asset names.
         for spec in [USERSPACE_SPEC, KERNEL_SPEC] {
             let asset = arch_installer_asset(spec);
             let releases = vec![

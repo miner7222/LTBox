@@ -1,20 +1,10 @@
 //! Cross-platform helper for LTBox-owned writable directories.
 //!
-//! Centralises every "where do generated outputs / dumps / backups
-//! land?" question so call sites stop reaching for `current_exe()`.
-//! Necessary because:
-//!
-//! * AppImage mounts the bundle read-only — writes next to the
-//!   executable would either fail or land on the squashfs-backed
-//!   FUSE mount, depending on kernel.
-//! * Distro-installed binaries live under `/usr/bin`, owned by root,
-//!   non-writable for normal users.
-//! * Even on Windows, `Program Files`-installed copies hit UAC the
-//!   moment something tries to write next to `ltbox.exe`.
+//! Outputs, dumps and backups never go next to the executable: an AppImage
+//! mounts read-only, distro binaries sit under root-owned `/usr/bin`, and
+//! `Program Files` installs hit UAC.
 //!
 //! ## Per-OS layout
-//!
-//! Every platform uses its machine-local application data directory.
 //!
 //! | OS      | Auto-output / backup root             |
 //! |---------|---------------------------------------|
@@ -23,34 +13,27 @@
 //! | macOS   | `~/Library/Application Support/ltbox` |
 //!
 //! User-selected output folders (Partition Dump destination, Physical
-//! Storage dump path, etc.) are NOT routed through here — those are
-//! explicit picks and stay where the user chose.
+//! Storage dump path, etc.) are not routed through here.
 
 #[cfg(any(windows, test))]
 use std::path::Path;
 use std::path::PathBuf;
 
-/// Resolve an LTBox data root from the platform data directory. Keeping this
-/// small transformation separate makes every OS path shape testable without
-/// changing process environment variables.
+/// Resolve the LTBox data root from a platform data directory; separate so
+/// every OS path shape is testable without touching the environment.
 fn data_root_from(data_dir: Option<PathBuf>) -> PathBuf {
     data_dir.unwrap_or_else(|| PathBuf::from(".")).join("ltbox")
 }
 
-/// Directory where auto-generated dumps / backups / per-action output
-/// roots live. Caller `create_dir_all`s before writing.
-///
-/// Platform mapping documented at the module level.
+/// Root of auto-generated dumps, backups and per-action output. Caller
+/// `create_dir_all`s before writing. Per-OS mapping is in the module docs.
 pub fn auto_output_root() -> PathBuf {
     if cfg!(windows) {
-        // `data_local_dir` resolves to `%LOCALAPPDATA%` on Windows. The
-        // `./ltbox` fallback matches the existing non-Windows fallback shape.
+        // `data_local_dir` is `%LOCALAPPDATA%` on Windows.
         data_root_from(dirs::data_local_dir())
     } else {
-        // dirs::data_dir() returns `$XDG_DATA_HOME` on Linux (default
-        // `~/.local/share`) and `~/Library/Application Support` on
-        // macOS. Matches what `settings_store` + the root pipeline's
-        // `work_dir` already use elsewhere in the workspace.
+        // `data_dir` is `$XDG_DATA_HOME` (default `~/.local/share`) on Linux
+        // and `~/Library/Application Support` on macOS.
         data_root_from(dirs::data_dir())
     }
 }
@@ -68,26 +51,20 @@ pub fn backup_root() -> PathBuf {
     auto_output_root().join("backup")
 }
 
-/// Per-flow exec-time scratch directory. Caller is responsible for
-/// `remove_dir_all` on entry + `create_dir_all` before writes; this
-/// helper only resolves the path. Slug is the flow identifier
-/// (`"flash_arb"`, `"flash_country"`, `"root"`, …). Routes through
-/// [`auto_output_root`] so packaged installs stay consistent with every other
-/// LTBox-owned write.
+/// Per-flow scratch directory for flow `slug` (`"flash_arb"`, `"root"`, …).
+/// Only resolves the path: the caller `remove_dir_all`s on entry and
+/// `create_dir_all`s before writing.
 pub fn work_dir_for(slug: &str) -> PathBuf {
     auto_output_root().join("work").join(slug)
 }
 
-/// Remove every exec-time scratch directory created by [`work_dir_for`].
-/// Call on a *successful* operation so the `work/` scratch (firmware flash,
-/// country change, ARB overlays, …) does not accumulate; a mid-flow abort
-/// deliberately leaves it behind for inspection. Best-effort — errors ignored.
+/// Remove every scratch directory created by [`work_dir_for`]. Call after a
+/// successful operation; a mid-flow abort deliberately leaves it behind for
+/// inspection. Best-effort, errors ignored.
 ///
-/// Direct removal only — no size accounting, so a successful op never pays for
-/// a tree walk over (potentially large) decrypted images. `remove_dir_all`
-/// refuses to follow a symlinked root, so this can't delete outside the LTBox
-/// scratch tree. The Settings UI uses the separate
-/// [`clean_temp_files_reporting`] when it needs a tally.
+/// No size accounting, so success never pays for a tree walk over large
+/// decrypted images; [`clean_temp_files_reporting`] gives the tally. Does not
+/// follow a symlinked root.
 pub fn clean_work_dirs() {
     let _ = std::fs::remove_dir_all(auto_output_root().join("work"));
 }
@@ -102,9 +79,8 @@ fn is_real_dir(path: &std::path::Path) -> bool {
 }
 
 /// On-disk size in bytes of everything [`clean_temp_files_reporting`] would
-/// remove. Drives the Settings button's enabled state and the size readout —
-/// `0` means there is nothing to clean. `adb/` and `backup*` are never counted.
-/// Symlinked roots are skipped, matching what the sweep can actually remove.
+/// remove; `0` means nothing to clean. `adb/` and `backup*` are never counted
+/// and symlinked roots are skipped, matching the sweep.
 pub fn temp_files_size() -> u64 {
     let root = auto_output_root();
     let work = root.join("work");
@@ -122,20 +98,17 @@ pub fn temp_files_size() -> u64 {
     work_size + outputs_size
 }
 
-/// Remove every temporary file the Settings "clean temporary files" action
-/// targets — `work/` scratch + `outputs/` auto-output dirs — and report
-/// `(removed_roots, freed_bytes)`. The persistent `adb/` key dir and all
-/// `backup/` and legacy `backups/` dumps are left in place. Symlinked roots are skipped (never
-/// followed), so the sweep can't escape the LTBox tree. Best-effort: a failed
-/// delete is not counted.
+/// Remove the `work/` scratch and `outputs/` auto-output dirs and report
+/// `(removed_roots, freed_bytes)`. The `adb/` key dir and all `backup/` and
+/// legacy `backups/` dumps are kept. Symlinked roots are skipped so the sweep
+/// can't escape the LTBox tree. Best-effort: a failed delete is not counted.
 pub fn clean_temp_files_reporting() -> (usize, u64) {
     let mut removed = 0usize;
     let mut freed = 0u64;
     let root = auto_output_root();
     for leaf in ["work", "outputs"] {
         let path = root.join(leaf);
-        // Only act on a real directory — never follow a symlinked root
-        // into unrelated user dirs.
+        // Never follow a symlinked root into unrelated user dirs.
         if !is_real_dir(&path) {
             continue;
         }
@@ -148,13 +121,10 @@ pub fn clean_temp_files_reporting() -> (usize, u64) {
     (removed, freed)
 }
 
-/// Recursive on-disk size of `path` in bytes. Best-effort: entries that can't
-/// be read are skipped (counted as 0) rather than aborting the walk.
+/// Recursive on-disk size of `path` in bytes; unreadable entries count as 0.
 ///
-/// Symlinks are **not** followed: [`std::fs::DirEntry::file_type`] reports the
-/// link itself, so a symlinked directory is treated as a link and skipped —
-/// matching what `remove_dir_all` actually deletes, and avoiding both symlink
-/// cycles and escaping the temp tree into unrelated directories.
+/// Symlinks are not followed ([`std::fs::DirEntry::file_type`] reports the
+/// link itself), matching what `remove_dir_all` deletes and avoiding cycles.
 fn dir_size(path: &std::path::Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(path) else {
         return 0;
@@ -167,25 +137,16 @@ fn dir_size(path: &std::path::Path) -> u64 {
         if file_type.is_dir() {
             total += dir_size(&entry.path());
         } else if file_type.is_file() {
-            // `metadata()` follows links, but we only reach it for a real
-            // file here, so the size is the file's own.
             total += entry.metadata().map(|m| m.len()).unwrap_or(0);
         }
-        // Symlinks / special files contribute 0 — they aren't recursed into.
+        // Symlinks and special files contribute 0.
     }
     total
 }
 
-/// Path to LTBox's owned ADB RSA private key. Persisted so the user
-/// only has to tap "Allow USB debugging?" once per device — `adb_client`'s
-/// `usb` backend mints a fresh in-memory key whenever the key file is
-/// missing, which would re-trigger the on-device prompt on every
-/// `AdbManager::new()` if we let it fall through to the default
-/// `~/.android/adbkey`.
-///
-/// Stored under [`auto_output_root`] / `adb/adbkey` so it inherits the
-/// same OS-specific writable-directory split as every other LTBox
-/// asset.
+/// Path to LTBox's own ADB RSA private key, under [`auto_output_root`].
+/// Persisting it means "Allow USB debugging?" is tapped once per device;
+/// without a key file `adb_client` mints a fresh in-memory key each run.
 pub fn adb_key_path() -> PathBuf {
     auto_output_root().join("adb").join("adbkey")
 }
@@ -210,8 +171,8 @@ fn migration_decision(legacy_exists: bool, destination_exists: bool) -> Migratio
     }
 }
 
-/// Map one legacy executable-adjacent path into the new data tree. This is
-/// deliberately path-only so layout rules can be tested without user data.
+/// Map one legacy executable-adjacent path into the new data tree (path-only,
+/// so it is testable without user data).
 #[cfg(any(windows, test))]
 fn legacy_destination(legacy: &Path, data_root: &Path) -> Option<PathBuf> {
     let name = legacy.file_name()?.to_str()?;
@@ -339,9 +300,9 @@ fn migrate_legacy_data(legacy_root: &Path, data_root: &Path) -> Vec<String> {
     failures
 }
 
-/// Move legacy Windows data out of the executable directory. Each mapped item
-/// is independently idempotent: an existing destination is always kept, while
-/// a failed move is reported and does not prevent the app from starting.
+/// Move legacy data out of the executable directory. Each item is idempotent:
+/// an existing destination is kept, and a failed move is reported without
+/// blocking startup.
 #[cfg(windows)]
 pub fn migrate_legacy_windows_data() -> Vec<String> {
     let Some(legacy_root) = std::env::current_exe()
@@ -357,7 +318,7 @@ pub fn migrate_legacy_windows_data() -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Sanity: outputs should never land next to an installed binary.
+    /// Outputs never land next to the executable.
     #[test]
     fn outputs_never_exe_adjacent() {
         let exe_parent = std::env::current_exe()
@@ -375,7 +336,7 @@ mod tests {
         );
     }
 
-    /// Backup helper must mirror the same exe-adjacency rule.
+    /// Same rule for backups.
     #[test]
     fn backups_never_exe_adjacent() {
         let exe_parent = std::env::current_exe()
@@ -393,8 +354,7 @@ mod tests {
         );
     }
 
-    /// `dir_size` sums nested files; the cleanup tally relies on it being
-    /// accurate before the tree is removed.
+    /// The cleanup tally relies on `dir_size` being accurate before removal.
     #[test]
     fn dir_size_sums_nested_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -408,8 +368,7 @@ mod tests {
         assert_eq!(dir_size(&root.join("does-not-exist")), 0);
     }
 
-    /// Per-action dirs must be distinct so wizard outputs never
-    /// collide.
+    /// Per-action dirs must be distinct.
     #[test]
     fn auto_output_dir_distinct_per_slug() {
         let a = auto_output_dir_for("patch_arb");
@@ -417,8 +376,7 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    /// Windows uses `%LOCALAPPDATA%\ltbox` and the same category layout as
-    /// Linux/macOS.
+    /// Windows uses `%LOCALAPPDATA%\ltbox` with the same layout as Linux/macOS.
     #[cfg(windows)]
     #[test]
     fn windows_uses_local_app_data_layout() {
@@ -437,9 +395,8 @@ mod tests {
 
     #[test]
     fn platform_data_roots_keep_expected_shapes() {
-        // Build the expectation with `join` too: the separator is the host's,
-        // not the one belonging to the platform whose layout is being modelled,
-        // so spelling it out fails everywhere except Windows.
+        // Build the expectation with `join`: the separator is the host's, not
+        // the modelled platform's.
         for platform_dir in [
             PathBuf::from(r"C:\Users\user\AppData\Local"),
             PathBuf::from("/home/user/.local/share"),

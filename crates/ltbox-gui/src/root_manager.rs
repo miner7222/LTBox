@@ -47,10 +47,7 @@ pub(crate) fn wait_and_install_root_manager_apk(
     loop {
         match install_root_manager_apk(manager_apk, log) {
             Ok(()) => return Ok(()),
-            // Return the raw install error only — the caller wraps it
-            // with the manual-install reminder template (avoids the
-            // "Install manually: {path}" hint showing up twice in the
-            // same log line).
+            // Return the raw error: the caller adds the manual-install hint.
             Err(last) if std::time::Instant::now() >= deadline => return Err(last),
             Err(_) => std::thread::sleep(std::time::Duration::from_secs(1)),
         }

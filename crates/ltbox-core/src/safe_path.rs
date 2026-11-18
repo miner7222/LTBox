@@ -1,11 +1,9 @@
 //! Safe path joining for untrusted relative references.
 //!
-//! Firmware metadata (Sahara loader manifests, rawprogram XML) and device
-//! GPT labels carry file-name / path strings that LTBox joins onto a working
-//! directory. A malicious or corrupt source could supply an absolute path
-//! (`C:\…`, `/etc/…`) or a `..` traversal that escapes the intended
-//! directory and reads or overwrites an arbitrary file. [`safe_join`]
-//! rejects lexical traversal before joining the reference to `base`.
+//! Firmware metadata (Sahara manifests, rawprogram XML) and device GPT labels
+//! carry path strings that LTBox joins onto a working directory. A hostile or
+//! corrupt source could supply an absolute path or `..` to read or overwrite
+//! an arbitrary file; [`safe_join`] rejects lexical traversal first.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -44,8 +42,8 @@ pub fn safe_join(base: &Path, rel: &str) -> Result<PathBuf> {
             }
         }
     }
-    // Only `.`/empty components would leave `out == base`, a directory —
-    // reject so callers never open the base dir itself as a file.
+    // Only `.` components leave `out == base`; callers must never open the
+    // base directory as a file.
     if out == base {
         return Err(LtboxError::Other(format!(
             "path reference `{rel}` resolves to the base directory"

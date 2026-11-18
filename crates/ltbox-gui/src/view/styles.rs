@@ -1,4 +1,4 @@
-//! Shared widget style functions (text/button/container/rule styles). Extracted from `main.rs`.
+//! Shared widget style functions (text/button/container/rule styles).
 
 use crate::focus_button as button;
 use crate::*;
@@ -55,8 +55,7 @@ pub(crate) fn m3_text_input_style(t: &Theme, status: text_input::Status) -> text
     );
     let disabled = matches!(status, text_input::Status::Disabled);
     // M3 outlined field: resting `outline`, hover `on_surface`, focus `primary`.
-    // `outline_variant` (used before) is a divider tone ~1.5:1 on surface — the
-    // resting control edge could vanish.
+    // `outline_variant` is a ~1.5:1 divider tone; the resting edge could vanish.
     let border_color = if focused {
         p.primary
     } else if hovered {
@@ -68,11 +67,9 @@ pub(crate) fn m3_text_input_style(t: &Theme, status: text_input::Status) -> text
         background: if disabled {
             with_alpha(p.on_surface, 0.04).into()
         } else {
-            // M3 outlined fields have a transparent container — the
-            // outline alone defines them. `surface_container_lowest` is
-            // `0x0E0E13` in dark, *darker* than the card underneath, so it
-            // would read as a hole punched in the panel rather than a
-            // control sitting on it.
+            // Transparent, per M3 outlined fields: in dark,
+            // `surface_container_lowest` is darker than the card and would
+            // read as a hole in the panel.
             iced::Color::TRANSPARENT.into()
         },
         border: iced::Border {
@@ -118,8 +115,7 @@ pub(crate) fn m3_log_text_editor_style(
     let p = pal_of(t);
     let disabled = matches!(status, text_editor::Status::Disabled);
     text_editor::Style {
-        // Transparent so the log reads as the body of its card rather
-        // than a second, darker slab inset into one.
+        // Transparent so the log reads as the card body, not a darker inset.
         background: iced::Color::TRANSPARENT.into(),
         border: iced::Border {
             color: iced::Color::TRANSPARENT,
@@ -142,9 +138,7 @@ pub(crate) fn m3_pick_list_style(t: &Theme, status: pick_list::Status) -> pick_l
         text_color: p.on_surface,
         placeholder_color: with_alpha(p.on_surface, 0.62),
         handle_color: p.on_surface_variant,
-        // Transparent container, same reasoning as `m3_text_input_style`:
-        // in dark, `surface_container_lowest` sits below the card tone
-        // and the control reads as a hole rather than a raised field.
+        // Transparent container, same reasoning as `m3_text_input_style`.
         background: iced::Color::TRANSPARENT.into(),
         // `outline` (not the ~1.5:1 `outline_variant` divider tone) so the
         // resting control edge clears the 3:1 UI-contrast threshold.
@@ -401,10 +395,8 @@ pub(crate) fn dash_icon_btn_style(t: &Theme, status: button::Status) -> button::
 pub(crate) fn md_filled_btn_style(t: &Theme, status: button::Status) -> button::Style {
     let p = pal_of(t);
     // M3 spec: disabled filled button = `on_surface @ 12%` background +
-    // `on_surface @ 38%` label. Without this branch, dropping `on_press`
-    // left the button looking identical to the active primary fill —
-    // the only cue was the cursor not flipping to a pointer, which
-    // users on touch / stable-pointer setups never noticed.
+    // `on_surface @ 38%` label. Without it a button with no `on_press` looks
+    // identical to an active one.
     if matches!(status, button::Status::Disabled) {
         return button::Style {
             background: Some(with_alpha(p.on_surface, 0.12).into()),
@@ -451,11 +443,9 @@ pub(crate) fn md_text_btn_style(t: &Theme, status: button::Status) -> button::St
     }
 }
 
-/// Filled button for primary actions inside warning banners. Uses the
-/// warning role pair (`on_warning_container` fill / `warning_container`
-/// label) with M3 state layers and the standard small control shape so the action
-/// reads as the banner's primary control without borrowing the app-wide
-/// primary fill.
+/// Filled button for primary actions inside warning banners: the warning role
+/// pair (`on_warning_container` fill / `warning_container` label) with M3
+/// state layers and the small control shape.
 pub(crate) fn banner_filled_btn_style(t: &Theme, status: button::Status) -> button::Style {
     let p = pal_of(t);
     if matches!(status, button::Status::Disabled) {
@@ -487,11 +477,10 @@ pub(crate) fn banner_filled_btn_style(t: &Theme, status: button::Status) -> butt
     }
 }
 
-/// Text button for warning banners ("Don't show again"). Uses the matching
-/// warning on-container role and state layer. The default
-/// `md_text_btn_style` uses the theme `primary`, which can be low-contrast
-/// lavender on amber in dark mode — the visibility bug this fixes. The banner
-/// background is theme-independent, so the on-color is too.
+/// Text button for warning banners ("Don't show again"), in the warning
+/// on-container role. `md_text_btn_style` uses theme `primary`, which is
+/// low-contrast on the amber banner in dark mode; the banner background is
+/// theme-independent, so the on-color is too.
 pub(crate) fn banner_text_btn_style(t: &Theme, status: button::Status) -> button::Style {
     let on_banner = pal_of(t).on_warning_container;
     let bg_alpha = theme::state_alpha(status);
@@ -510,11 +499,9 @@ pub(crate) fn banner_text_btn_style(t: &Theme, status: button::Status) -> button
     }
 }
 
-/// Shared `Rule` styling so every shell-level divider (window
-/// outline, title-bar bottom, sidebar-content split, status-bar
-/// top) reads as the same hairline. Default rule color is
-/// `background.strong` from iced's extended palette which is
-/// noticeably darker than the M3 `outline_variant` used elsewhere.
+/// Shared `Rule` styling so every shell-level divider reads as the same
+/// hairline. iced's default `background.strong` is noticeably darker than the
+/// M3 `outline_variant` used here.
 pub(crate) fn shell_rule_style(t: &Theme) -> iced::widget::rule::Style {
     iced::widget::rule::Style {
         color: pal_of(t).outline_variant,
@@ -524,12 +511,9 @@ pub(crate) fn shell_rule_style(t: &Theme) -> iced::widget::rule::Style {
     }
 }
 
-/// Border-less surface fill for the sidebar / status-bar shell
-/// panels. Adjacent shells double up `iced::Border` lines when
-/// each side has its own 1-px outline; per M3 nav-rail / bottom-app-
-/// bar guidance each shared edge should carry exactly one divider,
-/// drawn as an explicit `Rule` widget so the corners read as
-/// clean T-junctions instead of a 2-px overlap.
+/// Border-less surface fill for the sidebar / status-bar shell panels. Each
+/// shared edge carries exactly one divider, an explicit `Rule` widget, so
+/// adjacent 1-px borders do not double up at the corners.
 pub(crate) fn panel_bg(t: &Theme) -> container::Style {
     let p = pal_of(t);
     container::Style {
@@ -538,28 +522,24 @@ pub(crate) fn panel_bg(t: &Theme) -> container::Style {
     }
 }
 
-/// Inner container style for option / Browse cards. Transparent
-/// background — the outer button paints a hover-aware fill via
-/// [`sel_card_btn_style`]; this style only renders the rounded border
-/// so the visual outline survives without blocking the button's
-/// interactive bg.
+/// Inner container style for option / Browse cards: transparent background
+/// (the outer button paints the hover-aware fill via [`sel_card_btn_style`]),
+/// rounded border only.
 pub(crate) fn sel_card_style(t: &Theme, selected: bool) -> container::Style {
     sel_card_style_for(t, selected, false)
 }
 
-/// [`sel_card_style`] with an accent switch. `destructive` swaps the
-/// primary accent for the `error` role so an option that erases user
-/// data or overwrites a partition is distinguishable from a safe one
-/// *before* it is picked, not only in the confirm copy.
+/// [`sel_card_style`] with an accent switch. `destructive` swaps the primary
+/// accent for `error` so a data-erasing or partition-overwriting option is
+/// visible as such before it is picked.
 pub(crate) fn sel_card_style_for(t: &Theme, selected: bool, destructive: bool) -> container::Style {
     let p = pal_of(t);
     let accent = if destructive { p.error } else { p.primary };
     container::Style {
         background: None,
         border: iced::Border {
-            // Resting rows share the quieter outlined-card edge used by the
-            // rest of the app; selected and destructive targets retain their
-            // semantic accent.
+            // Resting rows use the quiet outlined-card edge; selected and
+            // destructive rows keep the accent.
             color: if selected || destructive {
                 accent
             } else {
@@ -572,16 +552,12 @@ pub(crate) fn sel_card_style_for(t: &Theme, selected: bool, destructive: bool) -
     }
 }
 
-/// Outer button style for option / Browse cards. Border carries the same
-/// MD radius as [`sel_card_style`] so the bg fill clips to the rounded
-/// shape instead of bleeding out as a square.
+/// Outer button style for option / Browse cards. The border carries the same
+/// MD radius as [`sel_card_style`] so the fill clips to the rounded shape.
 ///
-/// The three states have to be rankable at a glance, so selection and hover
-/// live on separate visual channels: selection is its own opaque tonal role
-/// (`secondary_container`), while hover stays a translucent state layer over
-/// the resting fill. A shared `primary` alpha for both (12% selected vs 8%
-/// hover) would leave only the 1 px → 2 px border as a reliable cue, and a
-/// hovered card would read as selected.
+/// Selection and hover use separate channels so a hovered card never reads as
+/// selected: selection is an opaque tonal role (`secondary_container`), hover
+/// a translucent state layer over the resting fill.
 pub(crate) fn sel_card_btn_style(
     t: &Theme,
     status: button::Status,

@@ -1,4 +1,4 @@
-//! Flash wizard view + steps (region, target, data, folder, confirm, exec). Extracted from `main.rs`.
+//! Flash wizard view and steps (region, target, data, folder, confirm, exec).
 
 use super::components::elide_path_middle;
 use crate::focus_button::{self as button, button};
@@ -11,9 +11,8 @@ use theme::with_alpha;
 const FLASH_CONFIRM_LABEL_WIDTH: f32 = 180.0;
 const FLASH_CONFIRM_MAX_WIDTH: f32 = 820.0;
 
-/// One interactive row in the flash review definition list. All values stay
-/// left-aligned; destructive outcomes use the error role without turning the
-/// entire editable row into an error surface.
+/// One interactive row in the flash review definition list. Values stay
+/// left-aligned; destructive outcomes use the error role on the value only.
 fn flash_confirm_definition_row(
     label: String,
     value: String,
@@ -272,9 +271,8 @@ impl App {
                 self.t("flash_region_auto_recommended_tip"),
             ),
         );
-        // TB322FC is a PRC-only SKU. Render ROW as a disabled card with
-        // a grayed icon so the constraint is visible — silent skip
-        // would confuse users who expect both options.
+        // PRC-only models (`prc_only`): show ROW as a disabled card rather
+        // than hiding it.
         let tb322fc = self.model_capabilities().prc_only;
         let unsupported_tb322fc = tr_args!("model_unsupported", model = self.device.model.as_str());
         let row_card: Element<'_, Message> = if tb322fc {
@@ -327,8 +325,7 @@ impl App {
                 .padding([8, 12]),
             );
         } else if self.flash.region_auto_unknown {
-            // Keep the conditional result below all choices, like the data
-            // step's wipe warning, so selecting Auto does not move the rows.
+            // Below all choices so selecting Auto does not move the rows.
             cards = cards.push(
                 self.message_banner(
                     BannerSeverity::Warning,
@@ -360,15 +357,13 @@ impl App {
         let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
         let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let device = lucide_list_primary(icon::tile_device(), icon_size);
-        // TB322FC ships only in PRC, so cross-region (OtherRegion) is
-        // never a valid target. Disable the card with a grayed icon to
-        // keep the constraint visible on the picker.
+        // PRC-only models (`prc_only`) have no cross-region target; disable
+        // the OtherRegion card.
         let tb322fc = self.model_capabilities().prc_only;
         let unsupported_tb322fc = tr_args!("model_unsupported", model = self.device.model.as_str());
-        // Region-aware target descriptions spell out the hardware market and
-        // the ROM being installed so users don't conflate the two (the most
-        // common point of confusion in this wizard). device_region is chosen
-        // in step 0, so it is Some here; the None arm is a defensive fallback.
+        // Region-aware descriptions separate the hardware market from the ROM
+        // being installed. `device_region` is set in step 0, so `None` is only
+        // a defensive fallback.
         let (same_desc, other_desc) = match self.flash.device_region {
             Some(DeviceRegion::Prc) => ("flashtarget_same_desc_prc", "flashtarget_other_desc_prc"),
             Some(DeviceRegion::Row) => ("flashtarget_same_desc_row", "flashtarget_other_desc_row"),
@@ -427,9 +422,8 @@ impl App {
         let icon_size = self.wizard_list_icon(WIZARD_LIST_GLYPH_ICON_SIZE);
         let metrics = self.wizard_list_metrics(WIZARD_LIST_LABEL_SIZE, WIZARD_LIST_DESC_SIZE);
         let shield = lucide_list_primary(icon::tile_shield(), icon_size);
-        // Erasing `metadata` + `userdata` is the one irreversible choice
-        // on this step, so it carries the error role rather than looking
-        // like the sibling it is not.
+        // Erasing `metadata` + `userdata` is the one irreversible choice on
+        // this step, so it uses the error role.
         let wipe = lucide_error(icon::tile_wipe(), icon_size);
         let mut cards = column![].spacing(2.0).width(Length::Fill);
         cards = cards
@@ -449,9 +443,7 @@ impl App {
                 Some(Message::Flash(FlashMsg::FlashDataMode(DataMode::Wipe))),
                 metrics,
             ));
-        // Below the options, not above: this banner shows only when erase
-        // is chosen, and placing it first would shove both rows down on
-        // selection.
+        // Below the options so choosing erase does not move the rows.
         if self.flash.data_mode == Some(DataMode::Wipe) {
             cards = cards.push(
                 self.message_banner(
@@ -489,9 +481,9 @@ impl App {
             .width(Length::Fill)
             .align_x(iced::Alignment::Start);
 
-        // The picked folder ships no EDL loader and none is remembered for
-        // this model: it is most likely the wrong folder, so ask for the
-        // firmware's image folder instead of offering a loader picker.
+        // The folder ships no EDL loader and none is remembered for this
+        // model: likely the wrong folder, so ask for the firmware image folder
+        // instead of offering a loader picker.
         if selected_path.is_some()
             && self.flash.loader_required
             && self.flash.loader_override.is_none()
@@ -613,10 +605,8 @@ impl App {
 
     pub(crate) fn flash_confirm_step(&self) -> Element<'_, Message> {
         let dash = "—".to_string();
-        // `wf_config` is the worker's only input, so the summary derives every
-        // editable row from it (not the wizard cards). The values match the
-        // card selections in the normal flow, so the rendered rows are
-        // unchanged until a confirm-step override diverges from the baseline.
+        // `wf_config` is the worker's only input, so every editable row derives
+        // from it rather than from the wizard cards.
         let cfg = &self.wf_config;
         let base = self.confirm_baseline.as_ref();
         let caution = self.t("flash_confirm_override_warning").to_string();
@@ -641,8 +631,7 @@ impl App {
             .unwrap_or_else(|| dash.clone());
         let region_changed = base.is_some_and(|b| b.device_region != cfg.device_region);
 
-        // Target ↔ Region-edit both reflect `modify_region`, so they always
-        // agree and highlight together.
+        // Target and region-edit both reflect `modify_region`.
         let target_kind = if cfg.modify_region {
             FlashTarget::OtherRegion
         } else {
@@ -660,9 +649,8 @@ impl App {
             .to_string();
         let data_changed = base.is_some_and(|b| b.wipe != cfg.wipe);
 
-        // Confirm rows use short value labels (On / Auto / Manual / Off)
-        // instead of the verbose "… rollback index" strings shown in
-        // logs — the review summary is tighter to read that way.
+        // Short value labels (On / Auto / Manual / Off), not the verbose log
+        // strings.
         let modify_region = self
             .t(if cfg.modify_region {
                 "flash_confirm_rb_on"
@@ -689,8 +677,8 @@ impl App {
         };
 
         // The operation can destroy data or leave a kept-data downgrade
-        // unbootable, so this is an error-role safety banner rather than an
-        // amber inline note. The icon is separate from localized copy.
+        // unbootable, hence an error-role banner. The icon is separate from the
+        // localized copy.
         let (warning_title_key, warning_key) = if cfg.wipe {
             (
                 "flash_data_wipe_warning_title",
@@ -762,9 +750,8 @@ impl App {
             cfg.modify_rollback != RollbackSetting::Off,
             rollback_changed,
             Some(rollback_caution),
-            // Always the setting list, Manual included: the row is how the user
-            // gets back to On/Auto/Off, and picking Manual there opens the
-            // editor anyway.
+            // Always the setting list, Manual included: it is how the user gets
+            // back to On/Auto/Off, and picking Manual there opens the editor.
             open(ConfirmField::Rollback),
         );
 

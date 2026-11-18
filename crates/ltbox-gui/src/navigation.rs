@@ -89,8 +89,7 @@ impl RebootTarget {
             Self::Edl => "reboot_edl",
         }
     }
-    /// Short-name key used inside the confirm popup so "Reboot to
-    /// {Reboot to System}?" doesn't double-phrase.
+    /// Short-name key for the confirm popup, avoiding "Reboot to {Reboot to System}?".
     pub(crate) fn short_name_key(&self) -> &'static str {
         match self {
             Self::System => "reboot_target_system",
@@ -100,18 +99,16 @@ impl RebootTarget {
             Self::Edl => "reboot_target_edl",
         }
     }
-    /// Reachable from `conn`. Impossible combos (Fastboot → Recovery,
-    /// EDL → Recovery/Bootloader — Firehose only resets system/edl)
-    /// stay disabled.
+    /// Reachable from `conn`. Fastboot → Recovery and EDL → Recovery/Bootloader
+    /// (Firehose only resets to system/edl) are disabled.
     pub(crate) fn available_from(&self, conn: ConnectionStatus) -> bool {
         match (conn, self) {
             (ConnectionStatus::None, _) => false,
             (ConnectionStatus::AdbUnauthorized, _) => false,
-            // minadbd answers `reboot:` even though it refuses `shell:`,
-            // so system/recovery/bootloader work. EDL does not: LTBox
-            // reaches it by running `reboot edl` in a shell there is none
-            // of, and the resulting error can pass for adbd dropping the
-            // connection after a reboot that never fired.
+            // minadbd answers `reboot:` but refuses `shell:`, so system/recovery/
+            // bootloader work. EDL does not: it needs `reboot edl` in a shell, and
+            // the resulting error can pass for adbd dropping the connection after
+            // a reboot that never fired.
             (ConnectionStatus::AdbSideload, Self::Edl) => false,
             (ConnectionStatus::AdbSideload, _) => true,
             (ConnectionStatus::AdbServerBlocking, _) => false,
@@ -163,10 +160,9 @@ pub(crate) enum AdvAction {
     SimpleFlash,
 }
 impl AdvAction {
-    /// Whether this action writes to the device rather than reading from
-    /// it or transforming a local file. The Advanced grid renders these
-    /// on the `error` role: a tile that flashes a partition should not
-    /// be visually interchangeable with one that dumps it.
+    /// Whether this action writes to the device rather than reading from it or
+    /// transforming a local file. The Advanced grid renders these on the
+    /// `error` role so a flash tile is not interchangeable with a dump tile.
     pub(crate) fn is_destructive(&self) -> bool {
         matches!(
             self,
@@ -206,8 +202,7 @@ impl AdvAction {
             Self::SimpleFlash => "adv_simple_flash_desc",
         }
     }
-    /// Browse-tile sub-description: *what* to pick, not the action's
-    /// high-level description.
+    /// Browse-tile sub-description: what to pick, not what the action does.
     pub(crate) fn source_desc_key(&self) -> &'static str {
         match self {
             Self::RegionConvert => "adv_src_region_convert",
@@ -226,8 +221,8 @@ impl AdvAction {
             Self::SimpleFlash => "flash_folder_desc",
         }
     }
-    /// snake_case slug for `{exe_dir}/output_{slug}/` — Advanced ops
-    /// drop artefacts here instead of asking the user for a location.
+    /// snake_case slug naming the action's auto-output directory
+    /// (see [`adv_output_dir`]).
     pub(crate) fn output_slug(&self) -> &'static str {
         match self {
             Self::RegionConvert => "region_convert",
@@ -244,8 +239,8 @@ impl AdvAction {
             Self::SimpleFlash => "simple_flash",
         }
     }
-    /// True iff the action writes into the output folder — gates the
-    /// "Open Folder" pill on the Done card.
+    /// True iff the action writes into the output folder; gates the "Open
+    /// Folder" pill on the Done card.
     pub(crate) fn produces_output(&self) -> bool {
         matches!(
             self,
@@ -258,23 +253,18 @@ impl AdvAction {
     }
 }
 
-/// Auto-output directory for an Advanced wizard action. Caller
-/// `create_dir_all`s before writing. Routes through
-/// [`ltbox_core::app_paths::auto_output_dir_for`] so AppImage /
-/// distro-installed Linux copies don't try to write next to a
-/// read-only or root-owned executable. Windows path stays
-/// exe-adjacent (`<exe-dir>/output_<slug>`) for v3 continuity.
+/// Auto-output directory for an Advanced wizard action, under the per-user
+/// data root via [`ltbox_core::app_paths::auto_output_dir_for`] (never next to
+/// the executable). Caller `create_dir_all`s before writing.
 pub(crate) fn adv_output_dir(action: AdvAction) -> std::path::PathBuf {
     ltbox_core::app_paths::auto_output_dir_for(action.output_slug())
 }
 
 /// Launch the platform file manager on `path`.
 ///
-/// Returns `Ok(())` only when a launcher actually accepted the spawn, so a
-/// missing `xdg-open` (or a Linux desktop session without a MIME handler for
-/// `inode/directory`) surfaces instead of silently no-op'ing. Callers must
-/// show the returned error in the GUI log / error popup so users know why
-/// "Open Folder" did nothing.
+/// Returns `Ok(())` only when a launcher accepted the spawn, so a missing
+/// `xdg-open` (or no MIME handler for `inode/directory`) surfaces instead of
+/// silently doing nothing. Callers must show the error.
 pub(crate) fn open_in_file_manager(path: &std::path::Path) -> std::result::Result<(), String> {
     #[cfg(windows)]
     {
@@ -298,13 +288,9 @@ pub(crate) fn open_in_file_manager(path: &std::path::Path) -> std::result::Resul
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // Try xdg-open first (every desktop ships one); fall back to
-        // GNOME's `gio open` which behaves correctly on
-        // xdg-portal-only sessions where `xdg-open` itself errors out
-        // mapping `inode/directory`. Capture the xdg error before
-        // touching `gio` so the match below is exhaustive (compiler
-        // can't see that the early return makes `xdg` provably Err
-        // by this point).
+        // xdg-open first; fall back to `gio open`, which works on xdg-portal-only
+        // sessions where `xdg-open` fails to map `inode/directory`. The xdg error
+        // is captured first so the final report can include both.
         let xdg = std::process::Command::new("xdg-open").arg(path).spawn();
         if xdg.is_ok() {
             return Ok(());
@@ -347,14 +333,13 @@ pub(crate) const ADV_SECTIONS: &[AdvSection] = &[
         title_key: "adv_section_edl_ops",
         items: &[
             AdvAction::ConvertXml,
-            // Per-partition Read / Write paired together (read above
-            // write so users can dump first, then re-flash if needed).
+            // Per-partition Read / Write, dump before flash.
             AdvAction::DumpPartitions,
             AdvAction::FlashPartitions,
-            // Whole-LUN dump / flash paired the same way.
+            // Whole-LUN pair, same order.
             AdvAction::DumpPhysical,
             AdvAction::FlashPhysical,
-            // Stock-equivalent flash: no checks, no edits — just flashing.
+            // Stock-equivalent flash: no checks or edits.
             AdvAction::SimpleFlash,
         ],
     },

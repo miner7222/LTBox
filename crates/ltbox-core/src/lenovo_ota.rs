@@ -1,17 +1,11 @@
 //! Lenovo OTA `querynewfirmware` client.
 //!
-//! Resolves a device serial + firmware id against the public OTA
-//! endpoint and returns the upstream `<firmware>` block as a slim
-//! struct ready for popup rendering. Powers the dashboard's
-//! "click firmware version → OTA popup" flow.
+//! Resolves a device serial + firmware id against the public OTA endpoint and
+//! returns the `<firmware>` block as a slim struct for the dashboard's OTA
+//! popup.
 //!
-//! The endpoint sometimes returns an empty `<firmwareupdate/>` element
-//! (no OTA available for the queried firmware). Callers see this as
-//! `Ok(None)` so the GUI can render a single "OTA Unavailable" line
-//! without branching on a separate error variant.
-//!
-//! Endpoint host is the upstream Lenovo OTA server; the constants below
-//! carry the path + field names but no example values are baked in.
+//! An empty `<firmwareupdate/>` element (no OTA for that firmware) is
+//! `Ok(None)`, not an error.
 
 use crate::error::{LtboxError, Result};
 
@@ -20,9 +14,7 @@ use crate::error::{LtboxError, Result};
 const ENDPOINT_B64: &str =
     "aHR0cHM6Ly9vdGEubGVub3ZvLmNvbS9vdGEtc2VydmVyL2Zpcm13YXJlL3F1ZXJ5L2Zvci10ZXh0LWRlc2M=";
 
-/// Slim representation of a single `<firmware>` entry. Fields the GUI
-/// doesn't render (`level`, `needbackup`, `result_msg`, `object_to_name`,
-/// per-locale `desc_zh_*`, `desc_tw`, `desc_zh`) are dropped on parse.
+/// Slim `<firmware>` entry; fields the GUI doesn't render are dropped on parse.
 #[derive(Debug, Clone, Default)]
 pub struct OtaUpdate {
     /// Source firmware id — left side of the `_to_` split in `<name>`.
@@ -31,10 +23,8 @@ pub struct OtaUpdate {
     pub to: String,
     /// MD5 hex of the upgrade package.
     pub md5: String,
-    /// Package size in bytes. `None` when the upstream `<size>` field
-    /// was missing or didn't parse as a `u64` — distinct from `Some(0)`
-    /// (a real, if unusual, zero-byte payload) so callers can render
-    /// "unknown" instead of silently displaying "0.0 MB".
+    /// Package size in bytes. `None` when `<size>` is missing or not a `u64`,
+    /// so callers can show "unknown" rather than "0.0 MB".
     pub size_bytes: Option<u64>,
     /// English changelog (`<desc_en>`), CDATA stripped.
     pub desc_en: String,
@@ -44,10 +34,10 @@ pub struct OtaUpdate {
     pub download_url: String,
 }
 
-/// Trim a `ro.build.display.id` value to its `devicemodel` prefix —
-/// the first two underscore-separated tokens. Mirrors the Lenovo OTA
-/// server's expectation (e.g. `TB322FC_CN_OPEN_USER_…` → `TB322FC_CN`).
-/// Returns the input verbatim if it has fewer than two underscores.
+/// Trim a `ro.build.display.id` value to its first two underscore-separated
+/// tokens, which the OTA server expects as `devicemodel` (e.g.
+/// `TB322FC_CN_OPEN_USER_…` → `TB322FC_CN`). Returns the input verbatim if it
+/// has fewer than two underscores.
 pub fn devicemodel_from_firmware(firmware_id: &str) -> String {
     let mut splitter = firmware_id.splitn(3, '_');
     match (splitter.next(), splitter.next()) {
@@ -56,8 +46,7 @@ pub fn devicemodel_from_firmware(firmware_id: &str) -> String {
     }
 }
 
-/// Blocking GET against the OTA endpoint. Empty `<firmwareupdate/>`
-/// element returns `Ok(None)`; populated element returns `Ok(Some(_))`.
+/// Blocking GET against the OTA endpoint; `Ok(None)` when no OTA is offered.
 pub fn fetch_ota(serial: &str, firmware_id: &str) -> Result<Option<OtaUpdate>> {
     let serial = serial.trim();
     let firmware_id = firmware_id.trim();
@@ -81,8 +70,7 @@ pub fn fetch_ota(serial: &str, firmware_id: &str) -> Result<Option<OtaUpdate>> {
     parse_ota_xml(&body)
 }
 
-/// Parse the upstream XML body. Pulled out so the test suite can drive
-/// the parser without needing network access.
+/// Parse the OTA XML body (separate from [`fetch_ota`] so tests need no network).
 pub fn parse_ota_xml(xml: &str) -> Result<Option<OtaUpdate>> {
     let doc = crate::xml::parse(xml).map_err(|e| LtboxError::Other(format!("OTA XML: {e}")))?;
     let root = doc.root_element();
@@ -124,11 +112,8 @@ pub fn parse_ota_xml(xml: &str) -> Result<Option<OtaUpdate>> {
     }))
 }
 
-/// Strip a `<![CDATA[ ... ]]>` wrapper if present, otherwise return the
-/// input unchanged. Lenovo's payload wraps every text-bearing field in
-/// CDATA; `roxmltree::text()` already returns the inner content for us
-/// in the typical case, but some upstream variations leave the markers
-/// in the `text` slot — this helper is the safety net.
+/// Strip a leftover `<![CDATA[ ... ]]>` wrapper, else return the trimmed input.
+/// `roxmltree` usually unwraps CDATA already, but some payloads keep the markers.
 fn strip_cdata(s: &str) -> String {
     let trimmed = s.trim();
     if let Some(rest) = trimmed.strip_prefix("<![CDATA[")
@@ -139,9 +124,8 @@ fn strip_cdata(s: &str) -> String {
     trimmed.to_string()
 }
 
-/// Render a byte count as `MB` below 1 GB, otherwise `GB`. `None`
-/// renders as a literal `?` so the popup distinguishes "unknown size"
-/// from a parsed zero.
+/// Render a byte count (decimal units) as `MB` below 1 GB, otherwise `GB`;
+/// `None` renders as `?`.
 pub fn format_size(bytes: Option<u64>) -> String {
     let Some(bytes) = bytes else {
         return "?".to_string();
@@ -156,8 +140,7 @@ pub fn format_size(bytes: Option<u64>) -> String {
     }
 }
 
-/// Turn a `;`-separated changelog (Lenovo joins bullet items inline)
-/// into a newline-separated block for the GUI text widget.
+/// Turn Lenovo's `;`-separated changelog into one item per line.
 pub fn format_changelog(desc: &str) -> String {
     desc.split(';')
         .map(|s| s.trim())

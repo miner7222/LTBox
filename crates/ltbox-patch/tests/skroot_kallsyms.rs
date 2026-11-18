@@ -115,8 +115,7 @@ fn decodes_real_kernels() {
         );
         assert!(ic.cap_ability_max != 0, "{path}: empty capability set");
 
-        // The pre-GUI patch plan should now emit all ported SKRoot core hooks
-        // as one write list, without needing GUI/root-pipeline wiring.
+        // The patch plan emits all SKRoot core hooks as one write list.
         let plan = patch_plan::build_core_patch_plan(&buf)
             .unwrap_or_else(|e| panic!("{path} (v{}): patch plan failed: {e}", ver.raw()));
         assert_eq!(plan.version_triple, ver.triple(), "{path}: plan version");

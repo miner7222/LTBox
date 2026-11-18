@@ -1,8 +1,8 @@
 //! `ltbox-core` — domain layer shared across LTBox crates.
 //!
-//! AES-CBC `.x` decryption, GitHub client, i18n, and
-//! rawprogram XML parser. Every fallible API returns [`Result<T>`] /
-//! [`LtboxError`]. Port of the non-UI parts of Python LTBox v2.x.
+//! Model capabilities, firmware-file helpers (`.x` decryption, XML parsing),
+//! network clients (GitHub, Lenovo), i18n and the live log sink. Every
+//! fallible API returns [`Result<T>`] / [`LtboxError`].
 
 pub mod app_paths;
 pub mod connectivity;
@@ -49,15 +49,9 @@ macro_rules! live_debug {
     }};
 }
 
-/// Translate `$key` and substitute `{name}` placeholders from a list of
-/// `name = value` pairs. Eliminates the chain of
-/// `tr("k").replace("{a}", &x).replace("{b}", &y)…` repeated across
-/// every live-log emit site.
-///
-/// Each `value` is converted via `Display` (`format!("{}", v)`) so the
-/// caller can pass `&str`, `String`, integers, floats, or anything else
-/// implementing `Display`. For pre-formatted floats (`"{x:.1}"`) just
-/// pass `&format!("{x:.1}")`.
+/// Translate `$key` and substitute `{name}` placeholders from `name = value`
+/// pairs. Each value is formatted with `Display`; pre-format floats yourself
+/// (`format!("{x:.1}")`).
 ///
 /// ```ignore
 /// live!(

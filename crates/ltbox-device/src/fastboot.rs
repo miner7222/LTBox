@@ -1,6 +1,6 @@
 //! Minimal Fastboot over nusb — only the commands LTBox uses
-//! (getvar, reboot, reboot-bootloader, detect). Protocol:
-//! ASCII command → bulk write → read OKAY/FAIL/DATA/INFO.
+//! (getvar, reboot, reboot-bootloader, reboot-fastboot, detect). Protocol:
+//! ASCII command → bulk write → read OKAY/FAIL/DATA/INFO/TEXT.
 
 use nusb::Endpoint;
 use nusb::transfer::{Buffer, Bulk, In, Out};
@@ -26,9 +26,8 @@ const FASTBOOT_USB_SUBCLASS: u8 = 0x42;
 const FASTBOOT_USB_PROTOCOL: u8 = 0x03;
 
 const WAIT_SLEEP: Duration = Duration::from_secs(2);
-/// One bulk transfer. A transfer that never completes (a wedged bootloader,
-/// a half-detached cable) is cancelled instead of blocking forever, which
-/// also left the callers' own polling deadlines unable to fire.
+/// One bulk transfer. A wedged bootloader or half-detached cable must not
+/// block forever, or the callers' own polling deadlines could never fire.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
 /// One command, however many INFO lines it streams.
 const COMMAND_DEADLINE: Duration = Duration::from_secs(60);
@@ -44,8 +43,7 @@ pub struct FastbootVars {
     pub storage_gb: Option<String>,
     pub rollback_indices: std::collections::HashMap<u32, u64>,
     /// Raw `getvar:all` dump (the INFO lines joined), with a `serialno:` line
-    /// guaranteed at the top. Saved as `getvar.txt` in the Flash critical
-    /// backup — revives + supersedes LTBox v2's `sn.txt`.
+    /// guaranteed. Saved as `getvar.txt` in the Flash critical backup.
     pub raw_getvar_all: String,
 }
 
@@ -268,14 +266,9 @@ impl FastbootDevice {
         }
     }
 
-    /// Active slot suffix (`_a` / `_b`).
-    ///
-    /// Whitelisted against `["a", "b", "_a", "_b"]` to match the ADB
-    /// path's [`adb::AdbManager::get_slot_suffix`] contract. Some
-    /// bootloaders return an empty or garbage `current-slot` on
-    /// non-A/B devices; feeding that into downstream
-    /// `vendor_boot{suffix}` partition lookups produced e.g.
-    /// `vendor_bootxyz` lookups that failed with misleading errors.
+    /// Active slot suffix (`_a` / `_b`), else `None`, matching
+    /// [`crate::adb::AdbManager::get_slot_suffix`]. Garbage `current-slot`
+    /// values would otherwise build bogus partition names.
     pub fn get_slot_suffix(&mut self) -> Result<Option<String>> {
         match self.getvar("current-slot") {
             Ok(slot) => Ok(normalize_slot_suffix(&slot)),
@@ -286,9 +279,8 @@ impl FastbootDevice {
     /// Parse vars from `getvar:all` INFO lines.
     pub fn get_all_vars(&mut self) -> Result<FastbootVars> {
         let mut vars = FastbootVars::default();
-        // Standalone current-slot is best-effort only. A transient USB
-        // failure here must not discard model/RAM/storage/build from
-        // getvar:all (PollDevice maps Err → default empty fields).
+        // Best-effort: a transient failure here must not discard the
+        // getvar:all fields (an Err would blank the whole poll).
         if let Ok(slot) = self.get_slot_suffix() {
             vars.current_slot = slot;
         }
@@ -301,9 +293,8 @@ impl FastbootDevice {
             for line in &lines {
                 apply_getvar_all_line(&mut vars, line);
             }
-            // Preserve the raw dump for `getvar.txt`. Guarantee a `serialno:`
-            // line at the top (some bootloaders omit it from `getvar:all`, but
-            // it is fetched separately above) so the backup always records it.
+            // Some bootloaders omit `serialno` from `getvar:all`; prepend the
+            // separately fetched one so `getvar.txt` always records it.
             let mut raw = lines.join("\n");
             if let Some(sn) = &vars.serialno
                 && !lines.iter().any(|l| l.starts_with("serialno:"))
@@ -482,29 +473,18 @@ fn normalize_slot_suffix(slot: &str) -> Option<String> {
     }
 }
 
-/// Apply one `getvar:all` INFO line into `vars`.
-///
-/// Extracted so unit tests can cover TB322FC (and similar) dumps without
-/// opening real USB hardware. Does not fetch product/serialno — those are
-/// still separate getvar queries in [`FastbootDevice::get_all_vars`].
+/// Apply one `getvar:all` INFO line into `vars`. Product and serialno are
+/// separate getvar queries in [`FastbootDevice::get_all_vars`].
 pub(crate) fn apply_getvar_all_line(vars: &mut FastbootVars, line: &str) {
-    // Spec lives in some `_`-separated segment of `hwboardid`
-    // (varies per SKU + sometimes has a trailing suffix); the
-    // helper walks every segment and picks the first
-    // `<digits>+<digits>` block, so layout drift in newer
-    // bootloaders doesn't silently drop RAM/storage.
-    // Model comes from the dedicated `modelname:` line below —
-    // the leading hwboardid token is the SoC name on stripped
-    // SKUs and not a reliable model source.
+    // RAM/storage only: the leading `hwboardid` token is the SoC on some
+    // SKUs, so the model comes from `modelname:` below.
     if let Some(val) = line.strip_prefix("hwboardid:")
         && let Some((ram, storage)) = parse_hwboardid_ram_storage(val.trim())
     {
         vars.ram_gb = Some(ram);
         vars.storage_gb = Some(storage);
     }
-    // `modelname:TB322FC` — the bootloader-published model
-    // identifier. Stable across SKUs that strip the model
-    // token from `hwboardid`.
+    // `modelname:TB322FC` — the bootloader-published model.
     if let Some(val) = line.strip_prefix("modelname:") {
         let val = val.trim();
         if !val.is_empty() {
@@ -552,9 +532,8 @@ pub(crate) fn parse_stored_rollback_line(line: &str) -> Option<(u32, u64)> {
 
 /// Pull RAM + storage out of a Lenovo `hwboardid` getvar value.
 ///
-/// Walks every `_`-separated segment and returns the first
-/// `<digits>+<digits>` block as `("<ram> GB", "<storage> GB")`. Covers
-/// every shape we've seen on Lenovo bootloaders:
+/// Returns the first `_`-separated `<digits>+<digits>` segment as
+/// `("<ram> GB", "<storage> GB")`. Known shapes:
 ///
 /// * `TB322FC_SM8750P_16+512` — model + SoC + spec
 /// * `SM8750P_16+512`         — SoC + spec only
@@ -793,7 +772,7 @@ mod tests {
 
     #[test]
     fn small_decimal_digits_parse_as_hex() {
-        // Contract: always base-16 (v2 `int(_, 16)`). "100" → 0x100.
+        // Contract: always base-16. "100" → 0x100.
         let out = parse_stored_rollback_line("stored_rollback_index:0 = 100");
         assert_eq!(out, Some((0, 0x100)));
     }
@@ -837,8 +816,7 @@ mod tests {
 
     #[test]
     fn hwboardid_trailing_suffix_after_spec() {
-        // Regression for `rsplit_once('_')` shape that took the trailing
-        // numeric suffix as the tail instead of the spec.
+        // A trailing numeric suffix must not be taken as the spec.
         assert_eq!(
             parse_hwboardid_ram_storage("SM8650P_12+256_12"),
             Some(("12 GB".into(), "256 GB".into()))
@@ -852,10 +830,8 @@ mod tests {
 
     #[test]
     fn tb322fc_getvar_all_populates_dashboard_fields() {
-        // Observed live TB322FC dump. Standalone current-slot may fail
-        // transiently; the INFO lines alone must still fill model/RAM/
-        // storage/slot/firmware so the dashboard is not blank until the
-        // next 3s poll.
+        // Live TB322FC dump. The INFO lines alone must fill model/RAM/
+        // storage/slot/firmware when the standalone slot query fails.
         let lines = [
             "modelname:TB322FC",
             "hwboardid:TB322FC_SM8750P_16+512",
@@ -876,8 +852,8 @@ mod tests {
             vars.build_display_id.as_deref(),
             Some("TB322FC_CN_OPEN_USER_Q00041.1_W_ZUXOS_1.5.10.259_ST_2606119")
         );
-        // No stored_rollback_index on this dump — GUI ARB falls back to
-        // model classification (TB322FC => no protection) once model is set.
+        // No stored_rollback_index here; TB322FC enforces no rollback
+        // protection (its `ModelCapabilities` profile).
         assert!(vars.rollback_indices.is_empty());
         // product/serialno remain separate getvar queries in get_all_vars.
         assert!(vars.product.is_none());

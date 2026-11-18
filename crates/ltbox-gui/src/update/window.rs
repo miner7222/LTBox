@@ -1,14 +1,11 @@
 //! Window-chrome handlers: titlebar buttons, cursor-drag resize, and
-//! debounced geometry persistence. Extracted from `main.rs`.
+//! debounced geometry persistence.
 use crate::*;
 use iced::Task;
 
 impl App {
-    /// Dispatch a `WindowMsg` — titlebar drag / minimize / maximize /
-    /// close / cursor-drag resize. All variants except
-    /// `WindowIdReceived` are gated on `self.window_id` being set;
-    /// before iced delivers the window id those calls would be
-    /// no-ops anyway.
+    /// Dispatch a `WindowMsg`. Window actions are no-ops until `window_id` is
+    /// set by `WindowIdReceived`.
     pub(crate) fn update_window(&mut self, msg: WindowMsg) -> Task<Message> {
         match msg {
             WindowMsg::WindowIdReceived(id) => {
@@ -36,16 +33,15 @@ impl App {
                 })
                 .unwrap_or_else(Task::none),
             WindowMsg::WindowClose => {
-                // Exiting a process while its updater may be between filesystem
-                // operations would defeat the rollback guarantee. Native close
-                // requests and the custom titlebar both route through here.
+                // Exiting mid-update would defeat the updater's rollback
+                // guarantee. Native close requests and the titlebar both land
+                // here.
                 if self.operation.direct_update.is_active() {
                     return Task::none();
                 }
-                // Closing while a flash/root/probe (or any other busy op)
-                // is live would tear down the process mid-work. Refuse and
-                // surface the same "X is in progress" wording the progress
-                // dialog uses — no new locale keys required.
+                // Closing during any busy operation would tear it down
+                // mid-work: refuse with the progress dialog's "in progress"
+                // wording.
                 if self.operation.is_running() {
                     let op_name = self.busy_operation_label();
                     self.error_msg = Some(ltbox_core::tr_args!(
@@ -86,8 +82,8 @@ impl App {
             .unwrap_or_else(Task::none)
     }
 
-    /// Debounced persistence tick — only flushes when the resize
-    /// stream has been quiet for `WINDOW_SIZE_SAVE_INTERVAL`.
+    /// Debounced persistence tick: flushes only once resizing has been quiet
+    /// for `WINDOW_SIZE_SAVE_INTERVAL`.
     pub(crate) fn update_persist_window_size(&mut self) -> Task<Message> {
         if self.window_size_dirty
             && self.window_size_last_change.elapsed() >= WINDOW_SIZE_SAVE_INTERVAL
@@ -149,9 +145,7 @@ mod tests {
         let _task = app.update_window(WindowMsg::WindowClose);
         assert!(app.operation.is_running(), "busy op must remain active");
         assert_eq!(app.operation.view(), Some(View::Root));
-        // Reuses progress_dialog_body with the busy op label. Locale may be
-        // non-English, so compare against the same formatter rather than
-        // hard-coded English fragments.
+        // Compare against the same formatter; the locale may not be English.
         let expected = ltbox_core::tr_args!(
             "progress_dialog_body",
             operation = app.busy_operation_label()

@@ -61,17 +61,15 @@ pub(crate) enum Message {
     DevicePolled(DevicePollResult),
     DevicePollFinished(u64, Option<DevicePollResult>),
     AdbServerKillFinished(Result<(), String>),
-    /// Dashboard "Kill Server" button fired when an external adb
-    /// server is holding the Android USB interface — sends `host:kill`
-    /// to `127.0.0.1:5037` so LTBox's libusb claim can succeed on the
-    /// next poll.
+    /// Dashboard "Kill Server" button, shown when an external adb server holds the
+    /// Android USB interface: sends `host:kill` to `127.0.0.1:5037` so LTBox's libusb
+    /// claim can succeed on the next poll.
     KillAdbServer,
     /// Click on the dashboard device portrait. Opens the popup; fires
     /// the Lenovo PTSTPD fetch unless the serial is already cached.
     DeviceInfoOpen,
-    /// Result of the PTSTPD fetch keyed by the serial it was started for.
-    /// Stale results (different serial than the currently open popup)
-    /// are still cached for next time but do not flip the popup state.
+    /// Result of the PTSTPD fetch keyed by the serial it was started for. A result for a
+    /// different serial than the open popup is cached but does not change the popup state.
     DeviceInfoFetched(String, Result<ltbox_core::lenovo_info::MachineInfo, String>),
     /// User dismissed the device-info popup.
     DeviceInfoClose,
@@ -80,9 +78,8 @@ pub(crate) enum Message {
     /// Click on the dashboard OTA lookup action. Opens the OTA popup
     /// and fires the upstream `querynewfirmware` request.
     OtaOpen,
-    /// Result of the OTA fetch, keyed by the (serial, firmware-id)
-    /// pair the request was started for so a stale device swap can't
-    /// surface the wrong firmware's changelog.
+    /// Result of the OTA fetch, keyed by the (serial, firmware-id) pair it was started
+    /// for so a device swap can't surface the wrong firmware's changelog.
     OtaFetched(
         String,
         String,
@@ -107,9 +104,8 @@ pub(crate) enum Message {
     QfilClose,
     /// Retry the QFIL fetch for the currently open popup serial.
     QfilRetry,
-    /// Copy `payload` to the OS clipboard. Pairs with `ToastShow` so
-    /// the user gets a visual confirmation; clipboard writes return a
-    /// `Task<Message>` from iced so the second message is chained.
+    /// Copy `payload` to the OS clipboard. Paired with `ToastShow` for visual
+    /// confirmation; iced clipboard writes return a `Task<Message>`, so it is chained.
     CopyToClipboard(String),
     /// Show a transient bottom-of-screen toast message. Auto-clears
     /// via `ToastClear` after a short delay.
@@ -122,9 +118,8 @@ pub(crate) enum Message {
     SidebarHoverExit,
     /// Periodic system-theme probe while "Follow system" is active.
     RefreshSystemTheme,
-    /// 16 ms tick from the sidebar tween subscription. Steps
-    /// Spatial and effects springs toward their respective targets.
-    /// Subscription auto-stops once the value has settled.
+    /// 16 ms tick from the sidebar tween subscription: steps the Spatial and effects
+    /// springs toward their targets. The subscription stops once the value has settled.
     SidebarAnimTick,
     /// Dashboard rollback cell → open the `boot` / `vbmeta_system`
     /// floor breakdown. Only reachable in bootloader mode.
@@ -295,8 +290,8 @@ pub(crate) enum RootMsg {
     RootSelectFile,
     RootSelectKsuPayload(bool),
     RootKsuPayloadSelected(bool, Option<String>),
-    /// Open the EDL loader picker for the root pipeline. Named for the
-    /// step, which predates the field it fills.
+    /// Open the EDL loader picker for the root pipeline. The pick is stored in
+    /// `root.folder_path`, which holds a single loader file, not a folder.
     RootSelectFolder,
     /// Loader picked for the root pipeline, or `None` on cancel. Routed
     /// through `resolve_loader_input` like every other loader step.
@@ -372,8 +367,8 @@ pub(crate) enum AdvMsg {
     AdvWizBrowseManyDone(Option<Vec<String>>),
     AdvImageInfoExecStart,
     AdvImageInfoExecDone(Result<String, String>),
-    /// DetectArb: kicks off the fastboot+EDL anti-rollback probe on
-    /// the heavy pool. Triggered by Next on the source step.
+    /// DetectArb: starts the fastboot+EDL anti-rollback probe on the heavy pool, from
+    /// Next on the source step.
     AdvDetectArbExecStart,
     /// DetectArb worker result. `Vec<String>` is the live-log lines
     /// to flush; `Err(_)` carries a banner message.

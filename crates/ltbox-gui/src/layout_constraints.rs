@@ -39,10 +39,9 @@ pub(crate) const M3_BUTTON_H_PADDING: f32 = 16.0;
 
 pub(crate) const DIALOG_HEADLINE_SIZE: f32 = 24.0;
 
-/// Dialog width scale. Callers choose by kind: short confirmation/input (SM),
-/// choice/detail (MD), editor (LG). Lives here rather than in `theme` because
-/// the locale guards import this module standalone to measure the same
-/// budgets the widgets use.
+/// Dialog width scale: short confirmation/input (SM), choice/detail (MD),
+/// editor (LG). Lives here, not in `theme`, so the locale guards can import
+/// this module standalone.
 pub(crate) const DIALOG_WIDTH_SM: f32 = 400.0;
 pub(crate) const DIALOG_WIDTH_MD: f32 = 520.0;
 pub(crate) const DIALOG_WIDTH_LG: f32 = 720.0;

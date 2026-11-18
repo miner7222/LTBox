@@ -51,9 +51,8 @@ fn load_locale(locale: &str) -> BTreeMap<String, String> {
         .unwrap_or_else(|error| panic!("{} must parse: {error}", path.display()))
 }
 
-/// Every locale shipped in `lang/`, English first. The guards below iterate
-/// this rather than a hand-kept list, so a new `lang/*.json` is checked the
-/// moment it lands.
+/// Every locale shipped in `lang/`, English first. Discovered from the
+/// directory so a new `lang/*.json` is checked automatically.
 fn locale_codes() -> Vec<String> {
     let lang_dir = manifest_dir().join("lang");
     let mut codes = std::fs::read_dir(&lang_dir)
@@ -590,10 +589,9 @@ fn english_locale_keys_match_rust_sources() {
 
 /// Codepoints one bundled subset can actually render.
 ///
-/// Parsed by hand rather than through a font crate: this file already tokenizes
-/// Rust by hand, and a guard whose whole job is to catch drift in a build input
-/// should not add a build input of its own. Reads `cmap` subtable formats 4 and
-/// 12, which is what `fontTools.subset` emits for these faces.
+/// Parsed by hand to avoid adding a font-crate dependency to a drift guard.
+/// Reads `cmap` subtable formats 4 and 12, which `fontTools.subset` emits for
+/// these faces.
 fn subset_codepoints(path: &Path) -> BTreeSet<u32> {
     let data = std::fs::read(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
@@ -639,19 +637,15 @@ fn subset_codepoints(path: &Path) -> BTreeSet<u32> {
 
 /// Characters the subsets deliberately do not carry.
 ///
-/// Emoji come from the platform emoji font on every OS LTBox ships to, so a CJK
-/// face carrying them would be dead weight. The list is explicit rather than an
-/// "is this emoji" predicate so that adding one is a decision someone made.
+/// Emoji come from the platform emoji font, so the CJK faces do not carry them.
+/// The list is explicit so that adding one is a deliberate decision.
 const PLATFORM_FALLBACK_CHARS: &[char] = &['⛔'];
 
 #[test]
 fn every_localized_character_is_in_the_bundled_subset_for_its_locale() {
-    // Mirrors `theme::font_family_for_language`: a locale renders through
-    // exactly one bundled family, so coverage has to hold per locale rather
-    // than across the union of all three. It also has to hold per weight — a
-    // character present only in Regular renders through a fallback face
-    // wherever the UI asks for medium or bold, which is visible as one glyph
-    // in the wrong typeface inside an otherwise correct label.
+    // Mirrors `theme::font_family_for_language`: a locale renders through one
+    // bundled family, so coverage must hold per locale and per weight; a
+    // character only in Regular falls back to another face at medium or bold.
     let mut failures = Vec::new();
     for locale in locale_codes() {
         let region = locale_family(&locale).trim_start_matches("Noto Sans ");

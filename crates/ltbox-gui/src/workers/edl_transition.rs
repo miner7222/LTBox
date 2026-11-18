@@ -4,10 +4,8 @@
 use crate::{ConnectionStatus, EdlEntryAction, edl_entry_action};
 use ltbox_core::tr_args;
 
-/// Transition the device to EDL from whatever state it is in. Returns
-/// `Ok(())` if the device is already in EDL or was sent there.
-/// Shared by `dump_parts_scan`. Mirrors the inline block in
-/// `flash_parts_execute`.
+/// Wait for the EDL (9008) port to appear and log the outcome. `Err` means it never did; the
+/// caller aborts after the no-port notice.
 pub(crate) fn wait_for_edl_ready(tag: &str, log: &mut Vec<String>) -> Result<(), ()> {
     ltbox_core::live!(
         log,
@@ -36,10 +34,8 @@ pub(crate) fn wait_for_edl_ready(tag: &str, log: &mut Vec<String>) -> Result<(),
                 "[{tag}] {}",
                 tr_args!("live_edl_not_found", error = detail)
             );
-            // Only the reboot / manual-wait paths reach here — an
-            // already-in-EDL start never calls this — so the device was sent
-            // toward EDL but its port never appeared. No write has happened
-            // yet; reassure the user before the caller aborts.
+            // Only the reboot / manual-wait paths reach here, so the device was sent toward EDL but its port
+            // never appeared. No write has happened yet; reassure the user before the caller aborts.
             ltbox_core::live!(
                 log,
                 "{}",
@@ -89,20 +85,15 @@ pub(crate) fn reboot_adb_to_edl(
     log: &mut Vec<String>,
     mgr: &mut ltbox_device::adb::AdbManager,
 ) -> Result<(), ()> {
-    // Command echo (`adb reboot edl`) suppressed — the user only sees the
-    // outcome (waiting / reached EDL / failure).
+    // The command echo (`adb reboot edl`) is suppressed; the user only sees the outcome (waiting /
+    // reached EDL / failure).
     //
-    // `mgr` is caller-provided so the upstream Fastboot→ADB→EDL path can
-    // reuse the `AdbManager` it already opened in `wait_for_device`.
-    // Constructing a fresh `AdbManager` here would create a second
-    // libusb claimer for the same Android endpoint while the caller's
-    // cached `ADBUSBDevice` is still alive — `LIBUSB_ERROR_BUSY` on the
-    // claim, retried + bucketed into `check_device_state` →
-    // `Some("unauthorized")`, and the worker would bail to
-    // `wait_for_manual_edl` even with the device fully authorized.
-    // `check_device` accepts only `Device` state; use `check_device_state`
-    // here so recovery-state ADB can also seed the serial before issuing
-    // `reboot edl`.
+    // `mgr` is caller-provided so the Fastboot->ADB->EDL path reuses the `AdbManager` it already
+    // opened in `wait_for_device`. A second one would be another libusb claimer on the same endpoint
+    // while the cached `ADBUSBDevice` is alive: `LIBUSB_ERROR_BUSY`, bucketed by `check_device_state`
+    // as `Some("unauthorized")`, so the worker would bail to `wait_for_manual_edl` for an authorized
+    // device. `check_device_state` (not `check_device`, which accepts only `Device`) lets recovery-state
+    // ADB also seed the serial before `reboot edl`.
     let state = match mgr.check_device_state() {
         Ok(s) => s,
         Err(e) => {
@@ -147,9 +138,8 @@ pub(crate) fn reboot_adb_to_edl(
 }
 
 pub(crate) fn fastboot_reboot_then_adb_edl(tag: &str, log: &mut Vec<String>) -> Result<(), ()> {
-    // Device boots into the OS so ADB comes up for the subsequent
-    // `adb reboot edl`. `oem edl` are intentionally not used (oem edl
-    // misbehaves on some devices).
+    // The device boots into the OS so ADB comes up for the following `adb reboot edl`. `oem edl` is
+    // deliberately not used (it misbehaves on some devices).
     match ltbox_device::fastboot::FastbootDevice::open() {
         Ok(mut dev) => {
             if let Err(e) = dev.reboot() {

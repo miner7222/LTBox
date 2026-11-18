@@ -4,9 +4,8 @@
 //! Linux kernel `__AARCH64_INSN_FUNCS` style). Decoding the kernel never needs
 //! a real disassembler — every check here is a constant mask/value compare.
 //!
-//! The full table is kept for fidelity with upstream even though only a subset
-//! is referenced so far; later layers (offset finders, the encoder's
-//! round-trip tests) pull from the rest.
+//! The full table is kept for fidelity with upstream, although only a subset is
+//! referenced.
 #![allow(dead_code)]
 
 /// Define `pub fn $name(insn: u32) -> bool { (insn & mask) == val }`.

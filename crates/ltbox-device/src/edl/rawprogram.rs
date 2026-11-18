@@ -116,9 +116,8 @@ fn plan_program_node(
     if !image_path.exists() {
         return Ok(ProgramNodePlan::MissingImage { label, image_path });
     }
-    // The transfer zero-pads past EOF to `num_sectors`, so an empty file (a
-    // failed extraction, say) would quietly zero the whole partition, and a
-    // directory would only fail mid-flash. Refuse both before any write.
+    // The transfer zero-pads to `num_sectors`, so an empty file would zero the
+    // whole partition and a directory would fail mid-flash. Refuse both now.
     let file_len = {
         let meta = std::fs::metadata(&image_path)?;
         if !meta.is_file() {
@@ -138,13 +137,8 @@ fn plan_program_node(
 
     let mut byte_offset = 0;
     if file_sector_offset > 0 {
-        // `file_sector_offset * sector_size` can overflow u64 if the
-        // rawprogram XML carries a hostile or corrupted value (untrusted
-        // input — the same XML that names the partition). On overflow the
-        // wrap-around lands at a tiny offset and we'd flash bytes from the
-        // wrong region of `image_path` to the device. Reject overflow and
-        // require the resulting byte offset to fit inside the image file
-        // so we never seek past EOF and feed Firehose stale read data.
+        // Untrusted XML: a wrapped product would flash the wrong region of the
+        // image, and an offset past EOF would feed Firehose stale data.
         byte_offset = sector_size.checked_mul(file_sector_offset).ok_or_else(|| {
             EdlError::Session(format!(
                 "{ctx}: file_sector_offset {file_sector_offset} \
@@ -295,16 +289,9 @@ fn keep_data_erase_label<'a>(
     Ok(None)
 }
 
-/// Parse an XML attribute, distinguishing three cases:
-///   - attribute absent → returns `default`
-///   - attribute present and parseable → returns the parsed value
-///   - attribute present but malformed → returns
-///     `EdlError::Session` with context
-///
-/// Silently defaulting a malformed value (e.g. `num_partition_sectors="bogus"`
-/// → 0) lets a corrupt rawprogram XML steer a flash at sector 0 or skip a
-/// real partition entirely. Values that are legitimately optional (e.g.
-/// `slot`, `file_sector_offset`) still default cleanly when absent.
+/// Parse an XML attribute: absent → `default`; malformed → `EdlError::Session`.
+/// Defaulting a malformed value would let a corrupt XML steer a flash at
+/// sector 0 or skip a real partition.
 fn parse_xml_attr<T>(
     node: &roxmltree::Node<'_, '_>,
     attr: &str,
@@ -324,12 +311,10 @@ where
     }
 }
 
-/// Refuse a destructive node (`<program>`, `<erase>`, or a DISK `<patch>`)
-/// that omits its target coordinates. Unlike `slot` / `file_sector_offset`,
-/// `physical_partition_number` and `start_sector` are not optional here:
-/// silently defaulting either to 0 would steer the write at LUN 0 / sector 0
-/// — the primary GPT. Presence-only, since a `start_sector` may be a formula
-/// string (e.g. `NUM_DISK_SECTORS-33.`) rather than a parseable integer.
+/// Refuse a destructive node (`<program>`, `<erase>`, DISK `<patch>`) without
+/// `physical_partition_number` or `start_sector`: defaulting to 0 would write
+/// the primary GPT. Presence-only, as `start_sector` may be a formula
+/// (`NUM_DISK_SECTORS-33.`).
 fn require_destructive_coords(node: &roxmltree::Node<'_, '_>, context: &str) -> Result<()> {
     for attr in ["physical_partition_number", "start_sector"] {
         if node.attribute(attr).is_none() {
@@ -343,20 +328,11 @@ fn require_destructive_coords(node: &roxmltree::Node<'_, '_>, context: &str) -> 
 
 /// Bound one destructive rawprogram node against the target LUN's capacity.
 ///
-/// `<program>` and `<erase>` take `num_partition_sectors` and `start_sector`
-/// verbatim from firmware XML, which is untrusted input: a corrupt or
-/// mismatched package can name a sector count far larger than the partition
-/// it labels. qdl zero-pads a short image up to `num_partition_sectors`, so
-/// an inflated count does not merely fail — it writes zeros over whatever
-/// follows. Unlike [`PartitionFlash`], which resolves the GPT span, the
-/// rawprogram path has no span to check against while the same XML is
-/// rewriting the GPT. The disk size is the one bound that stays valid
-/// throughout, so enforce that much.
-///
-/// `start_sector` is handed to the programmer verbatim and may be a
-/// device-side expression such as `NUM_DISK_SECTORS-33.`, which only the
-/// programmer can resolve. A plain decimal start is checked end to end; an
-/// expression still has its sector count checked on its own.
+/// `num_partition_sectors` is untrusted, and qdl zero-pads a short image up to
+/// it, so an inflated count zeroes whatever follows. The XML may be rewriting
+/// the GPT, so the disk size is the only bound that stays valid. A decimal
+/// `start_sector` is checked end to end; a device-side expression
+/// (`NUM_DISK_SECTORS-33.`) only has its count checked.
 fn ensure_node_within_lun(
     ctx: &str,
     lun: u8,
@@ -388,12 +364,8 @@ fn ensure_node_within_lun(
 
 impl EdlSession {
     /// Memoised [`Self::physical_lun_sector_count`] for the rawprogram bounds
-    /// check.
-    ///
-    /// Returns `None` when the LUN has no readable GPT header. A blank or
-    /// corrupted device is precisely when EDL flashing is the only way back,
-    /// so an unreadable capacity skips the bound instead of refusing the
-    /// flash. The probe is attempted once per LUN either way.
+    /// check; probed once per LUN. `None` (no readable GPT header) skips the
+    /// bound: a blank or corrupted device is when EDL flashing is the only way back.
     fn lun_sector_count_for_guard(&mut self, lun: u8, log: &mut Vec<String>) -> Option<u64> {
         if let Some(cached) = self.lun_sectors.get(&lun) {
             return *cached;
@@ -421,7 +393,7 @@ impl EdlSession {
     /// Erased on wipe=true. frp is intentionally not erased.
     const WIPE_ERASE_BASES: &'static [&'static str] = &["userdata", "metadata"];
 
-    /// Skipped on wipe=false. Matches v2 `_patch_xml_for_wipe` (wipe=0).
+    /// Skipped on wipe=false.
     const KEEP_DATA_SKIP_BASES: &'static [&'static str] = &["userdata", "metadata"];
 
     /// Match `label` against bases, with or without `_a`/`_b` suffix.
@@ -448,8 +420,7 @@ impl EdlSession {
     }
 
     /// Require every referenced split-super image before any device mutation.
-    /// Other missing images keep the existing warning-and-skip behavior in
-    /// `flash_program_node`.
+    /// Other missing images are logged and skipped by `flash_program_node`.
     fn preflight_rawprogram_super_images(program_xmls: &[PathBuf]) -> Result<()> {
         for xml_path in program_xmls {
             let xml_content = ltbox_core::xml::read(xml_path)?;
@@ -494,14 +465,9 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Flash with explicit user-data mode.
-    ///
-    /// `wipe=true` (v2 `pre_erase=True`): erase userdata/metadata
-    /// (+ slot variants) before flashing, then flash rawprograms, then
-    /// apply patches.
-    ///
-    /// `wipe=false` (v2 `_patch_xml_for_wipe(wipe=0)`): skip
-    /// userdata/metadata entries during the flash pass.
+    /// Flash rawprograms, then apply patches. `wipe=true` first erases
+    /// userdata/metadata (and slot variants); `wipe=false` skips those
+    /// `<program>` nodes and any `<erase>` overlapping them.
     pub fn flash_rawprogram_with_wipe(
         &mut self,
         program_xmls: &[PathBuf],
@@ -538,8 +504,7 @@ impl EdlSession {
             self.flash_one_rawprogram(xml_path, wipe, &protected_ranges, log)?;
         }
         for (xml_path, plans) in patch_xmls.iter().zip(&patch_plans) {
-            // Show file name only — the full disk path was noisy and added
-            // nothing the user couldn't already see in the firmware folder.
+            // File name only; the firmware folder is already known.
             let display_name = xml_path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -554,16 +519,11 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Flash every `<program>` / `<erase>` node exactly as the rawprogram
-    /// XMLs list them, then apply patch XMLs — no keep-data skipping and no
-    /// pre-erase pass.
-    ///
-    /// This mirrors a stock Lenovo flash script as closely as possible: the
-    /// data-wipe outcome is decided entirely by which rawprogram the catalog
-    /// selected (e.g. a persist-preserving `save_persist` variant vs a
-    /// `write_persist` one), not by any LTBox-side keep/wipe policy. Callers
-    /// that want the userdata/metadata keep-skip or the userdata/metadata
-    /// pre-erase must use [`Self::flash_rawprogram_with_wipe`] instead.
+    /// Flash every `<program>` / `<erase>` node as listed, then apply patch
+    /// XMLs, with no keep-data skip and no pre-erase. Like a stock Lenovo
+    /// script, the data outcome is decided by which rawprogram was selected
+    /// (`save_persist` vs `write_persist`). For a keep/wipe policy use
+    /// [`Self::flash_rawprogram_with_wipe`].
     pub fn flash_rawprogram_verbatim(
         &mut self,
         program_xmls: &[PathBuf],
@@ -584,9 +544,7 @@ impl EdlSession {
                 "[EDL] {}",
                 ltbox_core::tr_args!("log_edl_flash_cmd", path = xml_path.display())
             );
-            // `wipe = true` here only means "do not skip userdata/metadata":
-            // `flash_one_rawprogram` writes every node verbatim and the
-            // separate pre-erase pass is intentionally not run.
+            // `wipe = true` only disables the keep-data skip; no pre-erase runs.
             self.flash_one_rawprogram(xml_path, true, &[], log)?;
         }
         for (xml_path, plans) in patch_xmls.iter().zip(&patch_plans) {
@@ -604,9 +562,8 @@ impl EdlSession {
         Ok(())
     }
 
-    /// Total padded bytes that the selected rawprogram pass will actually
-    /// write. Registering this before the first partition keeps the operation
-    /// denominator stable instead of growing it one image at a time.
+    /// Total padded bytes the rawprogram pass will write, registered up front
+    /// so the progress denominator stays stable.
     fn rawprogram_transfer_bytes(&self, program_xmls: &[PathBuf], wipe: bool) -> Result<u64> {
         let sector_size = self.dev.fh_config().storage_sector_size;
         let mut total = 0u64;
@@ -694,9 +651,7 @@ impl EdlSession {
                 if num_sectors == 0 {
                     continue;
                 }
-                // Same coordinate gate as `<program>` / `<erase>` flash paths:
-                // missing LUN or start would silently default to LUN0/LBA0
-                // (primary GPT) via `parse_xml_attr` / `unwrap_or("0")`.
+                // A missing LUN or start would default to LUN 0 / LBA 0 (primary GPT).
                 require_destructive_coords(&node, &ctx)?;
                 let lun: u8 = parse_xml_attr(&node, "physical_partition_number", 0u8, &ctx)?;
                 let start_sector = node.attribute("start_sector").unwrap_or("0");
@@ -759,12 +714,8 @@ impl EdlSession {
     }
 
     /// Resolve and bound every node a rawprogram pass will touch before the
-    /// first write.
-    ///
-    /// Geometry, image offsets and LUN capacity used to be checked node by
-    /// node during the transfer, so one bad node in a later XML aborted after
-    /// earlier LUNs (and, in wipe mode, userdata) had already been written.
-    /// The transfer runs the same planners, so the two cannot drift apart.
+    /// first write, so a bad node in a later XML cannot abort a half-written
+    /// flash. The transfer runs the same planners, so the two cannot drift.
     fn preflight_rawprogram_nodes(
         &mut self,
         program_xmls: &[PathBuf],
@@ -894,8 +845,6 @@ impl EdlSession {
 
         self.guard_node_within_lun(&ctx, lun, &start_sector, num_sectors, log)?;
 
-        // Publish only when the integer percentage changes so the process-wide
-        // slot is not locked/allocated on every Firehose chunk.
         let transfer_bytes =
             padded_transfer_bytes(num_sectors, self.dev.fh_config().storage_sector_size)?;
         begin_partition_progress(&label, transfer_bytes, false);
@@ -931,8 +880,7 @@ impl EdlSession {
 
         self.guard_node_within_lun("<erase>", lun, &start_sector, num_sectors, log)?;
 
-        // Named EFISP erases use the same zero-program policy as the
-        // partition wizard and the conditional full-firmware cleanup.
+        // Named EFISP erases are zero-programmed (see `erase_partition_at`).
         if efisp {
             return self.erase_partition_at("efisp", lun, &start_sector, num_sectors, log);
         }

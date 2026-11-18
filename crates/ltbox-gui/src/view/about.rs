@@ -14,9 +14,7 @@ impl App {
     pub(crate) fn view_about(&self) -> Element<'_, Message> {
         let app_icon = about_app_icon(88.0);
         let title = text("LTBox").size(theme::text_size::TITLE_LARGE);
-        // No width cap: the text sizes to its content so it stays on one line
-        // when the content area has room (the column centers it). A fixed
-        // max_width forced a needless second line even on a wide window.
+        // No width cap: a fixed max_width wrapped the text even on a wide window.
         let description = text(self.t("about_description").to_string())
             .size(12.0)
             .style(muted_style)
@@ -53,8 +51,7 @@ impl App {
         .spacing(12.0)
         .align_y(iced::Alignment::Center);
 
-        // Fine-print footer. The dialog behind the link opens with LTBox's own
-        // license, so naming it out here as well would only repeat it.
+        // The dialog behind this link opens with LTBox's own license.
         let licenses_link = m3_text_button(self.t("about_licenses_link").to_string())
             .on_press(Message::AboutLicensesOpen);
 
@@ -71,10 +68,8 @@ impl App {
     }
 }
 
-// macOS About-panel icon handles. Built once (stable image `Id`): iced's
-// `Handle::from_bytes` mints a fresh unique id on every call, so rebuilding the
-// handle each render re-uploads the texture and makes the icon flicker —
-// caching matches the device-portrait handles in `widgets.rs`.
+// macOS About-panel icon handles, built once: `Handle::from_bytes` mints a new
+// id per call, so rebuilding each render would re-upload the texture and flicker.
 #[cfg(target_os = "macos")]
 static ABOUT_ICON_LIGHT: std::sync::LazyLock<iced::widget::image::Handle> =
     std::sync::LazyLock::new(|| {

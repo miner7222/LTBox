@@ -12,9 +12,8 @@ pub(crate) fn format_unix_timestamp_utc(ts: u64) -> String {
     }
 }
 
-/// Date-only rendering of a rollback index (`YYYY-MM-DD`, UTC). The
-/// rollback-index popup cycles through this as its most human form —
-/// the time-of-day component carries no meaning for a rollback floor.
+/// Date-only rendering of a rollback index (`YYYY-MM-DD`, UTC); the
+/// time of day carries no meaning for a rollback floor.
 pub(crate) fn format_unix_date_utc(ts: u64) -> String {
     match unix_to_datetime(ts) {
         Some(datetime) => datetime.format("%Y-%m-%d").to_string(),
@@ -27,8 +26,7 @@ fn unix_to_datetime(ts: u64) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 /// Whether the rollback floors can be read over fastboot instead of needing
-/// an EDL programmer. The model side is a capability, not a model list — see
-/// `ModelCapabilities::rollback_floor_via_fastboot`.
+/// an EDL programmer (`ModelCapabilities::rollback_floor_via_fastboot`).
 pub(crate) fn rollback_query_uses_fastboot(conn: ConnectionStatus, model: &str) -> bool {
     matches!(
         conn,
@@ -127,9 +125,8 @@ pub(crate) fn detect_arb_run(
     ltbox_core::live!(log, "[ARB] {i_edl_dump}");
     let both_slots = slots.len() > 1;
     if let Err(error) = dump_slot_rollback_indices(&mut session, &slots, temporary.path(), log) {
-        // Dropping the session returns an EDL start to EDL for a retry.
-        // Otherwise nothing was written, so boot back to the system the
-        // query started from.
+        // An EDL start stays in EDL for a retry (dropping the session). Otherwise
+        // nothing was written, so reboot to where the query started.
         if !both_slots {
             session.reset_tolerant(log);
         }

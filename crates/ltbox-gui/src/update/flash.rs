@@ -1,4 +1,4 @@
-//! Firmware-flash wizard handler. Extracted from `main.rs`.
+//! Firmware-flash wizard handler.
 
 use crate::*;
 use iced::Task;
@@ -7,10 +7,8 @@ impl App {
     pub(crate) fn update_flash(&mut self, msg: FlashMsg) -> Task<Message> {
         match msg {
             FlashMsg::FlashRegion(r) => {
-                // TB322FC is a PRC-only SKU. The region card UI grays
-                // out ROW, but a stale message from a pre-poll click
-                // could still land here. Drop it so the wizard never
-                // accepts a region the hardware doesn't ship with.
+                // `prc_only` models (TB322FC, TB324ZC): the region card grays out
+                // ROW, but a stale pre-poll click could still land here. Drop it.
                 if self.model_capabilities().prc_only && r == DeviceRegion::Row {
                     return Task::none();
                 }
@@ -35,8 +33,8 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashSerialPromptSkip => {
-                // Dismiss → keep the selected detection method and explain
-                // why the user now needs one of the manual PRC/ROW choices.
+                // Dismiss: keep the selected detection method and show why a
+                // manual PRC/ROW choice is needed.
                 self.flash_serial_prompt = None;
                 self.flash.region_auto_unknown = true;
                 Task::none()
@@ -55,9 +53,8 @@ impl App {
                 self.start_region_probe(serial)
             }
             FlashMsg::FlashAutoRegionFetched(id, serial, result) => {
-                // Ignore a superseded lookup — a newer probe (re-entry, device
-                // swap, or a fresh manual serial) has taken over. Leaves the
-                // active probe's progress indicator untouched.
+                // Ignore a superseded lookup (re-entry, device swap, new manual
+                // serial); the active probe's progress indicator stays.
                 if self.queries.region_pending != Some(id) {
                     return Task::none();
                 }
@@ -68,17 +65,16 @@ impl App {
                         if !serial.is_empty() {
                             self.queries.info_cache.insert(serial, info);
                         }
-                        // Only apply while the automatic method is still
-                        // selected on the region step — never overwrite a
-                        // manual choice or retroactively change a later step.
+                        // Apply only while Auto is still selected on the region
+                        // step: never overwrite a manual choice or a later step.
                         if self.flash.step != 0
                             || self.flash.region_selection != Some(FlashRegionSelection::Auto)
                         {
                             return Task::none();
                         }
-                        // Resolved → preselect and advance to the target step.
-                        // SaleArea neither CN nor null stays on the manual cards;
-                        // the step keeps the explanation visible until selection.
+                        // Resolved: preselect and advance to the target step. A
+                        // SaleArea that is neither CN nor null stays on the manual
+                        // cards with the explanation shown.
                         if let Some(r) = region {
                             self.flash.device_region = Some(r);
                             self.flash.step = 1;
@@ -98,9 +94,9 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashTarget(t) => {
-                // TB322FC: cross-region (OtherRegion) flashes are blocked
-                // because the only valid region is PRC. Drop the message
-                // even if a stale dispatch slips past the disabled card.
+                // `prc_only` models cannot cross regions (the only valid region
+                // is PRC); drop OtherRegion even if a stale dispatch slips past
+                // the disabled card.
                 if self.model_capabilities().prc_only && t == FlashTarget::OtherRegion {
                     return Task::none();
                 }
@@ -153,8 +149,8 @@ impl App {
                         wipe: self.flash.data_mode == Some(DataMode::Wipe),
                         country_action: CountryAction::Unset,
                     };
-                    // Rebuilding the config invalidates any prior confirm-step
-                    // override baseline; a fresh one is captured on entry below.
+                    // A rebuilt config invalidates the confirm-step baseline; a
+                    // fresh one is captured on entry below.
                     self.confirm_baseline = None;
                     if self.wf_config.wipe {
                         self.flash.next();
@@ -205,11 +201,11 @@ impl App {
                     return self.update(Message::Flash(FlashMsg::FlashExecStart));
                 }
                 self.flash.next();
-                // Snapshot the baseline only on the FIRST entry to confirm
-                // after a rebuild (it is `None` then). Re-capturing on every
-                // entry would fold a prior override into the baseline, so a
-                // Back→Next round trip would hide a change that Start still
-                // applies. The step-2 rebuild and exec/reset clear it again.
+                // Snapshot the baseline only on the first entry to confirm after
+                // a rebuild (it is `None` then). Re-capturing on every entry
+                // would fold an override into the baseline and hide a change
+                // that Start still applies. The Data-step rebuild and exec/reset
+                // clear it.
                 if self.flash.current_step() == FlashStep::Confirm
                     && self.confirm_baseline.is_none()
                 {
@@ -219,11 +215,10 @@ impl App {
             }
             FlashMsg::FlashBack => {
                 if self.flash.current_step() == FlashStep::Confirm {
-                    // Leaving confirm only closes any open editor. The baseline
-                    // and picked overrides persist, so a Back→Next bounce to the
-                    // previous input step keeps power-user changes visible and applied.
-                    // Going back through the folder to the data step rebuilds `wf_config` (and
-                    // re-opens the country popup on wipe), which resets both.
+                    // Leaving confirm only closes any open editor. Baseline and
+                    // overrides persist across a Back→Next bounce; going back to
+                    // the data step rebuilds `wf_config` (and re-opens the country
+                    // popup on wipe), which resets both.
                     self.confirm_edit_field = None;
                 }
                 self.flash.back();
@@ -366,16 +361,14 @@ impl App {
                 let firmware_identity = self.flash.firmware_identity.clone();
                 let user_abl_path = self.flash.user_abl_path.clone();
                 let no_efisp_load = self.flash.no_efisp_load;
-                // `None` on every setting but Manual, and the worker refuses a
-                // Manual run that has no targets with a message the user can
-                // read. Bailing here instead left the phased op running with
-                // nothing behind it.
+                // `None` on every setting but Manual. The worker refuses a Manual
+                // run with no targets and reports it; bailing here would leave
+                // the phased op running with nothing behind it.
                 let manual_indices = (cfg.modify_rollback == RollbackSetting::Manual)
                     .then_some(cfg.manual_rollback_indices)
                     .flatten();
                 let rollback_label = self.t(cfg.modify_rollback.label_key()).to_string();
-                // Three labelled, translated lines read better than one raw
-                // "modify_region=… rollback=… wipe=…" variable dump.
+                // Three labelled, translated lines rather than a raw variable dump.
                 let region_yn = self
                     .t(if cfg.modify_region {
                         "common_yes"
@@ -399,11 +392,8 @@ impl App {
                     tr_args!("live_flash_data_wipe", value = wipe_yn)
                 ));
                 let rb_mode = cfg.modify_rollback.to_mode();
-                // The EDL-start ARB downgrade (On/Auto → Off when the
-                // device can't be Fastboot/ADB-probed) is applied inside the
-                // worker, AFTER the firmware's vendor_boot fingerprint is
-                // known — so a TB323FU target (which reads its rollback index
-                // by dumping partitions over EDL) is exempt and stays on Auto.
+                // On an EDL start the worker reads the model and rollback floors
+                // over the open EDL session, so the mode is not forced off here.
                 let ll = self.live_labels();
                 Task::perform(
                     async move {
@@ -436,8 +426,7 @@ impl App {
                 )
             }
             FlashMsg::FlashExecDone(lines) => {
-                // Extend *before* end_op so the END separator sits
-                // below the backend's detail lines, not above them.
+                // Before end_op so the END separator follows the detail lines.
                 self.flush_exec_done_log(lines);
                 self.end_op();
                 self.wf_config = WorkflowConfig::default();
@@ -445,11 +434,10 @@ impl App {
                 self.confirm_edit_field = None;
                 Task::none()
             }
-            // Confirm-step "hidden dropdown" editors. Country reuses the
-            // existing country popup; everything else opens the shared editor.
-            // Each setter writes straight to `wf_config` (the worker's only
-            // input) — no cascade — so the change is an explicit power-user
-            // override, surfaced by the accent highlight against the baseline.
+            // Confirm-step editors. Country reuses the country popup; the rest
+            // open the shared editor. Each setter writes straight to `wf_config`
+            // (the worker's only input) with no cascade, so a change is an
+            // explicit override highlighted against the baseline.
             FlashMsg::FlashConfirmOpen(field) => {
                 match field {
                     ConfirmField::Country => self.open_country_popup(),
@@ -462,8 +450,8 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashConfirmSetRegion(r) => {
-                // TB322FC is PRC-only; the editor grays out ROW, but drop a
-                // stale dispatch defensively like the region card handler does.
+                // `prc_only`: the editor grays out ROW; drop a stale dispatch
+                // as the region card handler does.
                 if !(self.model_capabilities().prc_only && r == DeviceRegion::Row) {
                     self.wf_config.device_region = Some(r);
                 }
@@ -471,8 +459,8 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashConfirmSetTarget(t) => {
-                // Target ↔ region edit both map onto `modify_region`. TB322FC
-                // can't cross regions, so block OtherRegion defensively.
+                // Target and region edit both map onto `modify_region`; `prc_only`
+                // models cannot cross regions, so block OtherRegion.
                 if !(self.model_capabilities().prc_only && t == FlashTarget::OtherRegion) {
                     self.wf_config.modify_region = t == FlashTarget::OtherRegion;
                 }
@@ -483,10 +471,9 @@ impl App {
                 let wipe = m == DataMode::Wipe;
                 self.wf_config.wipe = wipe;
                 self.confirm_edit_field = None;
-                // Wipe still demands an explicit country/skip decision before
-                // leaving the data step. Keep-data normally means "do not
-                // change", but a confirm-step country override is valid and
-                // must survive toggling back to Keep.
+                // Wipe needs an explicit country/skip decision. Keep-data means
+                // "do not change", but a confirm-step country override must
+                // survive toggling back to Keep.
                 if wipe {
                     if matches!(self.wf_config.country_action, CountryAction::Unset) {
                         self.wf_config.country_action = CountryAction::Skip;
@@ -497,9 +484,8 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashConfirmSetRegionEdit(on) => {
-                // Region edit drives the same `modify_region` cross-region flag
-                // as the Target row, so apply the TB322FC PRC-only guard here
-                // too — otherwise this path bypasses the disabled Target option.
+                // Same `modify_region` flag as the Target row, so it needs the
+                // `prc_only` guard too or it bypasses the disabled Target option.
                 if !(self.model_capabilities().prc_only && on) {
                     self.wf_config.modify_region = on;
                 }
@@ -543,10 +529,9 @@ impl App {
                 let from = self.manual_rollback_format;
                 let to = from.next();
                 self.manual_rollback_format = to;
-                // Re-express whatever is already typed in the new form. Parsing
-                // here is the plain format parse, not the validating one, so a
-                // value the user has not finished correcting still converts
-                // instead of being wiped. Anything unparsable is left alone.
+                // Re-express what is already typed in the new form. This is the
+                // plain format parse, not the validating one, so a half-corrected
+                // value still converts; anything unparsable is left alone.
                 let values = self.manual_rollback_values;
                 if let Some((boot, vbmeta)) = self.manual_rollback_buffers.as_mut() {
                     for (buffer, value) in [(boot, values.0), (vbmeta, values.1)] {
@@ -872,26 +857,23 @@ mod tests {
         let mut app = App::default();
         app.wf_config.modify_rollback = setting;
         app.flash.firmware_folder = Some("/tmp/fw".to_string());
-        // The returned Task is never polled here, so the worker does not run —
-        // what matters is whether the handler got far enough to emit its
-        // opening log lines.
+        // The Task is never polled, so the worker does not run; only the
+        // handler's opening log lines matter.
         let _task = app.update_flash(FlashMsg::FlashExecStart);
         app.log_lines.clone()
     }
 
     #[test]
     fn every_rollback_setting_starts_the_flash() {
-        // Manual is the only setting that carries indices; the other settings
-        // must not be blocked on having them, or the run stalls on phase 1
-        // with an empty log after the phased op has already begun.
+        // Manual is the only setting that carries indices; the others must
+        // not be blocked on them, or the run stalls on phase 1 with an empty log.
         for setting in [
             RollbackSetting::On,
             RollbackSetting::Auto,
             RollbackSetting::Off,
         ] {
             let lines = started_lines(setting);
-            // Region / rollback / wipe - counted rather than matched on text so
-            // the assertion does not depend on the active locale.
+            // Region / rollback / wipe lines, counted so the check is locale-independent.
             let flash_lines = lines
                 .iter()
                 .filter(|line| line.starts_with("[Flash]"))

@@ -1,36 +1,29 @@
 //! Startup reachability probe — advisory only, nothing gates on it.
 //!
-//! LTBox pulls EDL loaders, root providers, driver packages and its own
-//! updates from GitHub, but the binary itself travels through other
-//! channels (mirrors, direct hand-off) into regions where GitHub is
-//! blocked while the rest of the internet works. Probing the link and
-//! GitHub *separately* lets the startup notice name which of the two is
-//! missing instead of collapsing both into a flat "offline".
+//! LTBox pulls EDL loaders, root providers, driver packages and updates from
+//! GitHub, which some regions block while the rest of the internet works.
+//! Probing the link and GitHub separately lets the startup notice name which
+//! is missing.
 //!
-//! Distinct from [`ltbox_device::driver::probe_connectivity`], which is
-//! the GitHub-only gate for the Qualcomm driver install/update buttons.
+//! Distinct from [`ltbox_device::driver::probe_connectivity`], the GitHub-only
+//! gate for the Qualcomm driver buttons.
 
 use std::time::Duration;
 
 use crate::downloader::USER_AGENT;
 
-/// Fixed-body link check. Microsoft's NCSI host backs the Windows
-/// connectivity indicator, so it stays reachable in the regions that block
-/// GitHub, and matching the exact body rejects a captive portal that
-/// answers 200 with a login page.
+/// Fixed-body link check. Microsoft's NCSI host stays reachable where GitHub
+/// is blocked, and the exact body rejects a captive portal answering 200 with
+/// a login page.
 const NCSI_URL: &str = "http://www.msftconnecttest.com/connecttest.txt";
 const NCSI_BODY: &str = "Microsoft Connect Test";
-/// Second opinion for networks that block Microsoft — Firefox's
-/// portal-detection host, same fixed-body contract.
+/// Fallback for networks that block Microsoft: Firefox's portal-detection host.
 const PORTAL_URL: &str = "http://detectportal.firefox.com/success.txt";
 const PORTAL_BODY: &str = "success";
-/// GitHub canary: the host every LTBox release / artifact lookup starts
-/// from, so its reachability is what actually predicts feature failure.
+/// GitHub canary: the host every release / artifact lookup starts from.
 const GITHUB_URL: &str = "https://api.github.com/";
 
-/// Short per-probe budget. Three sequential probes at worst, and this runs
-/// off the UI thread, so the whole check is bounded well under the time a
-/// user spends on the dashboard before starting anything.
+/// Per-probe budget; at most three sequential probes, run off the UI thread.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Outcome of the two startup reachability checks.
@@ -58,9 +51,8 @@ fn probe_agent() -> ureq::Agent {
         .new_agent()
 }
 
-/// Whether `url` answered with a body starting with `expected`. A captive
-/// portal that intercepts the request answers 200 with its own HTML, which
-/// fails the body match — that is the whole point of the fixed-body hosts.
+/// Whether `url` answered with a body starting with `expected`; a captive
+/// portal's 200 HTML fails the match.
 fn body_matches(agent: &ureq::Agent, url: &str, expected: &str) -> bool {
     agent
         .get(url)
@@ -70,8 +62,7 @@ fn body_matches(agent: &ureq::Agent, url: &str, expected: &str) -> bool {
         .is_some_and(|body| body.trim_start().starts_with(expected))
 }
 
-/// Run both checks. Never fails: every transport error is simply a
-/// `false`, because the caller only turns this into a log line.
+/// Run both checks. Never fails: a transport error is just `false`.
 pub fn probe() -> ConnectivityReport {
     let agent = probe_agent();
     let internet =

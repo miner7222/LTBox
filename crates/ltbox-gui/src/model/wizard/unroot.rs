@@ -27,11 +27,9 @@ pub(crate) struct UnrootWizard {
     pub(crate) step: usize,
     pub(crate) unroot_type: Option<UnrootType>,
     pub(crate) folder_path: Option<String>,
-    /// Loader file (`xbl_s_devprg_ns.melf`) for the EDL flash. Has
-    /// its own wizard step. A loader remembered for the connected model
-    /// auto-fills + auto-advances that step on Next from the method step
-    /// (mirrors the Root wizard's step-5 fold-through); with nothing
-    /// remembered the explicit loader picker shows.
+    /// Loader file (`xbl_s_devprg_ns.melf`) for the EDL flash, on its own step.
+    /// A loader remembered for the connected model is filled in and the step
+    /// skipped on Next from the method step; otherwise the picker shows.
     pub(crate) loader_path: Option<String>,
     /// Loader-resolution failure, kept apart from any scan error so a
     /// refused pick does not overwrite why the last scan failed.
@@ -63,9 +61,7 @@ impl Wizard for UnrootWizard {
         UNROOT_STEPS.len()
     }
     fn can_next(&self) -> bool {
-        // Step indexes match `UNROOT_STEPS` — loader is its own step
-        // (#1) so the folder step (#2) only gates on the backup folder
-        // pick and doesn't have to bundle a loader sub-row.
+        // Indexes match `UNROOT_STEPS`: loader (1) and folder (2) are separate steps.
         match self.step {
             0 => self.unroot_type.is_some(),
             1 => self.loader_path.is_some() && self.loader_error.is_none(),

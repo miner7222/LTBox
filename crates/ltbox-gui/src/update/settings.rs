@@ -1,13 +1,10 @@
-//! Settings-view handler: language, theme, default-loader path.
-//! Extracted from `main.rs`.
+//! Settings-view handler.
 use crate::*;
 use iced::Task;
 
 impl App {
-    /// Settings view — language pick, theme dropdown, default-loader
-    /// path management. Each variant either updates `self.settings`
-    /// and persists, or spawns the file picker `Task` for the loader
-    /// path.
+    /// Settings view: language, theme, font, driver mode, loader memory, backup
+    /// folder and temp-file cleanup.
     pub(crate) fn update_settings(&mut self, msg: SettingsMsg) -> Task<Message> {
         match msg {
             SettingsMsg::SetLanguage(l) => {
@@ -81,9 +78,8 @@ impl App {
                     return Task::none();
                 }
                 self.remember_edl_loader = remember;
-                // What has already been learned is kept either way: switching
-                // the feature back on restores it rather than making the user
-                // re-run an operation per device to relearn it.
+                // Learned loaders are kept either way, so switching back on
+                // restores them.
                 self.persist_settings();
                 Task::none()
             }
@@ -97,19 +93,16 @@ impl App {
                 Task::none()
             }
             SettingsMsg::CleanupTempFiles => {
-                // Skip while a flash/root op is live — it owns the very
-                // `work_*` dirs we'd be deleting. Also ignore a double-press.
+                // Skip while an operation runs (it owns the `work_*` dirs) and
+                // on a double-press.
                 if self.operation.is_running() || self.cleaning_temp {
                     return Task::none();
                 }
                 self.cleaning_temp = true;
-                // Hold the global `busy` lock for the (brief) sweep so every
-                // existing op-start guard blocks a flash/root from racing the
-                // cleaner — which enumerates `work_*`/`output_*` up front and
-                // could otherwise delete a dir a freshly-started op just
-                // recreated. The progress dialog is suppressed for this
-                // lightweight op (see `should_show_busy_progress_dialog`); the
-                // button's own "Cleaning…" state is the only feedback.
+                // Mark the app busy for the sweep so no operation can start and
+                // race the cleaner, which lists `work_*`/`output_*` up front and
+                // could delete a freshly recreated dir. The progress dialog is
+                // suppressed for it (see `should_show_busy_progress_dialog`).
                 self.operation.start(None, OperationKind::Cleanup, None);
                 Task::perform(
                     async {
@@ -125,8 +118,7 @@ impl App {
             SettingsMsg::CleanupDone => {
                 self.cleaning_temp = false;
                 self.operation.finish(false);
-                // Rescan so the size readout + enabled state reflect what
-                // actually remains (a locked dir could survive the sweep).
+                // Rescan: a locked dir can survive the sweep.
                 self.scan_temp_files_task()
             }
             SettingsMsg::TempScanDone(bytes) => {

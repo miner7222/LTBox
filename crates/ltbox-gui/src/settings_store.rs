@@ -1,7 +1,7 @@
-//! Persisted user settings (language, theme, recents).
+//! Persisted user settings (language, theme, recents, loader memory).
 //!
-//! Lives in the user's config dir (outside the install tree so
-//! replacing `ltbox.exe` keeps preferences).
+//! Lives in the user's config dir, outside the install tree, so replacing
+//! `ltbox.exe` keeps preferences.
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -17,21 +17,16 @@ const FILE_NAME: &str = "settings.json";
 /// Maximum visible recents; stored per folder category or file extension.
 pub const RECENT_MAX: usize = 5;
 
-/// Legacy global-files bucket key for migration from pre-category config.
-/// Older settings only had `files: Vec<String>` + `folders: Vec<String>`;
-/// rather than throw the history away, it is binned into these stable keys
-/// so the user still sees their last-used paths somewhere — they can pick
-/// the actual category bucket next time they Browse.
+/// Legacy bucket keys for the pre-category `files` / `folders` arrays: `migrate_legacy`
+/// bins that history under these keys so the last-used paths survive the upgrade.
 pub const LEGACY_FILES_KEY: &str = "legacy.files";
 pub const LEGACY_FOLDERS_KEY: &str = "legacy.folders";
 
 /// Per-category MRU path lists. Category keys are stable strings (see
-/// `PickerKind::storage_key` in pickers.rs) so the JSON roundtrips without
-/// coupling persistence to enum Variant ordering.
+/// `PickerKind::storage_key` in pickers.rs) so the JSON does not depend on enum
+/// variant order.
 ///
-/// `BTreeMap` (not `HashMap`) for deterministic JSON output — diffing the
-/// settings file for troubleshooting is far easier when key order doesn't
-/// jitter between saves.
+/// `BTreeMap` (not `HashMap`) keeps the JSON key order deterministic across saves.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecentPaths {
     #[serde(default)]
@@ -42,10 +37,9 @@ pub struct RecentPaths {
     pub selected_at_ms: BTreeMap<String, u64>,
 
     // ---- Legacy fields kept ONLY for load-migration ----------------------
-    // Old config had these as top-level arrays. `#[serde(default)]` lets
-    // newer builds still read them; `migrate_legacy()` folds them into
-    // `by_kind` after load. On the next save the legacy arrays emit as
-    // empty (skip on empty below) so the file gradually self-cleans.
+    // Old configs had these as top-level arrays. `migrate_legacy()` folds them into
+    // `by_kind` after load, and they are skipped on save once empty, so the file
+    // gradually self-cleans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -152,8 +146,8 @@ fn push_front_dedup(list: &mut Vec<String>, path: &str) -> bool {
 pub struct PersistedSettings {
     #[serde(default = "default_language")]
     pub language: String,
-    /// "system" | "light" | "dark". Blank in old configs — loader
-    /// upgrades via the legacy `dark_mode` field below.
+    /// "system" | "light" | "dark". Blank in old configs; the GUI then falls back to
+    /// the legacy `dark_mode` field below.
     #[serde(default = "default_theme")]
     pub theme: String,
     /// Material color seed. Defaults to the original indigo palette.
@@ -170,14 +164,8 @@ pub struct PersistedSettings {
     pub dark_mode: bool,
     #[serde(default)]
     pub recent_paths: RecentPaths,
-    /// Remember the EDL loader each model was last flashed with, and reuse
-    /// it automatically. On by default.
-    ///
-    /// Replaces the old single `default_loader_path`, which had no idea which
-    /// device it belonged to and so had to be bypassed by extension whenever
-    /// the connected model wanted a different loader form. Old settings files
-    /// simply drop that field (serde ignores unknown keys) and start with an
-    /// empty memory.
+    /// Remember the EDL loader each model was last flashed with, and reuse it
+    /// automatically. On by default.
     #[serde(default = "default_remember_edl_loader")]
     pub remember_edl_loader: bool,
     /// Model name (upper-case) → the loader path that model last completed a
@@ -187,15 +175,13 @@ pub struct PersistedSettings {
     /// `BTreeMap` for deterministic JSON, matching [`RecentPaths::by_kind`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub remembered_edl_loaders: BTreeMap<String, String>,
-    /// Qualcomm USB driver family: "userspace" or "kernel". Defaults to
-    /// "kernel" on Windows and Linux, "userspace" elsewhere (see
-    /// [`default_qcom_driver_mode`]). Unknown / missing values are normalized
-    /// by the GUI when loaded.
+    /// Qualcomm USB driver family: "userspace" or "kernel". The default follows
+    /// [`default_qcom_driver_mode`]. Unknown / missing values are normalized by the GUI
+    /// when loaded.
     #[serde(default = "default_qcom_driver_mode")]
     pub qcom_driver_mode: String,
-    /// Last window size (logical pixels) recorded on resize. Restored on
-    /// next launch so the user's preferred geometry survives restarts.
-    /// `None` on first run → the default 820×720 in `main` applies.
+    /// Last window size (logical pixels), recorded on resize and restored on the next
+    /// launch. `None` on first run: the default 820×720 in `main` applies.
     #[serde(default)]
     pub window_size: Option<(f32, f32)>,
     /// User dismissed the optional Qualcomm USB driver *update* prompt via
@@ -247,9 +233,8 @@ fn detect_os_language() -> String {
         .to_string()
 }
 
-/// EDL-loader memory is on out of the box: the overwhelmingly common case is
-/// one user with one or two devices, who would otherwise re-pick the same file
-/// on every operation.
+/// EDL-loader memory is on by default: most users have one or two devices and would
+/// otherwise re-pick the same file on every operation.
 fn default_remember_edl_loader() -> bool {
     true
 }
@@ -310,13 +295,10 @@ fn config_path() -> Option<PathBuf> {
 }
 
 /// Load settings. On missing / malformed / no config dir, returns
-/// [`first_run_default`] — the default with the UI language seeded from the
-/// OS locale (Korean / Chinese, else English).
+/// [`first_run_default`]; a malformed file is first renamed to `<name>.bad-<unix secs>`.
 ///
-/// Legacy `recent_paths.files` / `recent_paths.folders` arrays from
-/// pre-per-category builds are folded into `by_kind` under
-/// [`LEGACY_FILES_KEY`] / [`LEGACY_FOLDERS_KEY`] — no history loss when
-/// upgrading.
+/// Legacy `recent_paths.files` / `recent_paths.folders` arrays are folded into `by_kind`
+/// under [`LEGACY_FILES_KEY`] / [`LEGACY_FOLDERS_KEY`].
 pub fn load() -> PersistedSettings {
     let Some(path) = config_path() else {
         return first_run_default();
@@ -348,11 +330,9 @@ fn load_from(path: &Path) -> PersistedSettings {
     settings
 }
 
-/// First-run default — like [`PersistedSettings::default`] but with the UI
-/// language seeded from the OS locale so a fresh install opens in the user's
-/// language without a manual pick. A saved config (even one missing the
-/// `language` key) is respected as-is; only the no-saved-settings paths hit
-/// this.
+/// First-run default: [`PersistedSettings::default`] with the UI language seeded from
+/// the OS locale. A saved config (even one missing the `language` key) is respected
+/// as-is; only the no-saved-settings paths use this.
 fn first_run_default() -> PersistedSettings {
     PersistedSettings {
         language: detect_os_language(),

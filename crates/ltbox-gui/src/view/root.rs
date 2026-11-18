@@ -9,10 +9,8 @@ use theme::with_alpha;
 
 impl App {
     pub(crate) fn view_root_wizard(&self) -> Element<'_, Message> {
-        // Run-ID / Kernel-version popups render as
-        // top-level M3 dialog overlays via `view()`'s layer stack —
-        // do NOT early-return for any of them here, otherwise the
-        // wizard step underneath would unmount on Cancel.
+        // Run-ID / kernel-version popups are overlays from `view()`'s layer
+        // stack. Do not early-return for them: the step underneath would unmount.
         if self.log_popup_open && self.root.is_in_exec() {
             return self.log_popup_view();
         }
@@ -77,8 +75,7 @@ impl App {
         } else {
             wizard_step_body(step_title, body)
         };
-        // Step 7 is in-progress — no nav. Step 8 (APatch KPM) needs
-        // the normal Back/Next bar, so exclude only 7 explicitly.
+        // Step 7 is the running step and has no nav; step 8 (APatch KPM) does.
         let nav = if self.root.step != 7 {
             let is_start = self.root.step == 6;
             let label_owned = if is_start {

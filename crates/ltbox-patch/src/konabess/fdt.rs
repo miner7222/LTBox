@@ -70,9 +70,9 @@ pub fn parse_fdt_gpu_info(fdt: &[u8]) -> Result<FdtGpuInfo> {
 
 /// Replace the whole GPU group sibling set with an export's table.
 ///
-/// The chip gate is evaluated before serialization. Structure bytes before and
-/// after the group region are copied verbatim; the existing strings block is
-/// also copied verbatim and extended only for property names absent from it.
+/// The chip gate runs before serialization. Structure bytes outside the group
+/// region and the existing strings block are copied verbatim; the strings block
+/// only grows, for property names it lacks.
 pub fn replace_fdt_gpu_table(fdt: &[u8], export: &KonaBessExport) -> Result<Vec<u8>> {
     replace_fdt_gpu_table_with_chip(fdt, export, None)
 }
@@ -140,12 +140,11 @@ pub struct GpuTableNormalization {
 /// Normalize editor-owned row order while preserving the source table's
 /// initial-frequency targets.
 ///
-/// For each initial-power-level index, the original target frequency is looked
-/// up in the edited row order. If that frequency no longer exists, the old
-/// index is clamped to the edited group's last row. This makes deletion
-/// deterministic and guarantees an in-range index. Per-row properties are not
-/// reordered or synthesized; only the row id and its scalar `reg` cell are
-/// rewritten to the row's new zero-based position.
+/// Each initial-power-level index is retargeted to the row with the original
+/// target frequency; if that row is gone, the old index is clamped into the
+/// edited group, so deletion is deterministic and the index stays in range.
+/// Only each row's id and scalar `reg` cell are rewritten (to its new
+/// zero-based position); other per-row properties are left alone.
 ///
 /// # Errors
 ///

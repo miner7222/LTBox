@@ -5,43 +5,35 @@ use crate::*;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DevicePollResult {
     pub(crate) status: ConnectionStatus,
-    /// `status == Fastboot` and the endpoint answered `is-userspace: yes`,
-    /// i.e. fastbootd rather than the bootloader. Display only — every
-    /// behavioural branch treats the two the same.
+    /// Fastboot endpoint answered `is-userspace: yes` (fastbootd, not the
+    /// bootloader). Display only; no behaviour branches on it.
     pub(crate) fastboot_userspace: bool,
     pub(crate) model: String,
-    /// Trimmed `ro.build.version.release`. Only populated by ADB polls;
-    /// fastboot and EDL do not expose Android system properties.
+    /// Trimmed `ro.build.version.release`. ADB polls only; fastboot and EDL
+    /// expose no Android properties.
     pub(crate) android_version: String,
     pub(crate) slot: String,
-    /// Trimmed `ro.build.display.id` — leading device-model prefix
-    /// stripped so the dashboard cell stays readable.
+    /// `ro.build.display.id` with the leading device-model prefix stripped.
     pub(crate) firmware: String,
-    /// Untrimmed `ro.build.display.id` exactly as the device reports
-    /// it. Required by Lenovo's OTA `querynewfirmware` endpoint —
-    /// passing the trimmed form returns an empty `<firmwareupdate/>`
-    /// because the upstream key matches the full string.
+    /// `ro.build.display.id` exactly as reported. Lenovo's OTA
+    /// `querynewfirmware` matches the full string; the trimmed form returns
+    /// an empty `<firmwareupdate/>`.
     pub(crate) firmware_full: String,
     pub(crate) arb: String,
-    /// `boot` / `vbmeta_system` rollback floors classified from the
-    /// fastboot `stored_rollback_index:N` vars. Only ever `Some` on a
-    /// bootloader-mode poll — no other transport reports them.
+    /// `boot` / `vbmeta_system` rollback floors classified from the fastboot
+    /// `stored_rollback_index:N` vars. `Some` only on a bootloader-mode poll.
     pub(crate) rollback_floors: Option<ltbox_patch::rollback::FastbootRollbackFloors>,
     pub(crate) ram: String,
     pub(crate) storage: String,
     pub(crate) market_name: String,
-    /// Device serial captured from ADB or fastboot. Empty when no
-    /// connected device produced a serial (EDL/Sahara never reports
-    /// one). Used by the device-info popup to query the Lenovo PTSTPD
-    /// API. Reset to empty whenever the device disconnects so a stale
-    /// serial does not bleed across hardware swaps mid-session.
+    /// Serial from ADB or fastboot (EDL/Sahara reports none); keys the Lenovo
+    /// PTSTPD query. Reset on disconnect so a stale serial cannot carry over
+    /// to a different device.
     pub(crate) serial: String,
     pub(crate) platform_supported: Option<bool>, // None = unknown, Some(true) = qcom, Some(false) = unsupported
 }
 
-/// Loading state for the device-info popup. The popup view branches on
-/// this to render a progress indicator / table / error banner while keeping the
-/// modal open so the user has a clear target to dismiss.
+/// Loading state for the device-info popup.
 #[derive(Debug, Clone)]
 pub(crate) enum DeviceInfoState {
     /// Fetch is in flight; render a progress indicator and disable retry.
@@ -52,10 +44,9 @@ pub(crate) enum DeviceInfoState {
     Error(String),
 }
 
-/// Loading state for the firmware-OTA popup. Mirrors `DeviceInfoState`
-/// but adds a `NoUpdate` arm — the upstream `<firmwareupdate/>` empty
-/// payload means "no OTA staged for this firmware id" and renders as a
-/// single placeholder line, not as an error banner.
+/// Loading state for the firmware-OTA popup. Like `DeviceInfoState` plus
+/// `NoUpdate`: an empty upstream `<firmwareupdate/>` means no OTA is staged
+/// for this firmware id and is not an error.
 #[derive(Debug, Clone)]
 pub(crate) enum OtaPopupState {
     Loading,
@@ -104,13 +95,11 @@ pub(crate) fn parse_hwboardid_ram_storage(hwboardid: &str) -> (String, String) {
     (String::new(), String::new())
 }
 
-/// How the rollback-index popup renders a stored floor. Clicking a value
-/// steps to the next form and wraps back around.
+/// How the rollback-index popup renders a stored floor; clicking a value
+/// cycles to the next form.
 ///
-/// A rollback index is a unix timestamp, but fastboot reports it base-16
-/// (`stored_rollback_index:N = 41B7A200`), so the raw form a user sees in
-/// `fastboot getvar all` is hex. The cycle walks outward from that raw
-/// value to progressively more readable renderings.
+/// A rollback index is a unix timestamp, but fastboot reports it in hex
+/// (`stored_rollback_index:N = 41B7A200`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum RollbackValueFormat {
     /// As `fastboot getvar all` prints it — base-16.
@@ -131,8 +120,7 @@ impl RollbackValueFormat {
         }
     }
 
-    /// Render `index` in this form. The returned string is exactly what
-    /// the copy button puts on the clipboard.
+    /// Render `index` in this form; this is also the copy-button text.
     pub(crate) fn render(self, index: u64) -> String {
         match self {
             Self::Raw => format!("0x{index:X}"),
@@ -141,8 +129,7 @@ impl RollbackValueFormat {
         }
     }
 
-    /// i18n key naming the current form, shown beside the value so the
-    /// cycle is self-explanatory rather than a guessing game.
+    /// i18n key naming the current form, shown beside the value.
     pub(crate) const fn label_key(self) -> &'static str {
         match self {
             Self::Raw => "rollback_format_raw",
@@ -151,9 +138,8 @@ impl RollbackValueFormat {
         }
     }
 
-    /// Parse user input using the same convention used for rendering:
-    /// raw is `0x…` hexadecimal, Unix is decimal, and Date is a UTC
-    /// calendar day represented at midnight.
+    /// Parse input in the form [`Self::render`] produces: `0x…` hex, decimal,
+    /// or a UTC calendar day taken at midnight.
     pub(crate) fn parse(self, input: &str) -> Result<u64, String> {
         let trimmed = input.trim();
         match self {
@@ -222,11 +208,9 @@ pub(crate) fn current_unix_timestamp() -> Option<u64> {
 /// Rollback-protection answer for a model, or `""` when the model is
 /// unknown.
 ///
-/// `is_rollback_protected_model` is a deny-list (only TB322FC and TB324ZC
-/// are exempt), so
-/// an unhandled empty model would read as protected — the Dashboard would
-/// assert "Yes" for a device it can't identify instead of falling back to
-/// the em dash every other field shows for an empty string.
+/// `is_rollback_protected_model` treats every model except the unprotected
+/// ones (TB322FC, TB324ZC) as protected, so an empty model would read "Yes"
+/// instead of the em dash other fields show.
 pub(crate) fn arb_from_model(model: &str) -> &'static str {
     if model.trim().is_empty() {
         ""
@@ -253,10 +237,8 @@ pub(crate) fn active_slot_suffix(slot: Option<&str>) -> &'static str {
 /// then `adb reboot edl`. ADB live: `adb reboot edl`. If ADB is not
 /// usable, ask the user to reboot manually and wait for 9008.
 ///
-/// `conn` is the caller's captured `App.connection`, used only as a
-/// fallback. The body re-probes EDL → Fastboot → ADB live because flows
-/// (e.g. Flash) may reboot the device themselves between worker spawn
-/// and the EDL transition (ADB → bootloader for variable query), making
+/// `conn` is only a fallback: the body re-probes EDL → Fastboot → ADB because
+/// a flow may reboot the device between worker spawn and this call, leaving
 /// the captured `conn` stale.
 pub(crate) fn transition_to_edl(
     conn: ConnectionStatus,
@@ -286,11 +268,9 @@ pub(crate) fn probe_connection_for_edl() -> Option<ConnectionStatus> {
     }
 }
 
-/// Wrap a heavy blocking flow as a `Task<Message>`. Runs `f` on the
-/// 64 MiB heavy-task pool via `spawn_blocking + run_heavy`, then sends
-/// the result through `done`. Both `run_heavy` panics and the
-/// `spawn_blocking` JoinError collapse to a single error string passed
-/// to `fallback`, sparing callers a two-level `unwrap_or_else` chain.
+/// Run `f` as a `Task<Message>` on a 64 MiB stack (`spawn_blocking` +
+/// `run_heavy`) and send the result through `done`. A `run_heavy` panic or a
+/// `spawn_blocking` join error is mapped through `fallback`.
 pub(crate) fn task_heavy<T, F, G, D>(f: F, done: D, fallback: G) -> Task<Message>
 where
     F: FnOnce() -> T + Send + 'static,

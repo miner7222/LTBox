@@ -1,16 +1,13 @@
 //! Lenovo PTSTPD `getPadFlashingMachine` client.
 //!
 //! Resolves a device MTM against the public flashing-machine endpoint and
-//! returns the official QFIL (flash-tool) package for that model. Powers the
-//! dashboard's "click firmware → QFIL Firmware" flow.
+//! returns the official QFIL (flash-tool) package for that model.
 //!
 //! CN-market only: the endpoint answers for MTMs of devices sold in mainland
-//! China. The GUI gates on `SaleArea == CN` before calling this and points
-//! global devices at Lenovo's Software Fix tool instead.
+//! China, so the GUI gates on `SaleArea == CN`.
 //!
-//! The response envelope is `{ code, message, data: [ ... ] }` with `data` an
-//! array of package entries. Only the first entry is surfaced (mirrors the
-//! upstream tool). Chinese-text fields are raw UTF-8 and returned verbatim.
+//! The response envelope is `{ code, message, data: [ ... ] }`; only the first
+//! `data` entry is surfaced. Chinese text is returned verbatim as UTF-8.
 
 use crate::error::{LtboxError, Result};
 use serde::Deserialize;
@@ -20,9 +17,8 @@ use serde::Deserialize;
 const ENDPOINT_B64: &str = "aHR0cHM6Ly9wdHN0cGQubGVub3ZvLmNvbS5jbi9ob21lL0NvbmZpZ3VyYXRpb25RdWVyeS9nZXRQYWRGbGFzaGluZ01hY2hpbmU=";
 const PACKAGE_PASSWORD_B64: &str = "RkMoZnY6U2tuUg==";
 
-/// Extraction password for the official QFIL package archive. A fixed
-/// constant published in Lenovo's own flashing tool — not device-specific.
-/// De-obfuscated at runtime (see [`crate::obf`]).
+/// Extraction password for the official QFIL package archive: a fixed constant
+/// from Lenovo's own flashing tool, de-obfuscated at runtime ([`crate::obf`]).
 pub fn package_password() -> String {
     crate::obf::reveal(PACKAGE_PASSWORD_B64)
 }
@@ -52,9 +48,8 @@ struct Envelope {
     data: Option<Vec<serde_json::Value>>,
 }
 
-/// Blocking POST against the endpoint with `{"mtm": mtm}`. Returns
-/// `Ok(None)` when the MTM resolves to no package (empty `data`), and
-/// `Ok(Some(_))` for the first package entry.
+/// Blocking POST with `{"mtm": mtm}`. `Ok(None)` when `data` is empty,
+/// otherwise the first package entry.
 pub fn fetch_qfil_package(mtm: &str) -> Result<Option<QfilPackage>> {
     let mtm = mtm.trim();
     if mtm.is_empty() {
@@ -82,9 +77,8 @@ pub fn fetch_qfil_package(mtm: &str) -> Result<Option<QfilPackage>> {
     Ok(Some(parse_entry(&entry)))
 }
 
-/// Pull the fields we surface from one `data` object. Missing / null values
-/// become empty strings (or `None` for the timestamps) so the popup can skip
-/// blank rows without branching on the upstream JSON shape.
+/// Pull the surfaced fields from one `data` object; missing or null values
+/// become empty strings (`None` for the timestamp).
 fn parse_entry(v: &serde_json::Value) -> QfilPackage {
     let s = |k: &str| -> String {
         match v.get(k) {

@@ -401,11 +401,9 @@ fn runtime_theme() -> RuntimeTheme {
     )
 }
 
-/// Current runtime dark-mode flag (kept in sync by `sync_runtime_theme`). Lets
-/// view code pick light/dark assets without an `&iced::Theme` in hand.
-///
-/// Only consumed by the macOS About-view app-icon selection, so it is dead on
-/// every other target.
+/// Current runtime dark-mode flag (kept in sync by `sync_runtime_theme`), for view code
+/// with no `&iced::Theme` in hand. Only the macOS About-view app-icon selection reads
+/// it, so it is dead on other targets.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn runtime_dark() -> bool {
     runtime_theme().dark_mode
@@ -439,12 +437,9 @@ pub fn iced_palette(seed: ThemeSeed, dark_mode: bool) -> iced::theme::Palette {
     }
 }
 
-/// Probe `iced::Theme` for the active mode. No flag is stored on the theme
-/// directly, so the heuristic looks at `palette().background` — light
-/// backgrounds have a high red channel (M3 surface tones land at `0xFB+`
-/// on light), dark ones at `0x13+`. Centralised so both `theme::tooltip_style`
-/// (and the rest of this module) and the GUI call sites agree on a single
-/// source of truth.
+/// Probe `iced::Theme` for the active mode via `palette().background`: light
+/// backgrounds have a high red channel (M3 surface tones land at `0xFB+`), dark ones a
+/// low one (`0x13+`). One source of truth for this module and the GUI call sites.
 pub fn is_dark(t: &iced::Theme) -> bool {
     t.palette().background.r < 0.5
 }
@@ -454,11 +449,9 @@ pub const fn with_alpha(c: Color, a: f32) -> Color {
     Color { a, ..c }
 }
 
-/// Blend `overlay` over `base` with the given alpha. Used to flatten
-/// an M3 state-layer (translucent on_X color) into a single opaque
-/// background tint, since `iced::widget::button::Style::background`
-/// only accepts one color/gradient at a time and can't stack a
-/// semi-transparent layer over the tonal fill.
+/// Blend `overlay` over `base` with the given alpha, flattening an M3 state layer
+/// into one opaque tint, since `button::Style::background` takes a single
+/// color/gradient and cannot stack a translucent layer over the tonal fill.
 pub fn mix_color(base: Color, overlay: Color, alpha: f32) -> Color {
     let inv = 1.0 - alpha;
     Color {
@@ -475,10 +468,9 @@ pub mod state {
     pub const PRESSED: f32 = 0.12;
 }
 
-/// M3 state-layer alpha for an `iced::widget::button::Status` — `0.0`
-/// when idle, `HOVER` on hover, `PRESSED` while pressed. Centralises the
-/// `match status { Hovered => HOVER, Pressed => PRESSED, _ => 0.0 }` pattern
-/// so button style closures share one implementation.
+/// M3 state-layer alpha for an `iced::widget::button::Status`: `0.0` when idle,
+/// `HOVER` on hover, `PRESSED` while pressed, so button style closures share one
+/// implementation.
 pub fn state_alpha(status: iced::widget::button::Status) -> f32 {
     use iced::widget::button::Status;
     match status {
@@ -488,13 +480,10 @@ pub fn state_alpha(status: iced::widget::button::Status) -> f32 {
     }
 }
 
-/// Combine [`state_alpha`] with [`with_alpha`] to produce the M3
-/// state-layer tint for a button's background overlay. Returns
-/// `None` when the button is idle so callers can use
-/// `Option<Background>` directly.
-///
-/// `layer_color` is the M3 "on-X" color of the surface the button
-/// sits on (usually `palette.on_surface`).
+/// Combine [`state_alpha`] with [`with_alpha`] into the M3 state-layer tint for a
+/// button's background overlay; `None` when idle so callers can use
+/// `Option<Background>` directly. `layer_color` is the M3 "on-X" color of the
+/// surface the button sits on (usually `palette.on_surface`).
 pub fn state_layer_bg(status: iced::widget::button::Status, layer_color: Color) -> Option<Color> {
     let alpha = state_alpha(status);
     if alpha == 0.0 {
@@ -527,10 +516,8 @@ pub fn button_radius(status: iced::widget::button::Status) -> f32 {
     }
 }
 
-/// M3 shape scale (corner radius in px).
-///
-/// Keep this module as the plain M3 corner scale; components choose the
-/// appropriate rung at their call sites.
+/// M3 shape scale (corner radius in px). Components choose the rung at their call
+/// sites.
 pub mod shape {
     pub const XS: f32 = 4.0;
     pub const SM: f32 = 8.0;
@@ -540,10 +527,9 @@ pub mod shape {
     pub const FULL: f32 = 9999.0;
 }
 
-/// Broadest of the three bundled families: the only one carrying Hangul, and it
-/// covers Latin and Cyrillic as well. Used for every language whose script it
-/// renders idiomatically — the Japanese and Chinese families exist for their
-/// regional CJK forms, not for Latin or Cyrillic coverage.
+/// Broadest of the three bundled families: the only one carrying Hangul, and it also
+/// covers Latin and Cyrillic. Used for every language whose script it renders
+/// idiomatically; the Japanese and Chinese families exist for their regional CJK forms.
 const DEFAULT_FONT_FAMILY: &str = "Noto Sans KR";
 
 /// UI font family for this run, bound by [`set_font_family`].
@@ -551,35 +537,29 @@ static FONT_FAMILY: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new
 /// Whether this run should use iced's OS-default font instead of bundled Noto.
 static USE_SYSTEM_FONT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// The active UI font family — always one the app itself registers.
+/// The active UI font family, always one the app itself registers.
 ///
-/// This has to name a family `fn main` actually registers
-/// (`Noto Sans JP` / `Noto Sans KR` / `Noto Sans SC`). Naming a family it does
-/// not — `Noto Sans CJK KR`, the separate Source Han release — resolved only on
-/// machines that happened to have that family installed. Everywhere else
-/// cosmic-text found no match and fell through to fallback, where a *weighted*
-/// request ([`emphasis`]) is resolved by weight proximity across the entire
-/// font database: it lands on whatever unrelated face on that machine happens
-/// to own a 500-weight, which for some users was an icon font, so every
-/// medium-weight Latin run rendered as tofu and arrows while unweighted text
-/// beside it looked fine.
+/// It must name a family `fn main` registers (`Noto Sans JP` / `Noto Sans KR` /
+/// `Noto Sans SC`). An unregistered family (e.g. `Noto Sans CJK KR`) resolves only on
+/// machines that happen to have it; elsewhere cosmic-text falls back, and a *weighted*
+/// request ([`emphasis`]) is then matched by weight proximity across the whole font
+/// database, which can land on an unrelated face such as an icon font and render
+/// medium-weight Latin runs as tofu.
 pub fn font_family() -> &'static str {
     FONT_FAMILY.get().copied().unwrap_or(DEFAULT_FONT_FAMILY)
 }
 
 /// Bind the UI font family for this run.
 ///
-/// Called once from `fn main` before the iced settings are built. A language
-/// change afterwards takes effect on the next launch: iced fixes `default_font`
-/// at startup, and letting [`emphasis`] move while it stayed put would split
-/// the UI across two faces mid-session.
+/// Called once from `fn main` before the iced settings are built. iced fixes
+/// `default_font` at startup, so a language change applies on the next launch;
+/// moving [`emphasis`] alone would split the UI across two faces mid-session.
 pub fn set_font_family(family: &'static str) {
     let _ = FONT_FAMILY.set(family);
 }
 
-/// Bind the font source for this run. Repeated calls are intentionally ignored:
-/// iced fixes its default font at startup, and tests may initialize `App` more
-/// than once in the same process.
+/// Bind the font source for this run. Repeated calls are ignored: iced fixes its
+/// default font at startup, and tests may initialize `App` more than once per process.
 pub fn set_use_system_font(use_system_font: bool) {
     let _ = USE_SYSTEM_FONT.set(use_system_font);
 }
@@ -593,21 +573,19 @@ pub fn default_font() -> iced::Font {
     }
 }
 
-/// Bundled fixed-width face, for content that reads as data rather than prose:
-/// file paths and country codes. Latin only — a CJK monospace would cost
-/// megabytes, and the mockup's JetBrains Mono has no CJK either, so localized
-/// copy must not ask for this.
+/// Bundled fixed-width face for data-like content (file paths, country codes).
+/// Latin only: a CJK monospace would cost megabytes, so localized copy must not ask
+/// for this.
 pub fn mono_font() -> iced::Font {
     iced::Font::with_name("Noto Sans Mono")
 }
 
 /// The bundled face that renders `language_code` idiomatically.
 ///
-/// Han characters shared between the three locales have different regional
-/// forms, and a face only carries one set — so a Japanese UI rendered through
-/// the Korean face shows Korean kanji shapes next to kana pulled from the
-/// Japanese face by script fallback. Pick the matching face up front and let
-/// fallback handle only what it genuinely lacks.
+/// Han characters shared between the three locales have different regional forms and
+/// a face carries only one set, so a Japanese UI through the Korean face would show
+/// Korean kanji shapes. Pick the matching face up front; fallback covers only what it
+/// lacks.
 pub fn font_family_for_language(language_code: &str) -> &'static str {
     match language_code {
         "ja" => "Noto Sans JP",
@@ -616,10 +594,8 @@ pub fn font_family_for_language(language_code: &str) -> &'static str {
     }
 }
 
-/// M3 Expressive type emphasis.
-///
-/// Expressive carries hierarchy on weight contrast as much as on size. Each
-/// bundled family provides regular, medium and bold faces so these requests
+/// M3 Expressive type emphasis: hierarchy carried by weight contrast as much as size.
+/// Each bundled family provides regular, medium and bold faces, so these requests
 /// resolve within the active family.
 pub mod emphasis {
     use iced::Font;
@@ -703,14 +679,13 @@ pub fn surface_card_style(
 pub const DRAWER_EDGE_SHADOW_WIDTH: f32 = 14.0;
 
 /// Gradient cast along a full-height drawer's trailing edge.
+/// Gradient cast along a full-height drawer's trailing edge.
 ///
-/// [`elevation`]'s downward offset would land on the status bar rather than
-/// the content the drawer covers, and a container `Shadow` blurs in every
-/// direction, leaving a halo against the title and status bars. A gradient
-/// strip beside the panel casts to one side only.
+/// [`elevation`]'s downward offset would land on the status bar, and a container
+/// `Shadow` blurs in every direction, leaving a halo against the title and status
+/// bars; a gradient strip beside the panel casts to one side only.
 ///
-/// `openness` runs from 0.0 (closed) to 1.0 (open); the shadow fades with it
-/// instead of vanishing in one frame at the end of the collapse.
+/// `openness` runs from 0.0 (closed) to 1.0 (open); the shadow fades with it.
 pub fn drawer_edge_gradient(dark_mode: bool, openness: f32) -> iced::Background {
     use iced::{Color, gradient};
     let t = openness.clamp(0.0, 1.0);
@@ -726,9 +701,8 @@ pub fn drawer_edge_gradient(dark_mode: bool, openness: f32) -> iced::Background 
 /// M3 elevation → `iced::Shadow`. `0` = none, `5` = modal-dialog.
 pub fn elevation(level: u8, dark_mode: bool) -> iced::Shadow {
     use iced::{Color, Shadow, Vector};
-    // Dark M3 conveys elevation mainly through tonal surface containers, so
-    // shadows stay subtle — a gentle ramp by level (0.20..0.36) rather than a
-    // flat, heavy 0.6 black. Light theme keeps one soft key shadow.
+    // Dark M3 conveys elevation mainly through tonal surface containers, so shadows stay
+    // subtle: a gentle ramp by level (0.20..0.36). Light theme keeps one soft key shadow.
     let shadow_color = if dark_mode {
         let alpha = 0.20 + 0.04 * f32::from(level.min(5).saturating_sub(1));
         Color::from_rgba(0.0, 0.0, 0.0, alpha)

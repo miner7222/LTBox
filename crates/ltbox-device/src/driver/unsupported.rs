@@ -1,9 +1,6 @@
-//! Non-Windows, non-Linux hosts (macOS today): no driver / udev-rule story.
-//!
-//! macOS needs no kernel driver and no udev rules — libusb claims the Qualcomm
-//! EDL device directly and serial nodes need no extra permission. Every probe
-//! returns a no-op so the GUI's driver banner never fires and the install
-//! button stays inert.
+//! Non-Windows, non-Linux hosts (macOS): no driver or udev rules are needed,
+//! since userspace USB claims the EDL device directly. Probes are no-ops, so
+//! the GUI's driver banner never fires; kernel mode reports unsupported.
 
 use super::{DriverError, DriverStatus, DriverUpdate, Result, qcom_driver_mode};
 

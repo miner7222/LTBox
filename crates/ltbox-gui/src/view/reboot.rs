@@ -138,9 +138,8 @@ impl App {
             self.wizard_list_text(theme::text_size::BODY_MEDIUM, theme::text_size::BODY_SMALL);
         let row_height = self.wizard_list_row_height();
         let current_transport = self.t(self.connection_label_key()).to_string();
-        // With nothing attached every row would carry the same reason, which
-        // tells the rows apart from nothing. The context line above already
-        // says it once.
+        // With nothing attached every row would repeat the same reason; the
+        // context line above states it once.
         let show_reasons = conn != ConnectionStatus::None;
         let context = row![
             text(self.t("reboot_current_connection").to_string())
@@ -220,9 +219,8 @@ impl App {
             cards = cards.push(btn);
         }
 
-        // Same inset as the root list so both single-column lists sit on the
-        // same margins. The context line stays adjacent to the availability it
-        // explains instead of relying on the distant status bar.
+        // Same inset as the root list. The context line stays next to the
+        // availability it explains.
         let list = column![context, cards]
             .spacing(14.0)
             .padding([20.0, 28.0])

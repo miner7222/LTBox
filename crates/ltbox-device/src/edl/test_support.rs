@@ -4,13 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Process-unique suffix for temp files/dirs. `{pid}-{nanos}` alone is not
-/// enough: `cargo test` runs these in parallel within one process (shared
-/// pid), and the macOS x86_64 runner's `SystemTime` is coarse enough that
-/// two helpers entering the same tick got identical names — then one's
-/// `Drop` `remove_dir_all` deleted the dir the other was still writing,
-/// panicking with `NotFound`. A process-global counter makes the name
-/// unique even within a single clock tick.
+/// Process-unique suffix for temp files/dirs. Parallel tests share a pid and
+/// the macOS x86_64 runner's clock is coarse, so `{pid}-{nanos}` can collide
+/// and one test's `Drop` deletes another's dir; the counter prevents that.
 pub(crate) fn unique_temp_id() -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()

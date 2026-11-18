@@ -13,8 +13,9 @@ use tracing::info;
 
 use crate::avb::{self, AvbImageInfo};
 
-/// Rollback-patch mode: `On` always patches, `Auto` only when image
-/// index < device floor, `Off` skips entirely, and `Manual` uses validated targets.
+/// Rollback-patch mode: `On` patches whenever a device floor exists, `Auto`
+/// only when image index < device floor, `Off` skips, and `Manual` uses
+/// validated caller-supplied targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollbackMode {
     On,
@@ -126,9 +127,8 @@ pub fn classify_fastboot_rollback_floors(
 }
 
 /// Decide whether to patch given mode, image index, and device index.
-/// `device_index = None` → device has no non-stock value committed; skip
-/// under any mode. Callers must gate on fastboot reachability before
-/// calling — unreachable under `ON` should abort at the wizard level.
+/// `device_index = None` (no non-stock value committed) never patches. `Off`
+/// and `Manual` never patch here.
 pub fn needs_patch(mode: RollbackMode, image_index: u64, device_index: Option<u64>) -> bool {
     match mode {
         RollbackMode::Off | RollbackMode::Manual => false,

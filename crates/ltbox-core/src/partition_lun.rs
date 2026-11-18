@@ -1,25 +1,8 @@
-//! Per-partition UFS LUN map for supported Lenovo Qualcomm tablets.
+//! Per-partition UFS LUN map shared by every model in
+//! [`crate::model::SUPPORTED_MODELS`]; unknown labels need a GPT scan.
 //!
-//! LUN is a hardware property: the mapping holds across every firmware rev on
-//! the same model. The table below was built by decrypting + comparing the
-//! rawprogram catalogs of all six supported models — TB320FC / TB321FU /
-//! TB322FC / TB323FU / TB520FU / TB710FU (`physical_partition_number` per
-//! `label`). Every partition that appears on more than one of those models sits
-//! on the SAME LUN on each (verified: zero conflicts), so the map is
-//! model-agnostic — there is no per-model LUN override. Partitions present on
-//! only some models (e.g. `init_boot`, `efisp`, `oemowninfo`) keep that same
-//! consistent LUN and are listed too.
-//!
-//! A static hit lets ARB / country-code / unroot / root skip the rawprogram
-//! catalog scan + `.x` decrypt — qdl-rs resolves start/length from the device
-//! GPT once given LUN + name. A label NOT in the map (a partition unique to a
-//! future model / layout not in that comparison) returns `None`; the caller
-//! falls back to a device GPT scan (`EdlSession::lun_for`).
-//!
-//! Multi-LUN labels are deliberately omitted (they cannot map to one LUN):
-//! `primarygpt` / `backupgpt` (a GPT table per LUN), `last_parti` (an end
-//! marker per LUN), and the bootloader copies duplicated on LUN 1 + 2
-//! (`xbl`, `xbl_config`, `multiimgqti`, `multiimgoem`, `tme_*`, `xbl_ac_config`).
+//! Multi-LUN labels are omitted because they cannot map to one LUN: GPT tables,
+//! `last_parti` end markers, and bootloader copies duplicated on LUNs 1 and 2.
 
 /// UFS LUN for a partition LTBox may operate on individually. Slot suffixes
 /// (`_a`/`_b`) and case are normalised. Returns `None` for labels not in the
@@ -40,7 +23,7 @@ pub fn lun_for_partition(label: &str) -> Option<u8> {
         // LUN 3 — board config.
         "align_to_128k_1" | "cdt" | "ddr" => 3,
 
-        // LUN 4 — boot-related and AVB images, firmware, vendor.
+        // LUN 4 — boot and AVB images, firmware, VM partitions.
         "abl" | "aop" | "aop_config" | "bluetooth" | "boot" | "connsec" | "cpucp" | "cpucp_dtb"
         | "dcp" | "devcfg" | "devinfo" | "dip" | "dpm" | "dsp" | "dtbo" | "efisp"
         | "featenabler" | "hyp" | "hyp_ac_config" | "imagefv" | "init_boot" | "keymaster"
@@ -62,8 +45,8 @@ pub fn lun_for_partition(label: &str) -> Option<u8> {
 
 /// Strip the trailing `_a` / `_b` slot suffix if present.
 pub fn strip_slot_suffix(label: &str) -> &str {
-    // Byte-slicing the last two bytes panicked on a non-ASCII tail (GPT names
-    // are untrusted); `strip_suffix` only cuts at a matched ASCII suffix.
+    // GPT names are untrusted; byte-slicing the last two bytes would panic on a
+    // non-ASCII tail, `strip_suffix` only cuts at a matched ASCII suffix.
     ["_a", "_A", "_b", "_B"]
         .iter()
         .find_map(|suffix| label.strip_suffix(suffix))

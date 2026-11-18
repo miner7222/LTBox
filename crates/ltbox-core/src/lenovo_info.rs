@@ -1,9 +1,8 @@
 //! Lenovo PTSTPD ConfigurationQuery client.
 //!
 //! Resolves a device serial number against the public
-//! `getMachineSequenceInfo` endpoint and returns the `data` block as an
-//! ordered list of `(key, value)` pairs ready for table rendering. Used
-//! by the GUI's device-info popup.
+//! `getMachineSequenceInfo` endpoint and returns the `data` block as ordered
+//! `(key, value)` pairs.
 
 use serde::Deserialize;
 
@@ -13,10 +12,9 @@ use crate::error::{LtboxError, Result};
 // runtime via `obf::reveal` (see `obf.rs` — not security).
 const ENDPOINT_B64: &str = "aHR0cHM6Ly9wdHN0cGQubGVub3ZvLmNvbS5jbi9ob21lL0NvbmZpZ3VyYXRpb25RdWVyeS9nZXRNYWNoaW5lU2VxdWVuY2VJbmZv";
 
-/// Display order for known fields. Keys missing from the response are
-/// skipped silently so a future schema addition does not break the
-/// popup; unknown keys are not surfaced (intentional — keeps the table
-/// tight and prevents accidental disclosure of any new private fields).
+/// Display order for known fields. Keys missing from the response are skipped;
+/// keys not listed here are deliberately not surfaced, so a new upstream field
+/// cannot leak into the table.
 pub const FIELD_ORDER: &[&str] = &[
     "MachineNo",
     "MachineName",
@@ -54,21 +52,18 @@ pub const FIELD_ORDER: &[&str] = &[
     "download_url",
 ];
 
-/// Slim representation of the response `data` block. `value` is `None`
-/// when the upstream JSON returned `null`, so the renderer can choose
-/// to leave the cell blank instead of printing the literal `"null"`.
+/// Slim view of the response `data` block. A value is `None` when the JSON was
+/// `null`.
 #[derive(Debug, Clone, Default)]
 pub struct MachineInfo {
     pub fields: Vec<(String, Option<String>)>,
-    /// Raw `data` block from the response, pretty-printed JSON. Used by
-    /// the popup's "copy" button so the user gets the unmodified
-    /// upstream representation rather than the GUI's table rendering.
+    /// Raw `data` block, pretty-printed and unmodified (for the popup's copy
+    /// button).
     pub data_pretty: String,
 }
 
-/// Tri-state lookup for a single field by JSON shape. Distinguishes
-/// "key missing" from "key present, value `null`" so callers can
-/// branch on each case (e.g. SaleArea = `null` ⇒ ROW preselect).
+/// Lookup result separating "key missing" from "key present, value `null`"
+/// (e.g. `SaleArea` = `null` ⇒ ROW preselect).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldValue {
     /// Key not in `data` at all.
@@ -81,10 +76,8 @@ pub enum FieldValue {
 }
 
 impl MachineInfo {
-    /// Look up a field by key. Returns the tri-state shape
-    /// (missing / null / value). The internal `fields` list only
-    /// includes keys that were present in the response, so absence
-    /// from the list maps to `Missing`.
+    /// Look up a field by key; `fields` only holds keys present in the
+    /// response, so absence maps to `Missing`.
     pub fn field(&self, key: &str) -> FieldValue {
         for (k, v) in &self.fields {
             if k == key {
@@ -108,15 +101,15 @@ struct Envelope {
     data: Option<serde_json::Value>,
 }
 
-/// Blocking GET against the PTSTPD endpoint. Pulls only the fields
-/// listed in [`FIELD_ORDER`] in that order.
+/// Blocking GET against the PTSTPD endpoint, keeping only [`FIELD_ORDER`]
+/// fields, in that order.
 pub fn fetch_machine_info(serial: &str) -> Result<MachineInfo> {
     let trimmed = serial.trim();
     if trimmed.is_empty() {
         return Err(LtboxError::Other("empty serial".into()));
     }
     let agent = crate::downloader::build_agent();
-    // `query` percent-encodes the serial; formatting it into the URL did not.
+    // `query` percent-encodes the serial.
     let mut resp = agent
         .get(crate::obf::reveal(ENDPOINT_B64))
         .query("MachineNo", trimmed)
@@ -161,8 +154,7 @@ pub fn fetch_machine_info(serial: &str) -> Result<MachineInfo> {
 mod tests {
     use super::*;
 
-    /// Field-order list must contain unique entries — duplicates would
-    /// render the same key twice in the popup.
+    /// A duplicate would render the same key twice.
     #[test]
     fn field_order_has_no_duplicates() {
         let mut seen = std::collections::HashSet::new();

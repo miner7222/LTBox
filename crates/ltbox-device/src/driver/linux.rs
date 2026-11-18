@@ -1,17 +1,11 @@
-//! Linux device-access provisioning: detect and install the LTBox udev rules
-//! that grant the desktop user libusb / serial access to the Qualcomm EDL
-//! (`05c6:9008`), Lenovo (`17ef`), and Google ADB (`18d1`) USB IDs.
-//! See `misc/udev/51-ltbox-qcom.rules`.
+//! Linux device-access provisioning. Userspace mode installs the LTBox udev
+//! rules (`misc/udev/51-ltbox-qcom.rules`, embedded and written by the
+//! privileged `ltbox --install-udev`) granting the desktop user raw USB access
+//! to the Qualcomm EDL (`05c6:9008`), Lenovo (`17ef`) and Google ADB (`18d1`)
+//! IDs. Kernel mode installs Qualcomm's `qud` Debian package.
 //!
-//! Userspace mode has no driver *download*: the rules ship embedded in the
-//! binary and are written by the privileged `ltbox --install-udev` entry
-//! point. Kernel mode uses Qualcomm's `qcom-usb-kernel-drivers` Debian package
-//! (`qud`) when the Debian package tools are available.
-//!
-//! Deferred until a Lenovo Qualcomm target is available on Linux: the
-//! `/sys/bus/usb/devices` walk for `05c6:9008` + serial-node permission test
-//! (a `DevicePresentNoPermission`-style state). Rules presence / staleness is
-//! pure filesystem state and is implemented + tested here today.
+//! Not implemented: a `/sys/bus/usb/devices` walk detecting a present device
+//! whose node the user cannot open.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -85,9 +79,8 @@ pub fn check_required_drivers() -> DriverStatus {
 fn check_udev_rules() -> DriverStatus {
     let admin_rules = match read_optional_rules(UDEV_ADMIN_RULES_PATH) {
         Ok(contents) => contents,
-        // An administrator override with the same filename takes precedence
-        // over the packaged copy, so an unreadable override is not safely
-        // replaceable by assuming the package file is active.
+        // A same-named admin override wins over the packaged copy, so an
+        // unreadable one cannot be assumed absent.
         Err(_) => return DriverStatus::UdevRulesNoPermission,
     };
     if admin_rules.is_some() {
@@ -96,8 +89,7 @@ fn check_udev_rules() -> DriverStatus {
 
     match read_optional_rules(UDEV_PACKAGE_RULES_PATH) {
         Ok(package_rules) => super::classify_udev_rule_locations(None, package_rules.as_deref()),
-        // File exists but is unreadable (permission or otherwise) — surface a
-        // repairable state rather than silently claiming the rules are fine.
+        // Exists but unreadable: report a repairable state, not "fine".
         Err(_) => DriverStatus::UdevRulesNoPermission,
     }
 }
@@ -135,9 +127,9 @@ pub fn check_driver_update() -> Option<DriverUpdate> {
     }
 }
 
-/// Install (or refresh) the udev rules by re-launching this binary through
-/// `pkexec` with the fixed `--install-udev` flag. Only the binary's own
-/// resolved path is passed — never user input.
+/// Kernel mode: install the `qud` package via `pkexec apt-get`. Userspace
+/// mode: re-launch this binary through `pkexec` with the fixed
+/// `--install-udev` flag; only its own resolved path is passed, never user input.
 pub fn download_and_install(log: &mut Vec<String>) -> Result<()> {
     if qcom_driver_mode().is_kernel() {
         install_kernel_driver(log)
@@ -165,8 +157,7 @@ fn install_udev_rules(log: &mut Vec<String>) -> Result<()> {
         )));
     }
 
-    // Require pkexec — never silently fall back to a terminal `sudo` from the
-    // GUI, which has no controlling terminal to prompt on.
+    // No `sudo` fallback: the GUI has no terminal to prompt on.
     let pkexec = resolve_trusted_executable("pkexec").map_err(|e| {
         map_not_found(
             e,
@@ -221,11 +212,8 @@ fn install_kernel_driver(log: &mut Vec<String>) -> Result<()> {
         tr_args!("live_driver_asset", name = &asset.name)
     );
 
-    // Private, exclusive temp dir under the process temp root. A predictable
-    // `temp_dir()/ltbox_*_{pid}` path is a classic local symlink / content-
-    // swap race before the elevated `pkexec apt-get install`; create_dir with a
-    // unique name + owner-only mode rejects pre-created paths and keeps the
-    // downloaded package private until install completes.
+    // Exclusive, owner-only, uniquely named temp dir: a predictable path would
+    // allow a symlink / content-swap race before the elevated `apt-get install`.
     let tmp_dir = PrivateTempDir::create("ltbox_qcom_kernel_drv")?;
     let zip_path = tmp_dir.path().join(&asset.name);
     let deb_path = tmp_dir
@@ -322,10 +310,8 @@ fn verify_private_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // Owner-only: reject group/other bits so a pre-existing open umask or
-        // unexpected mode does not leave the package world-readable before
-        // `pkexec`. We created this directory moments ago, so ownership is
-        // the creating process's euid by construction.
+        // Reject group/other bits so the package is never exposed before
+        // `pkexec`; ownership is ours, as we just created the directory.
         let mode = meta.permissions().mode() & 0o777;
         if mode & 0o077 != 0 {
             return Err(DriverError::Io(std::io::Error::other(format!(
@@ -354,9 +340,8 @@ fn fetch_latest_linux_kernel_release() -> Result<(String, GithubAsset)> {
     Ok((tag, asset))
 }
 
-/// Pick the newest published stable Linux kernel release that ships a QUD zip.
-/// Drafts and prereleases are rejected before tag/asset matching; among the
-/// remaining candidates the highest `published_at` wins.
+/// Newest (by `published_at`) non-draft, non-prerelease `lnx` release that
+/// ships a QUD zip.
 fn select_latest_linux_kernel_release(releases: Vec<GithubRelease>) -> Option<GithubRelease> {
     let mut matching: Vec<GithubRelease> = releases
         .into_iter()

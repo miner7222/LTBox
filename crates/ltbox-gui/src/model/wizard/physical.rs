@@ -1,9 +1,8 @@
 //! Physical Storage wizards (Advanced → Dump/Flash Physical).
-//! .
-//! LUN-level counterparts to the partition wizards. No GPT scan — the.
-//! user picks which of LUN 0..=5 to hit, and the exec pass reads/writes.
-//! the whole LUN. Mirrors qdlrs `Dump` (whole-disk variant) and.
-//! `OverwriteStorage` commands.
+//!
+//! LUN-level counterparts to the partition wizards: no GPT scan; the user picks
+//! a LUN (0..=5) and the exec pass reads or writes the whole LUN. Mirrors qdlrs
+//! `Dump` (whole-disk variant) and `OverwriteStorage`.
 
 use super::*;
 

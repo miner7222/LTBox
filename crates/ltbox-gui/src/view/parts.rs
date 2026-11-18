@@ -1,4 +1,4 @@
-//! Partition + physical-storage dump/flash wizard views + steps. Extracted from `main.rs`.
+//! Partition + physical-storage dump/flash wizard views + steps.
 
 use crate::focus_button::{self as button, button};
 use crate::*;
@@ -7,7 +7,6 @@ use iced::{Element, Length, Theme};
 use ltbox_core::tr_args;
 
 // Shared review layout: identity first, then the full-width source path.
-// Spacing and grouping follow LTBox's desktop adaptation of M3 lists.
 fn flash_review_entry<'a>(title: &str, detail: &str, path: Option<&str>) -> Element<'a, Message> {
     let mut content = column![
         text(title.to_owned())
@@ -255,9 +254,9 @@ impl App {
                 _ => self.t("btn_next").to_string(),
             };
             let is_start = self.flash_parts.step == 2 || self.flash_parts.step == 0;
-            // No loader-fit gate here: by the Confirm step the device is already
-            // in EDL (the GPT scan transitioned it) where the model can't be
-            // polled, and the loader was already validated by that scan.
+            // No loader-fit gate: by Confirm the device is in EDL (the GPT scan
+            // got it there), where the model cannot be polled, and that scan
+            // already validated the loader.
             let can = self.flash_parts.can_next()
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
@@ -321,15 +320,13 @@ impl App {
         (title, app_bar_subtitle)
     }
 
-    /// Shared loader picker for EDL wizards: path/action row, description,
-    /// error status, and filtered recent paths. Only the wizard's loader fields
-    /// and the two Message variants differ between callers, so they are
-    /// threaded in as params; the title / placeholder / accepted
-    /// extensions / colors are identical across all four wizards.
+    /// Shared loader picker for the EDL wizards: path/action row, description,
+    /// error status and filtered recent paths. Callers supply their loader
+    /// fields and the two Message variants; title, placeholder, extensions and
+    /// colors are common.
     ///
-    /// `error` is whatever the caller wants surfaced on this step. The two
-    /// partition wizards scan from here, so they pass the loader failure when
-    /// there is one and the scan failure otherwise.
+    /// `error` is what the caller wants shown: the partition wizards scan from
+    /// here, so they pass the loader failure if any, else the scan failure.
     pub(crate) fn loader_picker_card<'a>(
         &'a self,
         loader_path: &'a Option<String>,
@@ -375,9 +372,9 @@ impl App {
         )
     }
 
-    /// Live filter above a partition table. Every keystroke re-filters, so
-    /// Enter does nothing — but it must still be claimed here: an unclaimed
-    /// Enter reaches a row checkbox that kept keyboard focus and toggles it.
+    /// Live filter above a partition table. Every keystroke re-filters, so Enter
+    /// does nothing, but it must be claimed here: unclaimed, it reaches a row
+    /// checkbox that kept keyboard focus and toggles it.
     fn parts_search_field<'a>(
         &self,
         query: &str,
@@ -524,9 +521,8 @@ impl App {
                         .style(m3_checkbox_style),
                     Some(Message::FlashParts(FlashPartsMsg::FlashPartsToggleRow(idx))),
                 ))
-                // `center_x(Fill)` would overwrite the fixed width set above
-                // and let this cell take slack, pushing every data column out
-                // of line with its header. Align inside the width instead.
+                // `center_x(Fill)` would override the fixed width and push data
+                // columns out of line with the header; align inside it instead.
                 .width(Length::Fixed(FLASH_PARTS_MARKER_CELL_WIDTH))
                 .height(Length::Fixed(FLASH_PARTS_ROW_HEIGHT))
                 .align_x(iced::alignment::Horizontal::Center)
@@ -615,8 +611,7 @@ impl App {
             .height(Length::Fixed(FLASH_PARTS_ROW_HEIGHT))
             .align_y(iced::Alignment::Center);
 
-            // Tint the whole row by its tri-state so flash/erase pop
-            // visually; light/dark both pull from the M3 container roles.
+            // Tint the whole row by its tri-state; both themes use M3 container roles.
             let row_state = r.state;
             let tinted = container(data_row).width(Length::Fill).style(
                 move |t: &Theme| -> container::Style {
@@ -757,9 +752,8 @@ impl App {
             } else {
                 self.t("btn_scan").to_string()
             };
-            // DumpParts touches EDL on both Scan (step 0) and Dump
-            // (step 1) — both spawn workers that talk to the device.
-            // Gate both buttons on reachability.
+            // Both Scan (step 0) and Dump (step 1) talk to the device; gate
+            // both on reachability.
             let can = self.dump_parts.can_next()
                 && !self.operation.is_running()
                 && self.device_reachable();
@@ -1001,8 +995,7 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            // DumpPhys talks to EDL — gate both Scan + Dump on a
-            // reachable device.
+            // Both Scan and Dump talk to EDL; gate on a reachable device.
             let can = self.dump_phys.can_next()
                 && !self.operation.is_running()
                 && self.device_reachable();
@@ -1134,9 +1127,8 @@ impl App {
                 _ => self.t("btn_next").to_string(),
             };
             let is_start = self.flash_phys.step == 2;
-            // No loader-fit gate here: by the Confirm step the device is already
-            // in EDL where the model can't be polled, and the loader was already
-            // used to open the session.
+            // No loader-fit gate: by Confirm the device is in EDL, where the
+            // model cannot be polled, and the loader already opened the session.
             let can = self.flash_phys.can_next()
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
@@ -1233,9 +1225,8 @@ impl App {
                 })
                 .unwrap_or_default();
 
-            // Picking a file uses the same folder-button affordance as the
-            // partition table, not a double-click on the row, since a
-            // double-click gesture announces nothing.
+            // Same folder-button affordance as the partition table; a row
+            // double-click would announce nothing.
             let data_row = iced::widget::row![
                 container(cb).width(Length::Fixed(32.0)),
                 text(format!("LUN {idx}"))
@@ -1299,10 +1290,9 @@ mod tests {
 
     #[test]
     fn the_tri_state_marker_always_fits_its_cell() {
-        // Guards against double-scaling the marker: that would put it at
-        // 27 px inside this 26 px cell, squeezing the erase badge flat,
-        // while the checkbox beside it (scaled once) still fits.
-        // Exercise compact, both sides of the class boundary, and expanded.
+        // Guards against double-scaling the marker (27 px in a 26 px cell
+        // would squeeze the erase badge flat). Covers compact, both sides of
+        // the class boundary, and expanded.
         for content_width in [756.0, 999.999, 1000.0, 1256.0, 4000.0] {
             let side = FLASH_PARTS_MARKER_SIZE;
             let cell = FLASH_PARTS_ROW_HEIGHT;

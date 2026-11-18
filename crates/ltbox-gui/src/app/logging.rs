@@ -3,9 +3,8 @@
 use crate::*;
 
 impl App {
-    /// Push one line, trim to `LOG_MAX_LINES`. Editor rebuild is
-    /// deferred to the drain tick — per-push reshape was driving
-    /// wgpu into TDR during long pbr flashes.
+    /// Push one line, trim to `LOG_MAX_LINES`. The editor is rebuilt on the drain
+    /// tick, not per push: per-push reshaping drove wgpu into TDR in long flashes.
     pub(crate) fn log_push<S: Into<String>>(&mut self, line: S) {
         self.record_log_entry(ltbox_core::live_sink::Entry::info(line.into()));
     }
@@ -33,16 +32,11 @@ impl App {
         total
     }
 
-    /// Final flush at `*ExecDone` time. The closure's local Vec is
-    /// dropped — `live!` already pushed every line through the sink
-    /// path (bulk-streamed across the run) and the macro's Vec copy
-    /// is pure dead weight at completion time. Re-appending it would
-    /// duplicate the entire transcript.
+    /// Final flush at `*ExecDone`. The closure's Vec is ignored: `live!` already
+    /// streamed every line through the sink, so re-appending would duplicate the
+    /// transcript.
     pub(crate) fn flush_exec_done_log(&mut self, _vec_from_closure: Vec<String>) {
-        // `_vec_from_closure` intentionally ignored — see above.
-        // Drain whatever the 500 ms tick missed between the last
-        // `Message::DrainStdoutTap` and the closure's return so the
-        // user sees the closing lines without a tick of latency.
+        // Drain what the 500 ms tick missed so the closing lines show immediately.
         self.drain_pending_log_streams();
     }
 
@@ -120,8 +114,7 @@ impl App {
         }
     }
 
-    /// Rebuild the editor from `log_lines` and auto-scroll to the
-    /// bottom via `Motion::DocumentEnd`. Selection state resets.
+    /// Rebuild the editor from `log_lines` and scroll to the end. Selection resets.
     pub(crate) fn rebuild_log_editor(&mut self) {
         let mut joined = self.log_lines.join("\n");
         if let Some(progress) = self.log_history.progress_line() {
