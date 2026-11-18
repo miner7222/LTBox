@@ -8,7 +8,7 @@ ignore = [
     # key work locally on the user's own machine; the attack needs an attacker
     # observing many timed signing operations, which this offline desktop flow
     # does not expose. Revisit when a fixed `rsa` ships.
-    "RUSTSEC-2023-0071",
+    "RUSTSEC-2023-0071", # rsa Marvin timing side channel via adb_client; no fixed 0.9 release
     # Unmaintained transitive crates (no known vulnerability), pulled deep via
     # build/UI dependencies and not used directly. Accepted for now.
     "RUSTSEC-2021-0139", # ansi_term unmaintained
@@ -65,17 +65,17 @@ allow = [
 # `license` field empty, so cargo-deny cannot auto-detect it. Assert it for the
 # crate and its `base` / `derive` sub-crates (same git source).
 [[licenses.clarify]]
-crate = "magiskboot@0.1.1"
+crate = "magiskboot@0.1.2"
 expression = "GPL-3.0-or-later"
 license-files = []
 
 [[licenses.clarify]]
-crate = "base@0.1.1"
+crate = "base@0.1.2"
 expression = "GPL-3.0-or-later"
 license-files = []
 
 [[licenses.clarify]]
-crate = "derive@0.1.1"
+crate = "derive@0.1.2"
 expression = "GPL-3.0-or-later"
 license-files = []
 
