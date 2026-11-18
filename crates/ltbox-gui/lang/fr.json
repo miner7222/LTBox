@@ -575,6 +575,7 @@
   "live_driver_install_cancelled": "Installation du pilote annulée — acceptez la demande d’élévation de privilèges et réessayez.",
   "live_driver_install_finished": "Installation terminée. Il est recommandé de redémarrer votre ordinateur.",
   "live_driver_installer_failed": "L’installateur du pilote s’est terminé avec le code {exit}.",
+  "live_driver_installer_pnputil_fallback": "Windows a refusé les options pnputil de l’installateur ; fin de l’installation directement avec pnputil — acceptez la demande de Windows",
   "live_driver_progress_chunked": "{name} : {downloaded} ({speed}/s)",
   "live_driver_progress_pct": "{name} : {pct} % ({downloaded} / {total}, {speed}/s)",
   "live_driver_running_installer": "Lancement de l’installateur signé du pilote — acceptez la demande de Windows",

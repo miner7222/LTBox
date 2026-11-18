@@ -575,6 +575,7 @@
   "live_driver_install_cancelled": "ドライバーのインストールがキャンセルされました — 権限昇格プロンプトを承認して、もう一度お試しください。",
   "live_driver_install_finished": "インストールが完了しました。コンピューターの再起動をお勧めします。",
   "live_driver_installer_failed": "ドライバーのインストーラーがコード {exit} で終了しました。",
+  "live_driver_installer_pnputil_fallback": "Windows がインストーラーの pnputil オプションを拒否したため、pnputil で直接インストールを完了します — Windows のプロンプトを承認してください",
   "live_driver_progress_chunked": "{name}：{downloaded}（{speed}/s）",
   "live_driver_progress_pct": "{name}：{pct}%（{downloaded} / {total}、{speed}/s）",
   "live_driver_running_installer": "署名付きドライバーインストーラーを起動しています — Windowsのプロンプトを承認してください",

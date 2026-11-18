@@ -575,6 +575,7 @@
   "live_driver_install_cancelled": "驱动安装已取消——请允许权限提升提示后重试。",
   "live_driver_install_finished": "安装完成。建议重启电脑。",
   "live_driver_installer_failed": "驱动安装程序以代码 {exit} 退出。",
+  "live_driver_installer_pnputil_fallback": "Windows 拒绝了安装程序的 pnputil 选项，将直接用 pnputil 完成安装——请允许 Windows 提示",
   "live_driver_progress_chunked": "{name}：{downloaded}（{speed}/s）",
   "live_driver_progress_pct": "{name}：{pct}%（{downloaded} / {total}，{speed}/s）",
   "live_driver_running_installer": "正在启动已签名的驱动安装程序——请允许 Windows 提示",
