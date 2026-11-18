@@ -92,15 +92,11 @@ fn effective_flash_rollback_mode(
 }
 
 /// Never lose a known stored floor when also reading fallback image indices.
-/// Unclassified Fastboot layouts retain the existing conservative aggregate.
 fn manual_device_floors(
     edl: Option<(u64, u64)>,
     fastboot: Option<ltbox_patch::rollback::FastbootRollbackFloors>,
-    aggregate: Option<u64>,
 ) -> Option<ltbox_patch::rollback::RollbackIndices> {
-    let stored = fastboot
-        .map(|f| (f.boot_index, f.vbmeta_system_index))
-        .or_else(|| aggregate.map(|index| (index, index)));
+    let stored = fastboot.map(|f| (f.boot_index, f.vbmeta_system_index));
     let (boot, vbmeta_system) = match (edl, stored) {
         (Some((b, v)), Some((sb, sv))) => (b.max(sb), v.max(sv)),
         (Some(floors), None) | (None, Some(floors)) => floors,
@@ -1308,29 +1304,22 @@ mod tests {
             vbmeta_system_index: 20,
         });
         assert_eq!(
-            super::manual_device_floors(None, fastboot, Some(100)),
+            super::manual_device_floors(None, fastboot),
             Some(RollbackIndices {
                 boot: 100,
                 vbmeta_system: 20
             })
         );
         assert_eq!(
-            super::manual_device_floors(Some((90, 30)), fastboot, Some(100)),
+            super::manual_device_floors(Some((90, 30)), fastboot),
             Some(RollbackIndices {
                 boot: 100,
                 vbmeta_system: 30
             })
         );
-        assert_eq!(super::manual_device_floors(None, None, None), None);
+        assert_eq!(super::manual_device_floors(None, None), None);
         assert_eq!(
-            super::manual_device_floors(None, None, Some(99)),
-            Some(RollbackIndices {
-                boot: 99,
-                vbmeta_system: 99
-            })
-        );
-        assert_eq!(
-            super::manual_device_floors(Some((0, 0)), None, None),
+            super::manual_device_floors(Some((0, 0)), None),
             Some(RollbackIndices {
                 boot: 0,
                 vbmeta_system: 0

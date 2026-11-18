@@ -477,6 +477,12 @@ fn build_testkey_arb_overlays_from_images(
     Ok(overlays)
 }
 
+/// Supply measured floors or an explicitly known active slot.
+pub(crate) enum DeviceFloors<'a> {
+    Known(u64, u64),
+    ReadActiveSlot(&'a str),
+}
+
 /// Testkey re-sign overlays for an AVB flash — used by the TB323FU anti-rollback
 /// path and the non-TB323FU Lenovo-key / cross-region re-sign. The device-committed
 /// boot + vbmeta_system indices come from `device_floors` (component-wise across
@@ -502,8 +508,7 @@ pub(crate) fn build_testkey_arb_overlays(
     session: &mut ltbox_device::edl::EdlSession,
     fw_dir: &std::path::Path,
     work_dir: &std::path::Path,
-    slot: Option<&str>,
-    device_floors: Option<(u64, u64)>,
+    device_floors: DeviceFloors<'_>,
     manual_targets: Option<ltbox_patch::rollback::RollbackIndices>,
     force_resign: bool,
     vbmeta_base: Option<&std::path::Path>,
@@ -525,10 +530,10 @@ pub(crate) fn build_testkey_arb_overlays(
     // slots; otherwise read the ACTIVE slot here (a first-time user may still
     // be on `_b`, so don't assume `_a`).
     let (dev_boot_idx, dev_vbs_idx) = match device_floors {
-        Some(floors) => floors,
-        None => {
-            let dev_boot = format!("boot{}", active_slot_suffix(slot));
-            let dev_vbs = format!("vbmeta_system{}", active_slot_suffix(slot));
+        DeviceFloors::Known(boot, vbs) => (boot, vbs),
+        DeviceFloors::ReadActiveSlot(slot) => {
+            let dev_boot = format!("boot{}", active_slot_suffix(Some(slot)));
+            let dev_vbs = format!("vbmeta_system{}", active_slot_suffix(Some(slot)));
             let dev_boot_img = work_dir.join(format!("dev_{dev_boot}.img"));
             let dev_vbs_img = work_dir.join(format!("dev_{dev_vbs}.img"));
             session

@@ -1,10 +1,9 @@
-//! Anti-rollback — rollback-index detection, aggregation, patching.
+//! Anti-rollback — per-location rollback-index detection and patching.
 //!
-//! Device indices come from fastboot `stored_rollback_index:N`. A two-entry
-//! non-recovery layout is classified per partition; other layouts retain the
-//! legacy `max(v > 1)` aggregate. [`RollbackMode`] selects automatic or
-//! device-floor-driven patching; `OFF` skips, and `MANUAL` is reserved for a
-//! caller that supplies its own target index.
+//! Fastboot `stored_rollback_index:N` entries are classified only for a
+//! two-entry non-recovery layout. Other layouts require device image reads.
+//! [`RollbackMode`] selects automatic or device-floor-driven patching;
+//! `Off` skips, and `Manual` uses caller-supplied targets.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,7 +14,7 @@ use tracing::info;
 use crate::avb::{self, AvbImageInfo};
 
 /// Rollback-patch mode: `On` always patches, `Auto` only when image
-/// index < device index, `Off` skips entirely.
+/// index < device floor, `Off` skips entirely, and `Manual` uses validated targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollbackMode {
     On,
@@ -99,8 +98,8 @@ pub fn plan_manual_rollback(
 
 /// Classify exactly two meaningful fastboot rollback entries excluding
 /// location 1 (`recovery`). The lower location is `vbmeta_system`; the higher
-/// location is `boot`. Returns `None` for every other shape so callers can use
-/// their compatibility fallback.
+/// location is `boot`. Returns `None` for every other shape; callers then read
+/// the per-location floors from device images.
 pub fn classify_fastboot_rollback_floors(
     stored: &HashMap<u32, u64>,
 ) -> Option<FastbootRollbackFloors> {
@@ -124,12 +123,6 @@ pub fn classify_fastboot_rollback_floors(
         boot_location: boot.0,
         boot_index: boot.1,
     })
-}
-
-/// Aggregate fastboot `stored_rollback_index:N` → single device index.
-/// Returns `max(v where v > 1)`, or `None` when all slots are stock 0/1.
-pub fn compute_device_rollback_index(stored: &HashMap<u32, u64>) -> Option<u64> {
-    stored.values().copied().filter(|v| *v > 1).max()
 }
 
 /// Decide whether to patch given mode, image index, and device index.
@@ -180,30 +173,6 @@ mod tests {
 
     fn make_indices(values: &[(u32, u64)]) -> HashMap<u32, u64> {
         values.iter().copied().collect()
-    }
-
-    #[test]
-    fn compute_ignores_stock_values() {
-        let indices = make_indices(&[(0, 0), (1, 1)]);
-        assert_eq!(compute_device_rollback_index(&indices), None);
-    }
-
-    #[test]
-    fn compute_returns_max_meaningful() {
-        let indices = make_indices(&[(0, 1), (1, 2), (2, 5), (3, 3)]);
-        assert_eq!(compute_device_rollback_index(&indices), Some(5));
-    }
-
-    #[test]
-    fn compute_mixed_stock_and_real() {
-        let indices = make_indices(&[(0, 0), (1, 7), (2, 1)]);
-        assert_eq!(compute_device_rollback_index(&indices), Some(7));
-    }
-
-    #[test]
-    fn compute_empty_returns_none() {
-        let indices = make_indices(&[]);
-        assert_eq!(compute_device_rollback_index(&indices), None);
     }
 
     /// Real TB520FU (`lapis`) dump: 32 locations, only 2 and 3 carry a

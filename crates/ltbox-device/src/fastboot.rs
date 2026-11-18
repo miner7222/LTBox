@@ -179,18 +179,6 @@ impl FastbootDevice {
         Self::open().is_ok()
     }
 
-    pub fn wait_for_device() -> Result<Self> {
-        loop {
-            match Self::open() {
-                Ok(dev) => return Ok(dev),
-                Err(FastbootError::DeviceNotFound) => {
-                    std::thread::sleep(WAIT_SLEEP);
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
     /// Wait at most `timeout` for a Fastboot device to appear.
     pub fn wait_for_device_within(timeout: Duration) -> Result<Self> {
         wait_for_device_with(

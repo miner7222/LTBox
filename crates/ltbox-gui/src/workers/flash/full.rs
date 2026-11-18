@@ -157,7 +157,6 @@ pub(crate) fn flash_worker(
     // started from the ADB-connected state, even
     // though Fastboot is reachable in principle.
     struct FastbootProbe {
-        device_index: Option<u64>,
         rollback_floors: Option<ltbox_patch::rollback::FastbootRollbackFloors>,
         reachable: bool,
         active_slot: Option<String>,
@@ -167,9 +166,6 @@ pub(crate) fn flash_worker(
         match ltbox_device::fastboot::FastbootDevice::open() {
             Ok(mut dev) => match dev.get_all_vars() {
                 Ok(v) => FastbootProbe {
-                    device_index: ltbox_patch::rollback::compute_device_rollback_index(
-                        &v.rollback_indices,
-                    ),
                     rollback_floors: ltbox_patch::rollback::classify_fastboot_rollback_floors(
                         &v.rollback_indices,
                     ),
@@ -178,7 +174,6 @@ pub(crate) fn flash_worker(
                     raw_getvar_all: v.raw_getvar_all,
                 },
                 Err(_) => FastbootProbe {
-                    device_index: None,
                     rollback_floors: None,
                     reachable: false,
                     active_slot: None,
@@ -186,7 +181,6 @@ pub(crate) fn flash_worker(
                 },
             },
             Err(_) => FastbootProbe {
-                device_index: None,
                 rollback_floors: None,
                 reachable: false,
                 active_slot: None,
@@ -254,7 +248,6 @@ pub(crate) fn flash_worker(
         }
     }
     let FastbootProbe {
-        device_index: device_rollback_index,
         rollback_floors: fastboot_rollback_floors,
         reachable: fastboot_reachable,
         active_slot,
@@ -654,7 +647,8 @@ pub(crate) fn flash_worker(
     // the `[Flash] Bypass rollback protection: …` summary line, so it is not
     // repeated here; this block reports the measured indices + the final
     // bypass decision.
-    let device_idx_str = device_rollback_index
+    let device_idx_str = fastboot_rollback_floors
+        .map(|floors| floors.boot_index)
         .map(|v| v.to_string())
         .unwrap_or_else(|| ltbox_core::i18n::tr("live_arb_device_index_none"));
     ltbox_core::live!(
@@ -670,7 +664,7 @@ pub(crate) fn flash_worker(
         // pre-EDL summary here would print a misleading "bypass: no".
         match ltbox_patch::rollback::analyze_rollback_with_mode(
             &boot,
-            device_rollback_index,
+            fastboot_rollback_floors.map(|floors| floors.boot_index),
             rb_mode,
         ) {
             Ok(info) => {
@@ -682,18 +676,20 @@ pub(crate) fn flash_worker(
                         index = info.image_index.to_string()
                     )
                 );
-                ltbox_core::live!(
-                    log,
-                    "[ARB] {}",
-                    tr_args!(
-                        "live_arb_rollback_bypass",
-                        value = ltbox_core::i18n::tr(if info.needs_patch {
-                            "common_yes"
-                        } else {
-                            "common_no"
-                        })
-                    )
-                );
+                if fastboot_rollback_floors.is_some() {
+                    ltbox_core::live!(
+                        log,
+                        "[ARB] {}",
+                        tr_args!(
+                            "live_arb_rollback_bypass",
+                            value = ltbox_core::i18n::tr(if info.needs_patch {
+                                "common_yes"
+                            } else {
+                                "common_no"
+                            })
+                        )
+                    );
+                }
             }
             Err(e) => ltbox_core::live!(
                 log,
@@ -935,8 +931,7 @@ pub(crate) fn flash_worker(
                     boot: 0,
                     vbmeta_system: 0,
                 }
-            } else if let Some(floors) =
-                manual_device_floors(edl_floors, fastboot_rollback_floors, device_rollback_index)
+            } else if let Some(floors) = manual_device_floors(edl_floors, fastboot_rollback_floors)
             {
                 floors
             } else {
@@ -1118,8 +1113,7 @@ pub(crate) fn flash_worker(
                     &mut session,
                     fw_dir,
                     &arb_work_dir,
-                    Some(dev.slot),
-                    Some((dev.boot_floor, dev.vbs_floor)),
+                    crate::arb_overlay::DeviceFloors::Known(dev.boot_floor, dev.vbs_floor),
                     manual_plan.map(|plan| plan.targets),
                     true,
                     resign_base.as_deref(),
@@ -1212,8 +1206,7 @@ pub(crate) fn flash_worker(
                     &mut session,
                     fw_dir,
                     &arb_work_dir,
-                    active_slot.as_deref(),
-                    Some((floors.boot, floors.vbmeta_system)),
+                    crate::arb_overlay::DeviceFloors::Known(floors.boot, floors.vbmeta_system),
                     Some(plan.targets),
                     false,
                     None,
@@ -1260,12 +1253,20 @@ pub(crate) fn flash_worker(
         std::fs::create_dir_all(&arb_work_dir)
             .map_err(|e| tr_args!("err_arb_work_dir_failed", error = e))
             .inspect_err(|_| abort_before_writes(&mut session, edl_start, &mut log))?;
+        let device_floors = match (edl_floors, active_slot.as_deref()) {
+            (Some((boot, vbs)), _) => crate::arb_overlay::DeviceFloors::Known(boot, vbs),
+            (None, Some(slot)) => crate::arb_overlay::DeviceFloors::ReadActiveSlot(slot),
+            (None, None) => {
+                let device = read_device_vbmeta(&mut session, None, &arb_work_dir, &mut log)
+                    .inspect_err(|_| abort_before_writes(&mut session, edl_start, &mut log))?;
+                crate::arb_overlay::DeviceFloors::Known(device.boot_floor, device.vbs_floor)
+            }
+        };
         let (overlays, need) = build_testkey_arb_overlays(
             &mut session,
             fw_dir,
             &arb_work_dir,
-            active_slot.as_deref(),
-            edl_floors,
+            device_floors,
             None,
             false,
             None,
@@ -1284,30 +1285,25 @@ pub(crate) fn flash_worker(
         // Per-location device rollback floors. Prefer the component-wise EDL
         // floors, then a two-entry Fastboot classification: after excluding
         // recovery location 1, the lower location is vbmeta_system and the
-        // higher is boot. Unknown Fastboot layouts retain the legacy aggregate
-        // fallback. TB322FC keeps `None` → the per-partition `else` below skips
-        // patching, which is correct since it has no rollback floor.
+        // higher is boot. Unclassified layouts require both-slot EDL reads on
+        // protected models; unprotected models have no rollback floor.
         let (boot_floor, vbs_floor) = match (edl_floors, fastboot_rollback_floors) {
             (Some((b, v)), _) => (Some(b), Some(v)),
             (None, Some(floors)) => (Some(floors.boot_index), Some(floors.vbmeta_system_index)),
-            (None, None) => match device_rollback_index {
-                Some(i) => (Some(i), Some(i)),
-                None if is_rollback_protected_model(&device_model) => {
-                    ltbox_core::live!(log, "[ARB] {}", ltbox_core::i18n::tr("live_arb_edl_dump"));
-                    // Read both slots: with Fastboot unreachable the active
-                    // slot is unknown, and a device running `_b` can hold a
-                    // higher index than the `_a` this flash is about to boot.
-                    let device = read_device_vbmeta(
-                        &mut session,
-                        active_slot.as_deref(),
-                        &arb_work_dir,
-                        &mut log,
-                    )
-                    .inspect_err(|_| abort_before_writes(&mut session, edl_start, &mut log))?;
-                    (Some(device.boot_floor), Some(device.vbs_floor))
-                }
-                None => (None, None),
-            },
+            (None, None) if is_rollback_protected_model(&device_model) => {
+                ltbox_core::live!(log, "[ARB] {}", ltbox_core::i18n::tr("live_arb_edl_dump"));
+                // Both slots are read: a device running `_b` can hold a higher
+                // index than the `_a` this flash is about to boot.
+                let device = read_device_vbmeta(
+                    &mut session,
+                    active_slot.as_deref(),
+                    &arb_work_dir,
+                    &mut log,
+                )
+                .inspect_err(|_| abort_before_writes(&mut session, edl_start, &mut log))?;
+                (Some(device.boot_floor), Some(device.vbs_floor))
+            }
+            (None, None) => (None, None),
         };
 
         // (base, on-disk filename, slot label, device floor for this location)

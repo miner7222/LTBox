@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use crate::active_slot_suffix;
 use ltbox_patch::rollback::{ManualRollbackPlan, RollbackIndices, plan_manual_rollback};
+
+/// Full firmware flashes always write and activate slot A.
+const FULL_FLASH_SLOT: &str = "_a";
 
 /// Validate the optional manual targets against the device floors and the
 /// firmware indices read from the two rollback-protected AVB images.
@@ -145,11 +147,7 @@ pub(crate) fn build_manual_rollback_overlays(
                 target = target.to_string()
             )
         );
-        overlays.push((
-            format!("{log_name}{}", active_slot_suffix(None)),
-            lun,
-            patched,
-        ));
+        overlays.push((format!("{log_name}{}", FULL_FLASH_SLOT), lun, patched));
     }
 
     Ok(overlays)

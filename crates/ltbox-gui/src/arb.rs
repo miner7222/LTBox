@@ -76,10 +76,15 @@ pub(crate) fn detect_arb_run(
     if rollback_query_uses_fastboot(conn, &device_model) {
         if conn != ConnectionStatus::Fastboot {
             ltbox_core::live!(log, "[ARB] {i_reboot_fastboot}");
-            AdbManager::new()
-                .shell("reboot bootloader")
-                .map_err(|e| e.to_string())?;
-            FastbootDevice::wait_for_device().map_err(|e| e.to_string())?;
+            // The reboot call often reports a dropped transport although the
+            // device did reboot, so its error only counts if Fastboot never appears.
+            let reboot = AdbManager::new().reboot("bootloader");
+            FastbootDevice::wait_for_device_within(std::time::Duration::from_secs(60)).map_err(
+                |wait| match reboot {
+                    Err(reboot) => reboot.to_string(),
+                    Ok(()) => wait.to_string(),
+                },
+            )?;
         }
         ltbox_core::live!(log, "[ARB] {}", phases.marker(2));
         let mut dev = FastbootDevice::open().map_err(|e| e.to_string())?;
