@@ -61,9 +61,15 @@ impl App {
             } else {
                 self.t("btn_next")
             };
+            let primary_role = if is_confirm {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             if self.konabess.step == 1 {
                 wizard_nav_cancel_generic_with_disabled_next_tooltip(
                     label,
+                    primary_role,
                     self.konabess.can_next()
                         && (self.konabess.step != 0 || self.device_reachable())
                         && !self.operation.is_running()
@@ -77,6 +83,7 @@ impl App {
                 wizard_nav_generic_with_disabled_next_tooltip(
                     self.konabess.step > 0,
                     label,
+                    primary_role,
                     self.konabess.can_next()
                         && (self.konabess.step != 0 || self.device_reachable())
                         && !self.operation.is_running()

@@ -270,9 +270,16 @@ impl App {
             } else {
                 self.t("btn_back")
             };
+            // Scan (step 0) only reads the partition table; Start writes.
+            let primary_role = if self.flash_parts.step == 2 {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic_with_leading_action(
                 leading_action,
                 &label,
+                primary_role,
                 can,
                 leading_label,
                 if self.flash_parts.step == 0 {
@@ -770,6 +777,7 @@ impl App {
             wizard_nav_generic_with_leading_action(
                 leading_action,
                 &label,
+                WizardPrimaryRole::Primary,
                 can,
                 leading_label,
                 if self.dump_parts.step == 0 {
@@ -1002,6 +1010,7 @@ impl App {
             wizard_nav_generic(
                 true,
                 &label,
+                WizardPrimaryRole::Primary,
                 can,
                 self.t("btn_back"),
                 if self.dump_phys.step == 0 {
@@ -1132,9 +1141,15 @@ impl App {
             let can = self.flash_phys.can_next()
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
+            let primary_role = if is_start {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic(
                 true,
                 &label,
+                primary_role,
                 can,
                 self.t("btn_back"),
                 if self.flash_phys.step == 0 {

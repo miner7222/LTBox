@@ -173,9 +173,22 @@ impl App {
             } else {
                 None
             };
+            // Only a Start that writes to the device is destructive; DetectArb's
+            // Start and the local-file actions are reads.
+            let primary_role = if is_start
+                && self
+                    .adv_wizard
+                    .action
+                    .is_some_and(|action| action.writes_to_device())
+            {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic_with_disabled_next_tooltip(
                 true,
                 &label,
+                primary_role,
                 can,
                 hint,
                 self.t("btn_back"),
@@ -550,9 +563,15 @@ impl App {
             let can = self.simple_flash.can_next()
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
+            let primary_role = if is_start {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic(
                 true,
                 &label,
+                primary_role,
                 can,
                 self.t("btn_back"),
                 if self.simple_flash.step == 0 {
@@ -632,6 +651,7 @@ impl App {
     fn simple_flash_confirm_step(&self) -> Element<'_, Message> {
         let unknown = self.t("common_unknown").to_string();
         let off = self.t("flash_confirm_rb_off").to_string();
+        let region_patch_off = self.t("flash_confirm_region_patch_off").to_string();
         let folder = self
             .simple_flash
             .firmware_folder
@@ -654,7 +674,7 @@ impl App {
                 confirm_definition_row(self.t("flash_confirm_region"), &unknown),
                 confirm_definition_row(self.t("flash_confirm_target"), &unknown),
                 confirm_definition_row(self.t("flash_confirm_data"), &unknown),
-                confirm_definition_row(self.t("flash_confirm_region_edit"), &off),
+                confirm_definition_row(self.t("flash_confirm_region_edit"), &region_patch_off),
                 confirm_definition_row(self.t("flash_confirm_rollback"), &off),
             ],
             vec![confirm_definition_row(

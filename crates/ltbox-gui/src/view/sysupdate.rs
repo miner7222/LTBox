@@ -92,9 +92,15 @@ impl App {
             let can = self.sysupdate.can_next()
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
+            let primary_role = if is_start {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic(
                 self.sysupdate.step > 0,
                 &label_owned,
+                primary_role,
                 can,
                 self.t("btn_back"),
                 Message::Sys(SysMsg::SysBack),

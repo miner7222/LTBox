@@ -1438,9 +1438,9 @@ impl App {
                 .map(|on| {
                     (
                         self.t(if on {
-                            "flash_confirm_rb_on"
+                            "flash_confirm_region_patch_on"
                         } else {
-                            "flash_confirm_rb_off"
+                            "flash_confirm_region_patch_off"
                         })
                         .to_string(),
                         cfg.modify_region == on,

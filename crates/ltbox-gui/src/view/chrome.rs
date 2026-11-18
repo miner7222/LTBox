@@ -833,18 +833,59 @@ impl App {
         body: impl Into<Element<'a, Message>>,
         trailing: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
+        self.message_banner_styled(severity, icon_glyph, title, body, trailing, false)
+    }
+
+    /// Outlined variant of [`Self::message_banner`]: no container fill, a
+    /// full-strength role outline and an on-surface title. Use it where a
+    /// filled block would sit directly under another filled, same-role
+    /// surface. Body text must use an on-surface style, not a container one.
+    pub(crate) fn message_banner_outlined<'a>(
+        &self,
+        severity: BannerSeverity,
+        icon_glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
+        title: impl Into<String>,
+        body: impl Into<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
+        self.message_banner_styled(severity, icon_glyph, title, body, None, true)
+    }
+
+    fn message_banner_styled<'a>(
+        &self,
+        severity: BannerSeverity,
+        icon_glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
+        title: impl Into<String>,
+        body: impl Into<Element<'a, Message>>,
+        trailing: Option<Element<'a, Message>>,
+        outlined: bool,
+    ) -> Element<'a, Message> {
         const ICON_SIZE: f32 = 20.0;
         const ACCENT_WIDTH: f32 = 3.0;
         const BORDER_WIDTH: f32 = 1.0;
 
         let foreground = move |t: &Theme| {
             let p = pal_of(t);
-            match severity {
-                BannerSeverity::Warning => p.on_warning_container,
-                BannerSeverity::Error => p.on_error_container,
+            match (severity, outlined) {
+                (BannerSeverity::Warning, false) => p.on_warning_container,
+                (BannerSeverity::Error, false) => p.on_error_container,
+                (_, true) => p.on_surface,
             }
         };
-        let icon = container(lucide_icon(icon_glyph, ICON_SIZE, foreground))
+        let accent_of = move |t: &Theme| {
+            let p = pal_of(t);
+            match severity {
+                BannerSeverity::Warning => p.warning,
+                BannerSeverity::Error => p.error,
+            }
+        };
+        let icon_color = move |t: &Theme| {
+            if outlined {
+                accent_of(t)
+            } else {
+                foreground(t)
+            }
+        };
+        let icon = container(lucide_icon(icon_glyph, ICON_SIZE, icon_color))
             .width(ICON_SIZE)
             .height(ICON_SIZE)
             .align_x(iced::alignment::Horizontal::Center)
@@ -875,6 +916,21 @@ impl App {
             });
         if let Some(trailing) = trailing {
             content = content.push(trailing);
+        }
+
+        if outlined {
+            return container(content)
+                .width(Length::Fill)
+                .style(move |t: &Theme| container::Style {
+                    text_color: Some(foreground(t)),
+                    border: iced::Border {
+                        color: accent_of(t),
+                        width: BORDER_WIDTH,
+                        radius: theme::shape::MD.into(),
+                    },
+                    ..Default::default()
+                })
+                .into();
         }
 
         // CSS draws this as one rounded box with a thicker left border, so the heavy
@@ -909,20 +965,13 @@ impl App {
                 bottom: BORDER_WIDTH,
                 left: ACCENT_WIDTH,
             })
-            .style(move |t: &Theme| {
-                let p = pal_of(t);
-                let accent = match severity {
-                    BannerSeverity::Warning => p.warning,
-                    BannerSeverity::Error => p.error,
-                };
-                container::Style {
-                    background: Some(accent.into()),
-                    border: iced::Border {
-                        radius: theme::shape::MD.into(),
-                        ..Default::default()
-                    },
+            .style(move |t: &Theme| container::Style {
+                background: Some(accent_of(t).into()),
+                border: iced::Border {
+                    radius: theme::shape::MD.into(),
                     ..Default::default()
-                }
+                },
+                ..Default::default()
             })
             .into()
     }

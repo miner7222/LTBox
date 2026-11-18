@@ -170,6 +170,15 @@ impl AdvAction {
         )
     }
 
+    /// Whether this action's Start writes to the device. Decides the
+    /// destructive role of its wizard Start.
+    pub(crate) fn writes_to_device(&self) -> bool {
+        matches!(
+            self,
+            Self::FlashPartitions | Self::FlashPhysical | Self::SimpleFlash | Self::PatchDevinfo
+        )
+    }
+
     pub(crate) fn label_key(&self) -> &'static str {
         match self {
             Self::RegionConvert => "adv_region_convert",

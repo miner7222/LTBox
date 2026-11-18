@@ -22,41 +22,57 @@ fn flash_confirm_definition_row(
     caution: Option<String>,
     on_open: Message,
 ) -> Element<'static, Message> {
-    let mut value_column = column![
-        text(value)
-            .size(
-                if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
-                    theme::text_size::BODY_SMALL
-                } else {
-                    theme::text_size::BODY_MEDIUM
-                }
-            )
-            .font(
-                if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
-                    theme::mono_font()
-                } else {
-                    theme::emphasis::medium()
-                }
-            )
-            .width(Length::Fill)
-            .wrapping(
-                if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
-                    iced::widget::text::Wrapping::None
-                } else {
-                    iced::widget::text::Wrapping::WordOrGlyph
-                }
-            )
-            .style(move |t: &Theme| iced::widget::text::Style {
-                color: Some(if destructive {
-                    pal_of(t).error
-                } else {
-                    pal_of(t).on_surface
+    let value_text = text(value)
+        .size(
+            if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
+                theme::text_size::BODY_SMALL
+            } else {
+                theme::text_size::BODY_MEDIUM
+            },
+        )
+        .font(
+            if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
+                theme::mono_font()
+            } else {
+                theme::emphasis::medium()
+            },
+        )
+        .width(Length::Fill)
+        .wrapping(
+            if matches!(on_open, Message::Flash(FlashMsg::FlashSelectFolder)) {
+                iced::widget::text::Wrapping::None
+            } else {
+                iced::widget::text::Wrapping::WordOrGlyph
+            },
+        )
+        .style(move |t: &Theme| iced::widget::text::Style {
+            color: Some(if destructive {
+                pal_of(t).error
+            } else {
+                pal_of(t).on_surface
+            }),
+        });
+    // The alert glyph keeps the destructive signal when colour is not seen.
+    let value_element: Element<'static, Message> = if destructive {
+        row![
+            icon::banner_error()
+                .size(16)
+                .style(|t: &Theme| iced::widget::text::Style {
+                    color: Some(pal_of(t).error),
                 }),
-            })
-    ]
-    .spacing(2)
-    .width(Length::Fill)
-    .align_x(iced::Alignment::Start);
+            value_text
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill)
+        .into()
+    } else {
+        value_text.into()
+    };
+    let mut value_column = column![value_element]
+        .spacing(2)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::Start);
     if let Some(hint) = hint {
         value_column = value_column.push(
             text(hint)
@@ -177,7 +193,12 @@ impl App {
         let nav = if current_step != FlashStep::Flash {
             let is_start = current_step == FlashStep::Confirm;
             let label_owned = if is_start {
-                self.t("btn_start").to_string()
+                self.t(if self.wf_config.wipe {
+                    "btn_start_wipe"
+                } else {
+                    "btn_start"
+                })
+                .to_string()
             } else if current_step == FlashStep::Bootloader && self.flash.bootloader_skippable() {
                 self.t("btn_skip").to_string()
             } else {
@@ -196,9 +217,15 @@ impl App {
             } else {
                 None
             };
+            let primary_role = if is_start {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic_with_disabled_next_tooltip(
                 self.flash.step > 0,
                 &label_owned,
+                primary_role,
                 can,
                 disabled_next_hint,
                 self.t("btn_back"),
@@ -443,21 +470,42 @@ impl App {
                 Some(Message::Flash(FlashMsg::FlashDataMode(DataMode::Wipe))),
                 metrics,
             ));
-        // Below the options so choosing erase does not move the rows.
-        if self.flash.data_mode == Some(DataMode::Wipe) {
-            cards = cards.push(
-                self.message_banner(
-                    BannerSeverity::Error,
-                    icon::banner_error(),
-                    self.t("flash_data_wipe_warning_title").to_string(),
-                    text(self.t("flash_data_wipe_warning_body").to_string())
-                        .size(theme::text_size::BODY_MEDIUM)
-                        .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
-                        .style(error_container_text_style)
-                        .width(Length::Fill)
-                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-                ),
-            );
+        // Below the options so choosing either one does not move the rows. The
+        // risk of keeping data is stated where Keep is chosen; the erase banner
+        // states only its consequence and is outlined, so it does not become a
+        // second filled error block under the selected destructive row.
+        match self.flash.data_mode {
+            Some(DataMode::Keep) => {
+                cards = cards.push(
+                    self.message_banner(
+                        BannerSeverity::Warning,
+                        icon::banner_warning(),
+                        self.t("flash_data_keep_caution_title").to_string(),
+                        text(self.t("flash_data_keep_caution_body").to_string())
+                            .size(theme::text_size::BODY_MEDIUM)
+                            .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                            .style(warning_container_text_style)
+                            .width(Length::Fill)
+                            .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                    ),
+                );
+            }
+            Some(DataMode::Wipe) => {
+                cards = cards.push(
+                    self.message_banner_outlined(
+                        BannerSeverity::Error,
+                        icon::banner_error(),
+                        self.t("flash_data_wipe_warning_title").to_string(),
+                        text(self.t("flash_data_wipe_warning_body").to_string())
+                            .size(theme::text_size::BODY_MEDIUM)
+                            .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                            .style(on_surface_style)
+                            .width(Length::Fill)
+                            .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                    ),
+                );
+            }
+            None => {}
         }
         wizard_selection_step(
             content_width,
@@ -653,9 +701,9 @@ impl App {
         // strings.
         let modify_region = self
             .t(if cfg.modify_region {
-                "flash_confirm_rb_on"
+                "flash_confirm_region_patch_on"
             } else {
-                "flash_confirm_rb_off"
+                "flash_confirm_region_patch_off"
             })
             .to_string();
         let rollback = self
@@ -676,28 +724,34 @@ impl App {
             caution.clone()
         };
 
-        // The operation can destroy data or leave a kept-data downgrade
-        // unbootable, hence an error-role banner. The icon is separate from the
-        // localized copy.
-        let (warning_title_key, warning_key) = if cfg.wipe {
-            (
-                "flash_data_wipe_warning_title",
-                "flash_confirm_warning_wipe",
+        // Erasing data is the only irreversible path, so only it gets the
+        // error role; keeping data is a risk the user accepted, so a warning.
+        // The icon is separate from the localized copy.
+        let warning = if cfg.wipe {
+            self.message_banner(
+                BannerSeverity::Error,
+                icon::banner_error(),
+                self.t("flash_data_wipe_warning_title").to_string(),
+                text(self.t("flash_confirm_warning_wipe").to_string())
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                    .style(error_container_text_style)
+                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             )
         } else {
-            ("flash_confirm_warning_title", "flash_confirm_warning")
+            self.message_banner(
+                BannerSeverity::Warning,
+                icon::banner_warning(),
+                self.t("flash_confirm_keep_title").to_string(),
+                text(self.t("flash_confirm_warning").to_string())
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                    .style(warning_container_text_style)
+                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            )
         };
-        let warning = self.message_banner(
-            BannerSeverity::Error,
-            icon::banner_error(),
-            self.t(warning_title_key).to_string(),
-            text(self.t(warning_key).to_string())
-                .size(theme::text_size::BODY_MEDIUM)
-                .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
-                .style(error_container_text_style)
-                .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-        );
 
         let region_row = flash_confirm_definition_row(
             self.t("flash_confirm_region").to_string(),
@@ -747,7 +801,10 @@ impl App {
             self.t("flash_confirm_rollback").to_string(),
             rollback,
             rollback_hint,
-            cfg.modify_rollback != RollbackSetting::Off,
+            matches!(
+                cfg.modify_rollback,
+                RollbackSetting::On | RollbackSetting::Manual
+            ),
             rollback_changed,
             Some(rollback_caution),
             // Always the setting list, Manual included: it is how the user gets

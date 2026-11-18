@@ -247,21 +247,22 @@ pub(crate) const fn exec_action_layout(
     }
 }
 
-/// True for localized confirmation labels. These enter an operation from a
-/// review screen, so the action bar gives the primary control the error role.
-pub(crate) fn is_start_label(label: &str) -> bool {
-    label == ltbox_core::i18n::tr("btn_start").as_str()
-        || label == ltbox_core::i18n::tr("btn_dump").as_str()
-}
-
+/// Role of the wizard footer's trailing action. The caller decides from what the
+/// operation does, never from the label: `Destructive` is for a Start that
+/// writes to the device; reads (Dump, Inspect, Check) and every Next/Skip use
+/// `Primary`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WizardNavLayout {
-    pub(crate) destructive_primary: bool,
+pub(crate) enum WizardPrimaryRole {
+    Primary,
+    Destructive,
 }
 
-pub(crate) fn wizard_nav_layout(next_label: &str) -> WizardNavLayout {
-    WizardNavLayout {
-        destructive_primary: is_start_label(next_label),
+impl WizardPrimaryRole {
+    fn action_role(self) -> ActionButtonRole {
+        match self {
+            Self::Primary => ActionButtonRole::Primary,
+            Self::Destructive => ActionButtonRole::Error,
+        }
     }
 }
 
@@ -357,6 +358,11 @@ fn action_button<'a>(
         ActionButtonRole::Outlined => action_outlined_style,
         ActionButtonRole::Primary => md_filled_btn_style,
         ActionButtonRole::Error => action_error_filled_style,
+    };
+    // The error fill must not rely on hue alone: it always carries an alert glyph.
+    let icon = match (icon, role) {
+        (None, ActionButtonRole::Error) => Some(crate::icon::banner_error()),
+        (icon, _) => icon,
     };
     let label = text(label)
         .size(theme::text_size::BODY_MEDIUM)
@@ -543,16 +549,17 @@ fn visible_disabled_reason(can_next: bool, hint: Option<&str>) -> Option<&str> {
     hint.filter(|reason| !can_next && !reason.trim().is_empty())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wizard_nav_actions<'a>(
     leading_action: WizardLeadingAction,
     next_label: &str,
+    primary_role: WizardPrimaryRole,
     can_next: bool,
     disabled_next_hint: Option<String>,
     back_label: &str,
     back_msg: Message,
     next_msg: Message,
 ) -> Element<'a, Message> {
-    let layout = wizard_nav_layout(next_label);
     let mut trailing = row![]
         .spacing(ACTION_BUTTON_SPACING)
         .align_y(iced::Alignment::Center)
@@ -608,11 +615,7 @@ fn wizard_nav_actions<'a>(
         next_label.to_string(),
         can_next.then_some(next_msg),
         disabled_next_hint,
-        if layout.destructive_primary {
-            ActionButtonRole::Error
-        } else {
-            ActionButtonRole::Primary
-        },
+        primary_role.action_role(),
     ));
 
     wizard_action_footer(leading, trailing)
@@ -621,6 +624,7 @@ fn wizard_nav_actions<'a>(
 pub(crate) fn wizard_nav<'a>(
     can_back: bool,
     next_label: &str,
+    primary_role: WizardPrimaryRole,
     can_next: bool,
     back_label: &str,
 ) -> Element<'a, Message> {
@@ -631,6 +635,7 @@ pub(crate) fn wizard_nav<'a>(
             WizardLeadingAction::None
         },
         next_label,
+        primary_role,
         can_next,
         None,
         back_label,
@@ -1019,19 +1024,28 @@ impl App {
 pub(crate) fn wizard_nav_generic<'a>(
     can_back: bool,
     next_label: &str,
+    primary_role: WizardPrimaryRole,
     can_next: bool,
     back_label: &str,
     back_msg: Message,
     next_msg: Message,
 ) -> Element<'a, Message> {
     wizard_nav_generic_with_disabled_next_tooltip(
-        can_back, next_label, can_next, None, back_label, back_msg, next_msg,
+        can_back,
+        next_label,
+        primary_role,
+        can_next,
+        None,
+        back_label,
+        back_msg,
+        next_msg,
     )
 }
 
 pub(crate) fn wizard_nav_generic_with_leading_action<'a>(
     leading_action: WizardLeadingAction,
     next_label: &str,
+    primary_role: WizardPrimaryRole,
     can_next: bool,
     leading_label: &str,
     leading_msg: Message,
@@ -1040,6 +1054,7 @@ pub(crate) fn wizard_nav_generic_with_leading_action<'a>(
     wizard_nav_actions(
         leading_action,
         next_label,
+        primary_role,
         can_next,
         None,
         leading_label,
@@ -1048,9 +1063,11 @@ pub(crate) fn wizard_nav_generic_with_leading_action<'a>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn wizard_nav_generic_with_disabled_next_tooltip<'a>(
     can_back: bool,
     next_label: &str,
+    primary_role: WizardPrimaryRole,
     can_next: bool,
     disabled_next_hint: Option<String>,
     back_label: &str,
@@ -1064,6 +1081,7 @@ pub(crate) fn wizard_nav_generic_with_disabled_next_tooltip<'a>(
             WizardLeadingAction::None
         },
         next_label,
+        primary_role,
         can_next,
         disabled_next_hint,
         back_label,
@@ -1074,6 +1092,7 @@ pub(crate) fn wizard_nav_generic_with_disabled_next_tooltip<'a>(
 
 pub(crate) fn wizard_nav_cancel_generic_with_disabled_next_tooltip<'a>(
     next_label: &str,
+    primary_role: WizardPrimaryRole,
     can_next: bool,
     disabled_next_hint: Option<String>,
     cancel_label: &str,
@@ -1083,6 +1102,7 @@ pub(crate) fn wizard_nav_cancel_generic_with_disabled_next_tooltip<'a>(
     wizard_nav_actions(
         WizardLeadingAction::Cancel,
         next_label,
+        primary_role,
         can_next,
         disabled_next_hint,
         cancel_label,
@@ -1094,10 +1114,10 @@ pub(crate) fn wizard_nav_cancel_generic_with_disabled_next_tooltip<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        App, DevicePortrait, MaterialProgressSize, WIZARD_ACTION_BAR_HEIGHT,
+        ActionButtonRole, App, DevicePortrait, MaterialProgressSize, WIZARD_ACTION_BAR_HEIGHT,
         WIZARD_LIST_CARD_HEIGHT, WIZARD_LIST_GLYPH_ICON_SIZE, WIZARD_LIST_ICON_SIZE,
-        WindowSizeClass, device_portrait, material_progress_arc, material_progress_gap_angle,
-        material_progress_metrics, wizard_nav_layout,
+        WindowSizeClass, WizardPrimaryRole, device_portrait, material_progress_arc,
+        material_progress_gap_angle, material_progress_metrics,
     };
 
     #[test]
@@ -1178,17 +1198,16 @@ mod tests {
     }
 
     #[test]
-    fn wizard_nav_layout_marks_confirmation_actions_destructive() {
+    fn wizard_primary_role_maps_to_the_button_role() {
         assert_eq!(WIZARD_ACTION_BAR_HEIGHT, 60.0);
-        for key in ["btn_start", "btn_dump"] {
-            let label = ltbox_core::i18n::tr(key);
-            let layout = wizard_nav_layout(label.as_str());
-            assert!(layout.destructive_primary);
-        }
-
-        let next_label = ltbox_core::i18n::tr("btn_next");
-        let next = wizard_nav_layout(next_label.as_str());
-        assert!(!next.destructive_primary);
+        assert!(matches!(
+            WizardPrimaryRole::Primary.action_role(),
+            ActionButtonRole::Primary
+        ));
+        assert!(matches!(
+            WizardPrimaryRole::Destructive.action_role(),
+            ActionButtonRole::Error
+        ));
     }
 
     #[test]

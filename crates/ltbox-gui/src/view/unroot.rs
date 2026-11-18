@@ -46,9 +46,15 @@ impl App {
                 && ltbox_core::model::capabilities(&self.device.model).unroot
                 && !(self.operation.is_running() && is_start)
                 && (!is_start || unroot_connection_ready(self.device.connection));
+            let primary_role = if is_start {
+                WizardPrimaryRole::Destructive
+            } else {
+                WizardPrimaryRole::Primary
+            };
             wizard_nav_generic(
                 self.unroot.step > 0,
                 &label_owned,
+                primary_role,
                 can,
                 self.t("btn_back"),
                 Message::Unroot(UnrootMsg::UnrootBack),
