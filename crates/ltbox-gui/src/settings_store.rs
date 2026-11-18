@@ -321,11 +321,29 @@ pub fn load() -> PersistedSettings {
     let Some(path) = config_path() else {
         return first_run_default();
     };
-    let Ok(data) = std::fs::read_to_string(&path) else {
+    load_from(&path)
+}
+
+fn load_from(path: &Path) -> PersistedSettings {
+    let Ok(data) = std::fs::read_to_string(path) else {
         return first_run_default();
     };
-    let mut settings: PersistedSettings =
-        serde_json::from_str(&data).unwrap_or_else(|_| first_run_default());
+    let mut settings: PersistedSettings = match serde_json::from_str(&data) {
+        Ok(settings) => settings,
+        Err(error) => {
+            let seconds = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if let Some(name) = path.file_name() {
+                let mut backup_name = name.to_os_string();
+                backup_name.push(format!(".bad-{seconds}"));
+                let _ = std::fs::rename(path, path.with_file_name(backup_name));
+            }
+            tracing::warn!(%error, "failed to parse settings");
+            return first_run_default();
+        }
+    };
     settings.recent_paths.migrate_legacy();
     settings
 }
@@ -426,6 +444,49 @@ mod persistence_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_settings_are_preserved_and_defaults_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let invalid = "{invalid json";
+        std::fs::write(&path, invalid).unwrap();
+        let loaded = load_from(&path);
+        assert_eq!(
+            serde_json::to_value(loaded).unwrap(),
+            serde_json::to_value(first_run_default()).unwrap()
+        );
+        assert!(!path.exists());
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let suffix = backups[0]
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .strip_prefix("settings.json.bad-")
+            .unwrap();
+        assert!(suffix.parse::<u64>().is_ok());
+        assert_eq!(std::fs::read_to_string(&backups[0]).unwrap(), invalid);
+    }
+
+    #[test]
+    fn valid_settings_are_left_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let settings = PersistedSettings {
+            language: "fr".into(),
+            ..PersistedSettings::default()
+        };
+        let data = serde_json::to_string(&settings).unwrap();
+        std::fs::write(&path, &data).unwrap();
+        assert_eq!(load_from(&path).language, "fr");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), data);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn eligible_recents_merge_by_selection_time_after_reload() {
