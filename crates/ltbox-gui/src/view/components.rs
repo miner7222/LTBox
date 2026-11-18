@@ -461,6 +461,9 @@ pub(crate) fn empty_wizard_step_bar() -> Element<'static, Message> {
     Space::new().height(0).into()
 }
 
+/// Lines of step guidance the fixed-height app bars show before cutting.
+const SUBTITLE_MAX_LINES: usize = 2;
+
 /// Compact desktop top app bar for a screen or wizard title/description.
 pub(crate) fn large_top_app_bar<'a>(
     title: String,
@@ -473,8 +476,9 @@ pub(crate) fn large_top_app_bar<'a>(
         left: 24.0,
     };
     let content_min_height = WIZARD_TOP_APP_BAR_HEIGHT - padding.top - padding.bottom;
-    // The subtitle sits beside the title and ellipsizes rather than wrapping,
-    // so the bar keeps a fixed height; subtitles are short status text.
+    // The subtitle sits beside the title and may wrap to two lines. Its box is
+    // fixed at two line heights, so longer guidance is cut rather than growing
+    // the bar, and a single line stays vertically centred beside the title.
     let mut content = row![
         text(title)
             .size(theme::text_size::TITLE_LARGE)
@@ -494,7 +498,9 @@ pub(crate) fn large_top_app_bar<'a>(
                 .line_height(16.0 / 12.0)
                 .style(muted_style)
                 .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::None),
+                .height(Length::Fixed(SUBTITLE_MAX_LINES as f32 * 16.0))
+                .align_y(iced::alignment::Vertical::Center)
+                .wrapping(iced::widget::text::Wrapping::Word),
         );
     }
 
@@ -521,7 +527,8 @@ pub(crate) fn large_top_app_bar<'a>(
 }
 
 /// Wizard app bar for the flow title and optional step guidance. Expanded
-/// layouts keep both on one line; Compact retains the stacked 64 px bar.
+/// layouts put the title and up to two lines of guidance side by side;
+/// Compact retains the stacked 64 px bar.
 pub(crate) fn wizard_action_bar<'a>(
     size_class: WindowSizeClass,
     title: String,
@@ -545,10 +552,12 @@ pub(crate) fn wizard_action_bar<'a>(
         content = content.push(
             text(subtitle)
                 .size(theme::text_size::BODY_SMALL)
-                .line_height(1.0)
+                .line_height(16.0 / 12.0)
                 .style(muted_style)
                 .width(Length::Fill)
-                .wrapping(iced::widget::text::Wrapping::None),
+                .height(Length::Fixed(SUBTITLE_MAX_LINES as f32 * 16.0))
+                .align_y(iced::alignment::Vertical::Center)
+                .wrapping(iced::widget::text::Wrapping::Word),
         );
     }
 
@@ -1541,7 +1550,14 @@ impl App {
 }
 const PICKER_PATH_HEIGHT: f32 = 36.0;
 
-/// Preserve the drive/root and filename while shortening the intervening path.
+/// Fewest units the last component keeps beside a root before the root is
+/// dropped in favour of a longer piece of the name itself.
+const ELIDE_MIN_COMPONENT_UNITS: usize = 12;
+
+/// Shorten a path to `width` by whole components. The root and the last two
+/// components survive when they fit, then the root and the last component;
+/// parents collapse into a single ellipsis. Only a last component that cannot
+/// fit alone is cut, in its middle, so its head and tail both remain.
 pub(crate) fn elide_path_middle(path: &str, width: f32) -> String {
     // Monospace Latin glyphs occupy roughly 0.6em; CJK glyphs occupy one em.
     let budget = (width / (theme::text_size::BODY_SMALL * 0.62))
@@ -1549,18 +1565,20 @@ pub(crate) fn elide_path_middle(path: &str, width: f32) -> String {
         .max(1.0) as usize;
     let chars: Vec<char> = path.chars().collect();
     let units = |c: char| if c as u32 >= 0x1100 { 2usize } else { 1usize };
-    if chars.iter().map(|c| units(*c)).sum::<usize>() <= budget {
+    let measure = |part: &[char]| part.iter().map(|c| units(*c)).sum::<usize>();
+    if measure(&chars) <= budget {
         return path.to_string();
     }
+    let is_sep = |c: char| c == '/' || c == '\\';
     let prefix_len = if chars.get(1) == Some(&':') {
         3.min(chars.len())
-    } else if chars.first().is_some_and(|c| *c == '/' || *c == '\\') {
+    } else if chars.first().is_some_and(|c| is_sep(*c)) {
         if chars.get(1) == chars.first() {
             chars
                 .iter()
                 .enumerate()
                 .skip(2)
-                .filter(|(_, c)| **c == '/' || **c == '\\')
+                .filter(|(_, c)| is_sep(**c))
                 .nth(1)
                 .map(|(i, _)| i + 1)
                 .unwrap_or(2)
@@ -1570,21 +1588,82 @@ pub(crate) fn elide_path_middle(path: &str, width: f32) -> String {
     } else {
         0
     };
-    // UNC server/share names can themselves exceed the available width.
-    // Preserve a root only when it leaves room for the ellipsis and path tail.
-    let prefix_len = if chars[..prefix_len].iter().map(|c| units(*c)).sum::<usize>() + 1 < budget {
-        prefix_len
-    } else {
-        0
+    let prefix = &chars[..prefix_len];
+    let rest = &chars[prefix_len..];
+    // A trailing separator belongs to the last component.
+    let body_end = rest
+        .iter()
+        .rposition(|c| !is_sep(*c))
+        .map_or(0, |index| index + 1);
+    let last_start = rest[..body_end]
+        .iter()
+        .rposition(|c| is_sep(*c))
+        .map_or(0, |index| index + 1);
+    let prev_start = rest[..last_start.saturating_sub(1)]
+        .iter()
+        .rposition(|c| is_sep(*c))
+        .map_or(0, |index| index + 1);
+    let last = &rest[last_start..];
+
+    // `parents_sep` is the separator that follows the ellipsis standing in for
+    // the dropped parents; the ellipsis is budgeted as one unit.
+    let join = |prefix: &[char], parents_sep: Option<char>, tail: &[char]| -> Option<String> {
+        let used = measure(prefix) + parents_sep.map_or(0, |_| 2) + measure(tail);
+        if used > budget {
+            return None;
+        }
+        let mut shown: String = prefix.iter().collect();
+        if let Some(sep) = parents_sep {
+            shown.push('…');
+            shown.push(sep);
+        }
+        shown.extend(tail.iter());
+        Some(shown)
     };
-    let prefix: String = chars[..prefix_len].iter().collect();
-    let mut remaining = budget.saturating_sub(prefix.chars().map(units).sum::<usize>() + 1);
-    let mut cut = chars.len();
-    while cut > prefix_len && remaining >= units(chars[cut - 1]) {
-        remaining -= units(chars[cut - 1]);
-        cut -= 1;
+    if last_start > 0 {
+        if prev_start > 0
+            && let Some(shown) = join(prefix, Some(rest[prev_start - 1]), &rest[prev_start..])
+        {
+            return shown;
+        }
+        let sep = rest[last_start - 1];
+        if let Some(shown) = join(prefix, Some(sep), last) {
+            return shown;
+        }
+        // A root wider than the budget (long UNC names) is the first thing to go.
+        if !prefix.is_empty()
+            && let Some(shown) = join(&[], Some(sep), last)
+        {
+            return shown;
+        }
     }
-    format!("{}…{}", prefix, chars[cut..].iter().collect::<String>())
+
+    // The last component alone is too wide: keep its head and its tail.
+    let prefix = if measure(prefix) + 1 + ELIDE_MIN_COMPONENT_UNITS <= budget {
+        prefix
+    } else {
+        &[]
+    };
+    let name = if last.is_empty() { rest } else { last };
+    let avail = budget.saturating_sub(measure(prefix) + 1);
+    let head_budget = avail.div_ceil(2);
+    let mut head_end = 0;
+    let mut spent = 0;
+    while head_end < name.len() && spent + units(name[head_end]) <= head_budget {
+        spent += units(name[head_end]);
+        head_end += 1;
+    }
+    let mut tail_budget = avail - spent;
+    let mut tail_start = name.len();
+    while tail_start > head_end && units(name[tail_start - 1]) <= tail_budget {
+        tail_budget -= units(name[tail_start - 1]);
+        tail_start -= 1;
+    }
+    let mut shown: String = prefix.iter().collect();
+    shown.extend(name[..head_end].iter());
+    shown.push('…');
+    shown.extend(name[tail_start..].iter());
+    shown
 }
 
 pub(crate) fn picker_path_field(
@@ -1734,26 +1813,77 @@ pub(crate) fn help_button(title: String, body: String) -> Element<'static, Messa
 mod picker_path_tests {
     use super::elide_path_middle;
 
+    const DEMO_FIRMWARE: &str =
+        "/Users/ltbox/Firmware/TB520FU_ROW_OPEN_USER_Q00002.0_W_ZUI_17.5.10.096_ST_251127";
+    const DEMO_LAST: &str = "TB520FU_ROW_OPEN_USER_Q00002.0_W_ZUI_17.5.10.096_ST_251127";
+
+    fn budget(width: f32) -> usize {
+        (width / (crate::theme::text_size::BODY_SMALL * 0.62))
+            .floor()
+            .max(1.0) as usize
+    }
+
+    fn units(shown: &str) -> usize {
+        shown
+            .chars()
+            .map(|c| {
+                if c == '…' || (c as u32) < 0x1100 {
+                    1
+                } else {
+                    2
+                }
+            })
+            .sum()
+    }
+
     #[test]
-    fn resizing_reveals_the_full_path_and_keeps_drive_and_tail_when_narrow() {
+    fn whole_components_survive_and_parents_collapse_into_one_ellipsis() {
         let path = r"D:\Firmware\SomeLongDeviceName\SomeLongBuildName\image";
-        let narrow = elide_path_middle(path, 180.0);
-        assert!(narrow.starts_with(r"D:\"));
-        assert!(narrow.contains('…'));
-        assert!(narrow.ends_with("image"));
         assert_eq!(elide_path_middle(path, 2000.0), path);
+        // Root plus the last two components when they fit.
+        assert_eq!(
+            elide_path_middle(path, 260.0),
+            r"D:\…\SomeLongBuildName\image"
+        );
+        // Then root plus the last component.
+        assert_eq!(elide_path_middle(path, 180.0), r"D:\…\image");
+        assert_eq!(
+            elide_path_middle("/Users/ltbox/Firmware/build/image", 200.0),
+            "/…/build/image"
+        );
+    }
+
+    #[test]
+    fn firmware_folder_keeps_its_model_token_at_every_width() {
+        let last_start = DEMO_FIRMWARE.rfind('/').unwrap() + 1;
+        assert_eq!(&DEMO_FIRMWARE[last_start..], DEMO_LAST);
+        for width in [700.0_f32, 520.0, 400.0, 300.0, 200.0] {
+            let shown = elide_path_middle(DEMO_FIRMWARE, width);
+            assert!(units(&shown) <= budget(width), "{width}: {shown}");
+            let tail = shown.rsplit('/').next().unwrap();
+            assert!(tail.starts_with("TB520FU"), "{width}: {shown}");
+        }
+        // Wide enough for the folder but not for its parents: whole folder kept.
+        assert_eq!(
+            elide_path_middle(DEMO_FIRMWARE, 520.0),
+            format!("/…/{DEMO_LAST}")
+        );
+        // Too narrow for the folder: head and tail of the name both remain.
+        let shown = elide_path_middle(DEMO_FIRMWARE, 300.0);
+        assert!(shown.contains('…') && shown.ends_with("251127"), "{shown}");
     }
 
     #[test]
     fn unix_unc_and_unicode_roots_survive_elision() {
-        assert!(
-            elide_path_middle("/home/user/firmware/verylongbuild/image", 100.0).starts_with("/…")
+        assert_eq!(
+            elide_path_middle("/home/user/firmware/verylongbuild/image", 100.0),
+            "/…/image"
         );
         assert!(
             elide_path_middle(r"\\server\share\firmware\longbuild\image", 230.0)
                 .starts_with(r"\\server\share\")
         );
-        let result = elide_path_middle("D:/펌웨어/아주긴폴더이름/이미지.img", 100.0);
+        let result = elide_path_middle("D:/펌웨어/아주긴폴더이름/이미지.img", 120.0);
         assert!(result.starts_with("D:/"));
         assert!(result.ends_with(".img"));
     }
@@ -1765,22 +1895,19 @@ mod picker_path_tests {
             "server".repeat(200),
             "공유".repeat(200)
         );
-        for width in [0.0_f32, 1.0, 20.0, 100.0, 240.0] {
-            let shown = elide_path_middle(&path, width);
-            let budget = (width / (crate::theme::text_size::BODY_SMALL * 0.62))
-                .floor()
-                .max(1.0) as usize;
-            let units: usize = shown
-                .chars()
-                .map(|c| {
-                    if c == '…' || (c as u32) < 0x1100 {
-                        1
-                    } else {
-                        2
-                    }
-                })
-                .sum();
-            assert!(units <= budget, "{width}: {shown}");
+        let paths = [
+            path.as_str(),
+            DEMO_FIRMWARE,
+            r"D:\a\b\c\d",
+            "relative/dir/name",
+            "/trailing/dir/slash/",
+            "/",
+        ];
+        for path in paths {
+            for width in [0.0_f32, 1.0, 20.0, 100.0, 240.0] {
+                let shown = elide_path_middle(path, width);
+                assert!(units(&shown) <= budget(width), "{width}: {shown}");
+            }
         }
     }
 }
