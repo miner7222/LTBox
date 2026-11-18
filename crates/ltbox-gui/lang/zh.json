@@ -629,6 +629,7 @@
   "live_flash_firmware_folder": "固件目录：{path}",
   "live_flash_lenovo_key_proceed": "Lenovo 密钥设备 + Lenovo 密钥固件：同区域、非降级——按原样继续",
   "live_flash_lenovo_key_resign": "AOSP 测试密钥设备 + Lenovo 密钥固件：重新签名为 AOSP 测试密钥并保留设备引导加载程序",
+  "live_flash_model_check_skipped_unknown": "设备型号未知，已跳过固件型号检查",
   "live_flash_no_rawprogram_pack": "此文件夹中没有 rawprogram（.x / .xml）——看起来不是有效的固件镜像文件夹。",
   "live_flash_phase3_xml_counts": "{raw} 个 rawprogram + {patch} 个 patch XML",
   "live_flash_region_convert": "区域转换：{value}",

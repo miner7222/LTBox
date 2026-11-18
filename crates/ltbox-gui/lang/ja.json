@@ -629,6 +629,7 @@
   "live_flash_firmware_folder": "ファームウェアフォルダー：{path}",
   "live_flash_lenovo_key_proceed": "Lenovo 鍵デバイス + Lenovo 鍵ファームウェア：同一リージョン、ダウングレードなし — そのまま続行します",
   "live_flash_lenovo_key_resign": "AOSP テスト鍵デバイス + Lenovo 鍵ファームウェア：AOSP テスト鍵で再署名し、デバイスのブートローダーを保持します",
+  "live_flash_model_check_skipped_unknown": "デバイスのモデルが不明のため、ファームウェアのモデルチェックをスキップ",
   "live_flash_no_rawprogram_pack": "このフォルダーに rawprogram（.x / .xml）がありません — 正しいファームウェアイメージのフォルダーではないようです。",
   "live_flash_phase3_xml_counts": "{raw} rawprogram + {patch} patch XML",
   "live_flash_region_convert": "リージョン変換：{value}",

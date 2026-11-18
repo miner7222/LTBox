@@ -629,6 +629,7 @@
   "live_flash_firmware_folder": "Firmware folder: {path}",
   "live_flash_lenovo_key_proceed": "Lenovo key firmware on a Lenovo key device: same region, no downgrade — proceeding as-is",
   "live_flash_lenovo_key_resign": "Lenovo-key firmware on a device using the AOSP test key: re-signing with the AOSP test key and preserving the device bootloader",
+  "live_flash_model_check_skipped_unknown": "Device model unknown; skipped the firmware model cross-check",
   "live_flash_no_rawprogram_pack": "No rawprogram pack (.x / .xml) in this folder — it doesn't look like a valid firmware image folder.",
   "live_flash_phase3_xml_counts": "{raw} rawprogram + {patch} patch XML",
   "live_flash_region_convert": "Region convert: {value}",

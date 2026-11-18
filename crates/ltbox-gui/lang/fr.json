@@ -629,6 +629,7 @@
   "live_flash_firmware_folder": "Dossier du firmware : {path}",
   "live_flash_lenovo_key_proceed": "Firmware à clé Lenovo sur un appareil à clé Lenovo : même région, pas de rétrogradation — poursuite en l’état",
   "live_flash_lenovo_key_resign": "Firmware à clé Lenovo sur un appareil utilisant la clé de test AOSP : nouvelle signature avec la clé de test AOSP et conservation du bootloader de l’appareil",
+  "live_flash_model_check_skipped_unknown": "Modèle de l’appareil inconnu ; vérification du modèle du firmware ignorée",
   "live_flash_no_rawprogram_pack": "Aucun lot rawprogram (.x / .xml) dans ce dossier — il ne semble pas s’agir d’un dossier d’image de firmware valide.",
   "live_flash_phase3_xml_counts": "{raw} XML rawprogram + {patch} XML patch",
   "live_flash_region_convert": "Conversion de région : {value}",

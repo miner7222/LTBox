@@ -314,13 +314,8 @@ fn read_edl_start_device(
         let Some(boot_lun) = ltbox_core::partition_lun::lun_for_partition(&boot) else {
             continue;
         };
-        let boot_img = work_dir.join(format!("dev_{boot}.img"));
-        boot_idx[i] = session
-            .dump_partition(&boot, &boot_img, 0, boot_lun, log)
-            .ok()
-            .and_then(|_| ltbox_patch::avb::extract_image_avb_info(&boot_img).ok())
+        boot_idx[i] = dump_avb_info(session, &boot, boot_lun, &work_dir, log)?
             .map(|info| info.rollback_index);
-        let _ = std::fs::remove_file(&boot_img);
     }
     let Some(floors) = rollback_floors(boot_idx, vbs_idx) else {
         return Err(edl_probe_floor_error(

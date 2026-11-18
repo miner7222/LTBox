@@ -629,6 +629,7 @@
   "live_flash_firmware_folder": "펌웨어 폴더: {path}",
   "live_flash_lenovo_key_proceed": "레노버 키 기기에 같은 지역의 레노버 키 펌웨어를 다운그레이드 없이 설치하므로 그대로 진행합니다.",
   "live_flash_lenovo_key_resign": "AOSP 테스트 키 기기에 레노버 키 펌웨어: AOSP 테스트 키로 재서명하고 기기 부트로더 보존",
+  "live_flash_model_check_skipped_unknown": "기기 모델을 알 수 없어 펌웨어 모델 대조를 건너뜁니다.",
   "live_flash_no_rawprogram_pack": "이 폴더에 rawprogram(.x/.xml)이 없어 올바른 펌웨어 이미지 폴더가 아닌 것으로 보입니다.",
   "live_flash_phase3_xml_counts": "rawprogram {raw}개 + patch XML {patch}개",
   "live_flash_region_convert": "지역 변환: {value}",
