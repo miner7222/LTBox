@@ -283,7 +283,6 @@
   "err_rescue_region_not_selected": "Réparation du démarrage OTA : région cible (PRC/ROW) non sélectionnée.",
   "err_rescue_unsupported_layout": "Réparation du démarrage OTA : vendor_boot/vbmeta introuvables dans la table ou la disposition de partitions prise en charge. Abandon avant toute écriture.",
   "err_rescue_work_dir_failed": "Échec de la création du dossier de travail de réparation du démarrage OTA : {error}",
-  "err_reset_failed": "Échec de la réinitialisation : {error}",
   "err_rollback_on_fastboot_unreachable": "Les variables du bootloader sont indisponibles en mode Fastboot ; l’ajustement de l’index de rollback a été interrompu avant le flash.",
   "err_root_backup_copy_failed": "Impossible de sauvegarder {image} : {error}",
   "err_root_backup_dir_failed": "Impossible de créer le dossier de sauvegarde {path} : {error}",

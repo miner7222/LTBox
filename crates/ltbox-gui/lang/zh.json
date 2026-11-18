@@ -283,7 +283,6 @@
   "err_rescue_region_not_selected": "OTA 启动修复：未选择目标区域（PRC/ROW）。",
   "err_rescue_unsupported_layout": "OTA 启动修复：在受支持的分区映射或布局中找不到 vendor_boot/vbmeta。已在写入任何数据前中止。",
   "err_rescue_work_dir_failed": "创建 OTA 启动修复工作目录失败：{error}",
-  "err_reset_failed": "重启失败：{error}",
   "err_rollback_on_fastboot_unreachable": "Fastboot 模式下无法读取引导加载程序变量；已在刷写前中止回滚索引调整。",
   "err_root_backup_copy_failed": "备份 {image} 失败：{error}",
   "err_root_backup_dir_failed": "创建备份目录 {path} 失败：{error}",

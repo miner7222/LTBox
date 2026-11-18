@@ -68,7 +68,17 @@ pub(crate) fn unroot_worker(
     {
         return Err(tr_args!("model_unsupported", model = model));
     }
-    if !ltbox_core::model::capabilities(&device_model).root_uses_gbl {
+    if ltbox_core::model::capabilities(&device_model).root_uses_gbl {
+        // The device-side comparison below is impossible on the GBL route, but
+        // the backup itself can still be checked before anything is written.
+        check_gbl_backup(
+            &root_image_path,
+            vbmeta_path.as_deref(),
+            root_image_name,
+            base_part,
+            &device_model,
+        )?;
+    } else {
         ltbox_patch::avb::verify_root_backup(&root_image_path, vbmeta_path.as_deref(), base_part)
             .map_err(|error| {
             tr_args!(
@@ -231,9 +241,7 @@ pub(crate) fn unroot_worker(
         })?;
 
     live!(log, "[Unroot] {}", phases.marker(6));
-    session
-        .reset(&mut log)
-        .map_err(|e| tr_args!("err_reset_failed", error = e))?;
+    session.reset_tolerant(&mut log);
     live!(
         log,
         "[Unroot] {}",
@@ -271,6 +279,60 @@ enum AbortReason {
 /// rollback-bypass treatment; flashing those unchanged is what bricks the
 /// device. The payload retains its existing Boot-only reconciliation policy;
 /// the descriptor-detected owner is checked independently below.
+/// Self-check a GBL-route backup, which cannot be compared with the device:
+/// the patched image on the device carries no AVB metadata.
+///
+/// A backup with AVB metadata (every backup current Root writes: it requires
+/// a fingerprinted dump) must pass its own hash check and must not name
+/// another model. One without any AVB footer must at least be an Android boot
+/// image.
+fn check_gbl_backup(
+    image: &Path,
+    vbmeta: Option<&Path>,
+    image_name: &str,
+    partition: &str,
+    device_model: &str,
+) -> Result<(), String> {
+    let failed = |error: String| {
+        tr_args!(
+            "err_unroot_image_avb_failed",
+            image = image_name,
+            error = error
+        )
+    };
+    match avb::extract_image_avb_info(image) {
+        Ok(info) => {
+            avb::verify_root_backup(image, vbmeta, partition)
+                .map_err(|error| failed(error.to_string()))?;
+            // As Root does: a fingerprint naming no known model (a custom
+            // ROM) cannot contradict the device; one naming another does.
+            if let Some(fingerprint) = avb::build_fingerprint(&info)
+                && ltbox_core::model::fingerprint_names_known_model(&fingerprint)
+                && !crate::fingerprint_token_match(&fingerprint, device_model)
+            {
+                return Err(tr_args!(
+                    "err_unroot_fingerprint_mismatch",
+                    device = device_model,
+                    image = fingerprint
+                ));
+            }
+            Ok(())
+        }
+        Err(_) => {
+            let mut magic = [0u8; 8];
+            let is_boot_image = std::fs::File::open(image)
+                .and_then(|mut file| std::io::Read::read_exact(&mut file, &mut magic))
+                .is_ok()
+                && &magic == b"ANDROID!";
+            if is_boot_image {
+                Ok(())
+            } else {
+                Err(failed("not an Android boot image".into()))
+            }
+        }
+    }
+}
+
 fn unroot_prep(
     target: BackupRootTarget,
     device_fingerprint: Option<&str>,
@@ -834,6 +896,87 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    fn gbl_backup(dir: &Path, fingerprint: Option<&str>) -> PathBuf {
+        let image = dir.join("init_boot.img");
+        let mut body = b"ANDROID!".to_vec();
+        body.resize(8 * 1024, 0x5a);
+        std::fs::write(&image, body).unwrap();
+        avbtool_rs::footer::add_hash_footer(
+            &image,
+            &avbtool_rs::footer::HashFooterArgs {
+                partition_size: Some(128 * 1024),
+                dynamic_partition_size: false,
+                partition_name: "init_boot".into(),
+                hash_algorithm: "sha256".into(),
+                salt: Some(vec![7; 32]),
+                chain_partitions: Vec::new(),
+                algorithm_name: "NONE".into(),
+                key_spec: None,
+                public_key_metadata: None,
+                rollback_index: 0,
+                flags: 0,
+                rollback_index_location: 0,
+                properties: fingerprint
+                    .map(|fp| avbtool_rs::builder::PropertySpec {
+                        key: "com.android.build.init_boot.fingerprint".into(),
+                        value: fp.as_bytes().to_vec(),
+                    })
+                    .into_iter()
+                    .collect(),
+                kernel_cmdlines: Vec::new(),
+                include_descriptors_from_images: Vec::new(),
+                release_string: None,
+                append_to_release_string: None,
+                output_vbmeta_image: None,
+                do_not_append_vbmeta_image: false,
+                use_persistent_digest: false,
+                do_not_use_ab: false,
+            },
+        )
+        .unwrap();
+        image
+    }
+
+    const BALDUR_FP: &str = "Lenovo/TB323FU/TB323FU:15/AQ3A/ZUXOS_1.1.10:user/release-keys";
+
+    #[test]
+    fn gbl_backup_check_accepts_this_models_intact_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        for fp in [
+            Some(BALDUR_FP),
+            Some("lineage_custom/foo/foo:15/x:user/test-keys"),
+            None,
+        ] {
+            let image = gbl_backup(temp.path(), fp);
+            check_gbl_backup(&image, None, "init_boot.img", "init_boot", "TB323FU")
+                .unwrap_or_else(|error| panic!("{fp:?}: {error}"));
+        }
+    }
+
+    #[test]
+    fn gbl_backup_check_rejects_another_model_and_a_corrupted_image() {
+        let temp = tempfile::tempdir().unwrap();
+        let image = gbl_backup(temp.path(), Some(BALDUR_FP));
+        assert!(check_gbl_backup(&image, None, "init_boot.img", "init_boot", "TB324ZC").is_err());
+
+        let mut bytes = std::fs::read(&image).unwrap();
+        bytes[100] ^= 0xff;
+        std::fs::write(&image, bytes).unwrap();
+        assert!(check_gbl_backup(&image, None, "init_boot.img", "init_boot", "TB323FU").is_err());
+    }
+
+    #[test]
+    fn gbl_backup_without_avb_must_still_be_a_boot_image() {
+        let temp = tempfile::tempdir().unwrap();
+        let image = temp.path().join("init_boot.img");
+        let mut legacy = b"ANDROID!".to_vec();
+        legacy.resize(4096, 0);
+        std::fs::write(&image, &legacy).unwrap();
+        check_gbl_backup(&image, None, "init_boot.img", "init_boot", "TB323FU").unwrap();
+        std::fs::write(&image, vec![0u8; 4096]).unwrap();
+        assert!(check_gbl_backup(&image, None, "init_boot.img", "init_boot", "TB323FU").is_err());
     }
 
     #[test]

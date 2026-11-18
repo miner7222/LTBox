@@ -283,7 +283,6 @@
   "err_rescue_region_not_selected": "OTA boot repair: target region (PRC/ROW) not selected.",
   "err_rescue_unsupported_layout": "OTA boot repair: vendor_boot/vbmeta were not found through the supported partition map/layout. Aborted before any write.",
   "err_rescue_work_dir_failed": "OTA boot repair work folder creation failed: {error}",
-  "err_reset_failed": "Reset failed: {error}",
   "err_rollback_on_fastboot_unreachable": "Bootloader variables are unavailable in Fastboot mode; rollback index adjustment was aborted before flashing.",
   "err_root_backup_copy_failed": "Failed to back up {image}: {error}",
   "err_root_backup_dir_failed": "Could not create backup folder {path}: {error}",

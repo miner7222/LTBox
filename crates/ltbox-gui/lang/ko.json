@@ -283,7 +283,6 @@
   "err_rescue_region_not_selected": "부팅 실패 복구: 대상 지역(PRC/ROW)이 선택되지 않았습니다.",
   "err_rescue_unsupported_layout": "부팅 실패 복구: 지원되는 파티션 맵이나 레이아웃에서 vendor_boot와 vbmeta를 찾지 못했습니다. 데이터를 쓰기 전에 중단했습니다.",
   "err_rescue_work_dir_failed": "부팅 실패 복구 작업 폴더 생성 실패: {error}",
-  "err_reset_failed": "재부팅 실패: {error}",
   "err_rollback_on_fastboot_unreachable": "Fastboot 모드에서 부트로더 변수를 확인할 수 없어 플래싱 전에 롤백 인덱스 조정을 중단했습니다.",
   "err_root_backup_copy_failed": "{image} 백업 실패: {error}",
   "err_root_backup_dir_failed": "백업 폴더 생성 실패({path}): {error}",

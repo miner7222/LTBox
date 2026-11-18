@@ -283,7 +283,6 @@
   "err_rescue_region_not_selected": "OTA 起動修復：対象リージョン（PRC/ROW）が選択されていません。",
   "err_rescue_unsupported_layout": "OTA 起動修復：対応するパーティションマップまたはレイアウトから vendor_boot/vbmeta が見つかりませんでした。書き込み前に中止しました。",
   "err_rescue_work_dir_failed": "OTA 起動修復用の作業フォルダーを作成できませんでした：{error}",
-  "err_reset_failed": "再起動に失敗しました：{error}",
   "err_rollback_on_fastboot_unreachable": "Fastboot モードではブートローダー変数を利用できません。ロールバックインデックスの調整はフラッシュ前に中止されました。",
   "err_root_backup_copy_failed": "{image} のバックアップに失敗しました：{error}",
   "err_root_backup_dir_failed": "バックアップフォルダー {path} の作成に失敗しました：{error}",

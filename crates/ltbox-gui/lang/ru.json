@@ -283,7 +283,6 @@
   "err_rescue_region_not_selected": "Исправление сбоя загрузки после OTA: целевой регион (PRC/ROW) не выбран.",
   "err_rescue_unsupported_layout": "Исправление сбоя загрузки после OTA: vendor_boot и vbmeta не найдены по поддерживаемой карте или разметке разделов. Операция прервана до записи.",
   "err_rescue_work_dir_failed": "Не удалось создать рабочую папку для исправления сбоя загрузки после OTA: {error}",
-  "err_reset_failed": "Перезагрузка не удалась: {error}",
   "err_rollback_on_fastboot_unreachable": "Переменные загрузчика недоступны в режиме Fastboot; изменение индекса отката прервано до прошивки.",
   "err_root_backup_copy_failed": "Резервное копирование {image} не удалось: {error}",
   "err_root_backup_dir_failed": "Не удалось создать папку резервной копии {path}: {error}",
