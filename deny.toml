@@ -68,24 +68,6 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 
-# magiskboot-rs ships a verbatim GPL-3.0 LICENSE file but leaves the Cargo
-# `license` field empty, so cargo-deny cannot auto-detect it. Assert it for the
-# crate and its `base` / `derive` sub-crates (same git source).
-[[licenses.clarify]]
-crate = "magiskboot@0.1.2"
-expression = "GPL-3.0-or-later"
-license-files = []
-
-[[licenses.clarify]]
-crate = "base@0.1.2"
-expression = "GPL-3.0-or-later"
-license-files = []
-
-[[licenses.clarify]]
-crate = "derive@0.1.2"
-expression = "GPL-3.0-or-later"
-license-files = []
-
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
