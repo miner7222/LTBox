@@ -148,6 +148,25 @@ pub fn resolve_preinit_device(mountinfo: &str, encrypt_type: &str) -> Option<Str
 /// embed it in the ramdisk (v31.0 and older).
 const STUB_APK: &str = "stub.apk";
 
+/// Staged copy of the APK's `assets/util_functions.sh`, whose build-time
+/// `MAGISK_VER_CODE` line tells which magiskboot the app itself would run.
+const UTIL_FUNCTIONS: &str = "util_functions.sh";
+
+/// First Magisk release whose magiskboot always XZ-compresses code with a BCJ
+/// pre-filter and whose magiskinit decodes it (upstream `da320823a`).
+const FIRST_BCJ_VERSION_CODE: u32 = 31100;
+
+/// `MAGISK_VER_CODE` from a staged `util_functions.sh`, or `None` when the
+/// line is missing or not a number.
+fn magisk_version_code(util_functions: &str) -> Option<u32> {
+    util_functions.lines().find_map(|line| {
+        let value = line.trim().strip_prefix("MAGISK_VER_CODE=")?;
+        // `\u{22}` is `"`: a bare one in a char literal derails the locale
+        // guard's string scanner (crates/ltbox-gui/tests/locale_guards.rs).
+        value.trim().trim_matches(['\'', '\u{22}']).parse().ok()
+    })
+}
+
 /// Extract Magisk payload from `apk_path` into `staging_dir`, overwriting
 /// existing files.
 /// Accepts both `libmagisk.so` (newer) and `libmagisk64.so` (older) for `magisk`.
@@ -172,6 +191,7 @@ pub fn extract_apk_payload(apk_path: &Path, staging_dir: &Path) -> Result<()> {
         (&["lib/arm64-v8a/libmagiskinit.so"], "magiskinit", true),
         (&["lib/arm64-v8a/libinit-ld.so"], "init-ld", true),
         (&["assets/stub.apk"], STUB_APK, false),
+        (&["assets/util_functions.sh"], UTIL_FUNCTIONS, false),
     ];
 
     for (candidates, dst_name, required) in mapping {
@@ -271,11 +291,28 @@ pub fn patch_root_image(
     // Mirror the APK's own boot_patch.sh: v31.0 and older embed the stub,
     // v31.1+ ship no stub and their magiskinit ignores one.
     let embed_stub = work_dir.join(STUB_APK).is_file();
-    boot::compress(work_dir, "xz", "magisk", "magisk.xz")?;
+    // The app runs its own release's magiskboot: v31.1+ adds a BCJ pre-filter
+    // that only its matching magiskinit decodes. An unreadable version keeps
+    // plain XZ, which every magiskinit decodes.
+    let version_code = match fs::read_to_string(work_dir.join(UTIL_FUNCTIONS)) {
+        Ok(text) => magisk_version_code(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let xz_bcj = version_code.is_some_and(|code| code >= FIRST_BCJ_VERSION_CODE);
+    tracing::info!("Magisk version code {version_code:?}; XZ BCJ pre-filter: {xz_bcj}");
+    let compress_xz = |input: &str, output: &str| {
+        if xz_bcj {
+            boot::compress_xz_bcj(work_dir, input, output)
+        } else {
+            boot::compress(work_dir, "xz", input, output)
+        }
+    };
+    compress_xz("magisk", "magisk.xz")?;
     if embed_stub {
-        boot::compress(work_dir, "xz", STUB_APK, "stub.xz")?;
+        compress_xz(STUB_APK, "stub.xz")?;
     }
-    boot::compress(work_dir, "xz", "init-ld", "init-ld.xz")?;
+    compress_xz("init-ld", "init-ld.xz")?;
 
     // Config file baked into .backup/.magisk.
     let mut config = String::new();
@@ -317,6 +354,9 @@ pub fn patch_root_image(
             ("KEEPVERITY", "true"),
             ("KEEPFORCEENCRYPT", "true"),
             ("PATCHVBMETAFLAG", "false"),
+            // `backup` XZ-compresses the stock files it stores under .backup/,
+            // and v31.1 magiskboot applies BCJ there too.
+            ("XZBCJ", if xz_bcj { "true" } else { "false" }),
         ],
     )?;
 
@@ -543,6 +583,45 @@ mod tests {
             assert!(staging.join(name).is_file(), "{name} not staged");
         }
         assert!(!staging.join(STUB_APK).exists());
+    }
+
+    #[test]
+    fn stages_util_functions_and_drops_a_stale_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let staging = temp.path().join("work");
+        let with = temp.path().join("with.apk");
+        let mut entries = CORE_ENTRIES.to_vec();
+        entries.push("assets/util_functions.sh");
+        write_apk(&with, &entries);
+        extract_apk_payload(&with, &staging).unwrap();
+        assert!(staging.join(UTIL_FUNCTIONS).is_file());
+
+        // A stale copy from an earlier APK must not decide the BCJ mode.
+        let without = temp.path().join("without.apk");
+        write_apk(&without, &CORE_ENTRIES);
+        extract_apk_payload(&without, &staging).unwrap();
+        assert!(!staging.join(UTIL_FUNCTIONS).exists());
+    }
+
+    #[test]
+    fn reads_the_build_time_version_code() {
+        // Layout Magisk's Setup.kt writes over `#MAGISK_VERSION_STUB`.
+        let script =
+            "#!/system/bin/sh\nMAGISK_VER='31.1'\nMAGISK_VER_CODE=31100\n\nui_print() {}\n";
+        assert_eq!(magisk_version_code(script), Some(31100));
+        assert_eq!(
+            magisk_version_code("MAGISK_VER_CODE='30700'\n"),
+            Some(30700)
+        );
+        assert_eq!(
+            magisk_version_code("  MAGISK_VER_CODE=\"31000\"  \r\n"),
+            Some(31000)
+        );
+        // The unbuilt source keeps only the stub marker.
+        assert_eq!(magisk_version_code("#MAGISK_VERSION_STUB\n"), None);
+        assert_eq!(magisk_version_code("MAGISK_VER_CODE=\n"), None);
+        assert_eq!(magisk_version_code("MAGISK_VER_CODE=31.1\n"), None);
+        assert_eq!(magisk_version_code("# MAGISK_VER_CODE=31100\n"), None);
     }
 
     #[test]

@@ -99,11 +99,26 @@ pub fn sha1(file_path: &Path) -> Result<String> {
     Ok(sha1_hash(&data))
 }
 
-/// Compress a file. Non-zero magiskboot exit becomes `Err`.
+/// Compress a file. Non-zero magiskboot exit becomes `Err`. XZ output never
+/// carries a BCJ pre-filter; use [`compress_xz_bcj`] for consumers that decode it.
 pub fn compress(work_dir: &Path, format: &str, input: &str, output: &str) -> Result<()> {
     check_magiskboot(
         "compress",
         run_magiskboot(work_dir, &[&format!("compress={format}"), input, output])?,
+    )
+}
+
+/// XZ-compress a file with the architecture BCJ pre-filter that Magisk v31.1+
+/// magiskboot always applies. Only Magisk v31.1+ magiskinit (or a kernel built
+/// with the matching XZ_DEC_* filter) can decode the result.
+pub fn compress_xz_bcj(work_dir: &Path, input: &str, output: &str) -> Result<()> {
+    check_magiskboot(
+        "compress",
+        run_magiskboot_with_env(
+            work_dir,
+            &["compress=xz", input, output],
+            &[(XZ_BCJ_ENV, "true")],
+        )?,
     )
 }
 
@@ -156,6 +171,15 @@ pub fn dispatch_magiskboot_helper() -> Option<i32> {
     )
 }
 
+const XZ_BCJ_ENV: &str = "XZBCJ";
+
+/// magiskboot switches that change output bytes, pinned on every helper call
+/// so a variable left in the user's environment cannot reach the child; a
+/// call's own `envs` override them. `false` is what Magisk's boot_patch.sh
+/// passes on these tablets: they all have a vbmeta partition, and only
+/// [`compress_xz_bcj`] asks for BCJ.
+const PINNED_ENV: [(&str, &str); 2] = [(XZ_BCJ_ENV, "false"), ("PATCHVBMETAFLAG", "false")];
+
 fn run_magiskboot(work_dir: &Path, args: &[&str]) -> Result<i32> {
     run_magiskboot_with_env(work_dir, args, &[])
 }
@@ -181,6 +205,7 @@ fn run_magiskboot_with_env(work_dir: &Path, args: &[&str], envs: &[(&str, &str)]
         .arg(HELPER_FLAG)
         .args(args)
         .current_dir(work_dir)
+        .envs(PINNED_ENV.iter().copied())
         .envs(envs.iter().copied())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
