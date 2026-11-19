@@ -563,13 +563,13 @@ impl AdbManager {
                     }
                 };
                 match opened {
-                    Ok(mut dev) => {
+                    Ok(dev) => {
                         // Not `shell_inner`: its failure path drops the
                         // device, and a recovery adbd that authenticates but
                         // refuses shell would lose the handle just opened.
                         let mut stdout = Vec::new();
                         let _ = dev.shell_command(
-                            &"getprop ro.serialno",
+                            "getprop ro.serialno",
                             Some(&mut stdout as &mut dyn std::io::Write),
                             None,
                         );
@@ -770,7 +770,7 @@ impl AdbManager {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let res = dev.shell_command(
-            &cmd,
+            cmd,
             Some(&mut stdout as &mut dyn std::io::Write),
             Some(&mut stderr as &mut dyn std::io::Write),
         );
@@ -894,7 +894,7 @@ impl AdbManager {
         let mut file = std::fs::File::open(local)
             .map_err(|e| AdbError::CommandFailed(format!("open {}: {e}", local.display())))?;
         let dev = self.connect_device()?;
-        if let Err(e) = dev.push(&mut file, &remote) {
+        if let Err(e) = dev.push(&mut file, remote) {
             // Mirror `install`: a failed push can leave the USB handle
             // half-drained, so drop it for a clean re-claim next call.
             self.drop_device();
@@ -1022,8 +1022,9 @@ fn write_key_atomic(path: &Path, pem: &[u8]) -> Result<()> {
     Ok(())
 }
 
-const ADB_SHELL_REFUSED: &str =
-    "ADB request failed - Open session failed: got CLSE in response instead of OKAY";
+/// adb_client 4 wording when adbd closes the `shell:` stream it was asked to
+/// open; tied to the bootmode probe in `check_device_state`.
+const ADB_SHELL_REFUSED: &str = "ADB request failed - Open session failed: device closed the stream to shell:getprop ro.bootmode";
 
 /// Match only the `adb_client` response for an unsupported `shell:` service.
 /// Transport errors are also wrapped in `CommandFailed` by `shell_inner`, so
@@ -1312,7 +1313,7 @@ mod tests {
     #[test]
     fn only_exact_shell_refusal_is_sideload() {
         let refusal = adb_client::RustADBError::ADBRequestFailed(
-            "Open session failed: got CLSE in response instead of OKAY".into(),
+            "Open session failed: device closed the stream to shell:getprop ro.bootmode".into(),
         );
         assert!(is_sideload_shell_refusal(&AdbError::CommandFailed(
             refusal.to_string(),
@@ -1323,6 +1324,10 @@ mod tests {
             AdbError::CommandFailed("ADB error: USB Error: No device".into()),
             AdbError::CommandFailed(
                 "ADB request failed - Open session failed: got FAIL in response instead of OKAY"
+                    .into(),
+            ),
+            AdbError::CommandFailed(
+                "ADB request failed - Open session failed: device closed the stream to shell:id"
                     .into(),
             ),
             AdbError::Timeout,

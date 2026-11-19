@@ -20,11 +20,11 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
 name = "adb_client"
-version = "3.2.3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "773b25a440e72829bbb1b96435ee0e65ef0f14a3da545590930ca881a68e59d7"
+checksum = "79ca3d4cefc5b3b01664f67e3249319a07ca4c7e738a26d75021d7a94e691bc0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "byteorder",
  "chrono",
  "image",

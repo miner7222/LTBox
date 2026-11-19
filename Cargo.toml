@@ -84,7 +84,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
 # ADB
-adb_client = { version = "3", features = ["usb"] }
+adb_client = { version = "4", features = ["usb"] }
 # Pulled transitively by `adb_client`; declared directly so the RSA
 # key persistence helper in `ltbox-device::adb` can call
 # `to_pkcs8_pem` to write the LTBox-owned `adbkey` to disk on first
