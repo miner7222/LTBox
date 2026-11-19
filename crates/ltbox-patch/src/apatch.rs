@@ -14,9 +14,6 @@ use ltbox_core::{LtboxError, Result, tr_args};
 const SUPERKEY_MIN: usize = 8;
 const SUPERKEY_MAX: usize = 63;
 
-/// FolkPatch removed custom keys in upstream commit 09b6dcbb21ae.
-pub const FOLKPATCH_SUPERKEY: &str = "su";
-
 /// Validate superkey: 8–63 chars, ASCII alphanumeric only.
 pub(crate) fn validate_superkey(sk: &str) -> Result<()> {
     let n = sk.len();
@@ -50,13 +47,16 @@ pub fn patch_boot(
     patch_boot_impl(work_dir, kpm_paths, superkey, false, log)
 }
 
-/// Match FolkPatch's manager and `boot_patch.sh`: the fixed `su` key with `-S`.
+/// Match FolkPatch's manager and `boot_patch.sh`: its default key `su` is only
+/// a placeholder for signed-manager/UID authorization, so `-S` is omitted and
+/// the kernel keeps a zero key hash. Writing `-S su` (FolkPatch before upstream
+/// 5259dd44) would let any app authenticate with the fixed key "su".
 pub fn patch_folkpatch_boot(
     work_dir: &Path,
     kpm_paths: &[PathBuf],
     log: &mut Vec<String>,
 ) -> Result<PathBuf> {
-    patch_boot_impl(work_dir, kpm_paths, FOLKPATCH_SUPERKEY, true, log)
+    patch_boot_impl(work_dir, kpm_paths, "", true, log)
 }
 
 fn patch_boot_impl(
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn superkey_too_short() {
         assert!(validate_superkey("abc").is_err());
-        assert!(validate_superkey(FOLKPATCH_SUPERKEY).is_err());
+        assert!(validate_superkey("su").is_err());
     }
 
     #[test]
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn folkpatch_fixed_key_reaches_boot_processing() {
+    fn folkpatch_default_auth_reaches_boot_processing() {
         let tmp = tempfile::tempdir().unwrap();
         let err = patch_folkpatch_boot(tmp.path(), &[], &mut Vec::new()).unwrap_err();
         assert!(err.to_string().contains("missing boot.img"));
@@ -276,8 +276,10 @@ mod tests {
         );
     }
 
-    /// Compare the actual library path to upstream `boot_patch.sh` with `-S su`.
-    /// Fixtures are external: pristine boot, FolkPatch kpimg, and upstream boot output.
+    /// Compare the actual library path to upstream FolkPatch 115404+ `boot_patch.sh`
+    /// with its default key, which omits `-S`. Fixtures are external: pristine boot,
+    /// FolkPatch kpimg, and upstream boot output; an output made with `-S su`
+    /// (FolkPatch before 5259dd44) is stale and must fail.
     #[test]
     #[ignore = "needs LTBOX_TEST_PRISTINE_BOOT_IMG, LTBOX_TEST_FOLKPATCH_KPIMG, LTBOX_TEST_FOLKPATCH_EXPECTED_BOOT"]
     fn folkpatch_boot_matches_upstream() {
@@ -299,7 +301,7 @@ mod tests {
         assert_eq!(actual.len(), expected.len(), "boot image sizes differ");
         assert!(
             actual == expected,
-            "FolkPatch boot differs from upstream -S su"
+            "FolkPatch boot differs from upstream without -S"
         );
     }
 

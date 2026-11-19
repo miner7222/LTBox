@@ -687,11 +687,7 @@ pub fn build_patched_artifacts(
                     tr_args!(
                         "log_apatch_patching_boot",
                         kpm_count = cfg.kpm_paths.len(),
-                        superkey_len = if folkpatch {
-                            crate::apatch::FOLKPATCH_SUPERKEY.len()
-                        } else {
-                            cfg.superkey.len()
-                        },
+                        superkey_len = if folkpatch { 0 } else { cfg.superkey.len() },
                     )
                 );
                 (
