@@ -1,6 +1,6 @@
 //! Flash wizard view and steps (region, target, data, folder, confirm, exec).
 
-use super::components::elide_path_middle;
+use super::components::{confirm_definition_content, confirm_path_row, elide_path_middle};
 use crate::focus_button::{self as button, button};
 use crate::*;
 use iced::widget::{Space, column, container, row, scrollable, text};
@@ -10,6 +10,59 @@ use theme::with_alpha;
 
 const FLASH_CONFIRM_LABEL_WIDTH: f32 = 180.0;
 const FLASH_CONFIRM_MAX_WIDTH: f32 = 820.0;
+
+/// Read-only status chip for the firmware model pre-check. Mismatch carries
+/// the error colour and an alert glyph; Not checked stays muted.
+fn flash_model_precheck_chip(
+    label: String,
+    matched: bool,
+    mismatch: bool,
+) -> Element<'static, Message> {
+    let color = move |t: &Theme| {
+        if mismatch {
+            pal_of(t).error
+        } else if matched {
+            pal_of(t).success
+        } else {
+            pal_of(t).on_surface_variant
+        }
+    };
+    let mut content = row![].spacing(4).align_y(iced::Alignment::Center);
+    if mismatch {
+        content = content.push(icon::banner_error().size(14).style(move |t: &Theme| {
+            iced::widget::text::Style {
+                color: Some(color(t)),
+            }
+        }));
+    }
+    content = content.push(
+        text(label)
+            .size(theme::text_size::LABEL_SMALL)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .style(move |t: &Theme| iced::widget::text::Style {
+                color: Some(color(t)),
+            }),
+    );
+    container(content)
+        .padding([3, 10])
+        .style(move |t: &Theme| {
+            let p = pal_of(t);
+            container::Style {
+                background: Some(p.surface_container_high.into()),
+                border: iced::Border {
+                    color: if mismatch {
+                        p.error
+                    } else {
+                        iced::Color::TRANSPARENT
+                    },
+                    width: if mismatch { 1.0 } else { 0.0 },
+                    radius: theme::shape::FULL.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
 
 /// One interactive row in the flash review definition list. Values stay
 /// left-aligned; destructive outcomes use the error role on the value only.
@@ -204,19 +257,8 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            let can = self.flash.can_next()
-                && (current_step != FlashStep::Region
-                    || (self.queries.region_pending.is_none()
-                        && self.flash_serial_prompt.is_none()))
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || self.device_reachable());
-            let disabled_next_hint = if current_step == FlashStep::Bootloader {
-                self.flash
-                    .bootloader_block_reason()
-                    .map(|key| self.t(key).to_string())
-            } else {
-                None
-            };
+            let can = self.flash_nav_can();
+            let disabled_next_hint = self.flash_nav_block_reason();
             let primary_role = if is_start {
                 WizardPrimaryRole::Destructive
             } else {
@@ -248,6 +290,71 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+
+    /// The model pre-check error on the steps it gates. Re-evaluated on every
+    /// render: a device swap or a new folder changes the verdict without any
+    /// flash message.
+    fn flash_nav_model_error(&self) -> Option<String> {
+        if matches!(
+            self.flash.current_step(),
+            FlashStep::Folder | FlashStep::Confirm
+        ) {
+            self.flash_model_precheck_error()
+        } else {
+            None
+        }
+    }
+
+    /// Whether the Flash footer's Next/Start is enabled.
+    pub(crate) fn flash_nav_can(&self) -> bool {
+        let current_step = self.flash.current_step();
+        let is_start = current_step == FlashStep::Confirm;
+        self.flash.can_next()
+            && (current_step != FlashStep::Region
+                || (self.queries.region_pending.is_none() && self.flash_serial_prompt.is_none()))
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || self.device_reachable())
+            && self.flash_nav_model_error().is_none()
+    }
+
+    /// Why the Flash footer's Next/Start is disabled: the model mismatch,
+    /// then the Confirm step's own conjuncts, then the device. `None` while
+    /// an operation runs (the busy surface says why) and on selection steps.
+    pub(crate) fn flash_nav_block_reason(&self) -> Option<String> {
+        let current_step = self.flash.current_step();
+        if current_step == FlashStep::Bootloader {
+            return self
+                .flash
+                .bootloader_block_reason()
+                .map(|key| self.t(key).to_string());
+        }
+        if let Some(error) = self.flash_nav_model_error() {
+            return Some(error);
+        }
+        if current_step != FlashStep::Confirm {
+            return None;
+        }
+        // Re-picking the folder returns to the Folder step, so these Confirm
+        // conjuncts are defensive; each still names its own cause.
+        if self.flash.firmware_identity.is_none() || self.flash.firmware_folder.is_none() {
+            return Some(self.t("start_blocked_firmware_unchecked").to_string());
+        }
+        if !self.flash.bootloader_execution_allowed() {
+            // `None` only for an unrecorded efisp decision, which FlashNext
+            // records on the way out of the Bootloader step.
+            return self
+                .flash
+                .bootloader_block_reason()
+                .map(|key| self.t(key).to_string());
+        }
+        if self.flash.loader_required && self.flash.loader_override.is_none() {
+            return Some(self.t("flash_loader_missing_title").to_string());
+        }
+        if self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
     }
 
     fn flash_step_copy(&self) -> (String, Option<String>) {
@@ -366,6 +473,9 @@ impl App {
                         .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
                 ),
             );
+        }
+        if let Some(note) = self.wizard_device_note() {
+            cards = cards.push(wizard_device_note_line(note));
         }
         wizard_selection_step(
             content_width,
@@ -565,6 +675,23 @@ impl App {
                     ));
         }
 
+        // The inspected firmware names another model than the connected tablet.
+        if let Some(error) = self.flash_model_precheck_error() {
+            content = content.push(Space::new().height(Length::Fixed(16.0))).push(
+                self.message_banner(
+                    BannerSeverity::Error,
+                    icon::banner_error(),
+                    self.t("flash_model_mismatch").to_string(),
+                    text(error)
+                        .size(theme::text_size::BODY_MEDIUM)
+                        .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                        .style(error_container_text_style)
+                        .width(Length::Fill)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                ),
+            );
+        }
+
         content = content.push(
             self.recent_chips(
                 self.recent_paths
@@ -660,18 +787,63 @@ impl App {
         let caution = self.t("flash_confirm_override_warning").to_string();
         let open = |f: ConfirmField| Message::Flash(FlashMsg::FlashConfirmOpen(f));
 
-        let device_name = if self.device.market_name.is_empty() {
-            dash.as_str()
-        } else {
-            self.device.market_name.as_str()
-        };
         let device_model = if self.device.model.is_empty() {
             dash.as_str()
         } else {
             self.device.model.as_str()
         };
-        let device_value = format!("{device_name} · {device_model}");
-        let device_row = confirm_definition_row(self.t("dash_device"), &device_value);
+        let device_row = self.confirm_device_row();
+
+        // What is being written, from the folder inspection. The chip is the
+        // worker's own model predicate; it never reads as a match unless run.
+        let identity = self.flash.firmware_identity.as_ref();
+        let firmware_model = identity
+            .and_then(|value| value.model_token.as_deref())
+            .unwrap_or_else(|| self.t("flash_firmware_model_unknown"))
+            .to_string();
+        let precheck = self.flash_model_precheck();
+        let chip_label = if precheck.is_match() {
+            tr_args!("flash_model_match", model = device_model)
+        } else if precheck.is_mismatch() {
+            self.t("flash_model_mismatch").to_string()
+        } else {
+            self.t("flash_model_unchecked").to_string()
+        };
+        let firmware_model_row = confirm_definition_content(
+            self.t("flash_firmware_identity_model"),
+            row![
+                text(firmware_model)
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .font(theme::emphasis::medium()),
+                flash_model_precheck_chip(chip_label, precheck.is_match(), precheck.is_mismatch(),),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+            .wrap()
+            .vertical_spacing(6.0)
+            .into(),
+        );
+        let firmware_build_row = match identity.and_then(|value| value.fingerprint.as_deref()) {
+            Some(fingerprint) => {
+                confirm_path_row(self.t("flash_confirm_firmware_build"), fingerprint)
+            }
+            None => confirm_definition_row(self.t("flash_confirm_firmware_build"), &dash),
+        };
+        let key_verdict = match identity.map(|value| value.key_class) {
+            Some(ltbox_patch::key_map::KeyClass::Testkey) => "flash_key_testkey",
+            Some(ltbox_patch::key_map::KeyClass::Lenovo) => "flash_key_lenovo",
+            Some(ltbox_patch::key_map::KeyClass::Unknown) | None => "flash_key_unknown",
+        };
+        let signing_key_row =
+            confirm_definition_row(self.t("flash_firmware_identity_key"), self.t(key_verdict));
+        let installed_row = confirm_definition_row(
+            self.t("flash_confirm_installed"),
+            if self.device.firmware.is_empty() {
+                dash.as_str()
+            } else {
+                self.device.firmware.as_str()
+            },
+        );
 
         let region = cfg
             .device_region
@@ -861,6 +1033,10 @@ impl App {
 
         let definitions = column![
             device_row,
+            firmware_model_row,
+            firmware_build_row,
+            signing_key_row,
+            installed_row,
             region_row,
             target_row,
             data_row,
@@ -872,8 +1048,15 @@ impl App {
         .spacing(0)
         .width(Length::Fill)
         .align_x(iced::Alignment::Start);
-        let content = column![warning, definitions]
-            .spacing(16.0)
+        let mut content = column![].spacing(16.0);
+        if !self.flash_nav_can() {
+            for notice in self.start_block_notices(self.flash_nav_block_reason()) {
+                content = content.push(notice);
+            }
+        }
+        let content = content
+            .push(warning)
+            .push(definitions)
             .padding([18.0, 28.0])
             .width(Length::Fill)
             .align_x(iced::Alignment::Start);

@@ -626,6 +626,7 @@ pub(crate) fn wizard_nav<'a>(
     next_label: &str,
     primary_role: WizardPrimaryRole,
     can_next: bool,
+    disabled_next_hint: Option<String>,
     back_label: &str,
 ) -> Element<'a, Message> {
     wizard_nav_actions(
@@ -637,11 +638,67 @@ pub(crate) fn wizard_nav<'a>(
         next_label,
         primary_role,
         can_next,
-        None,
+        disabled_next_hint,
         back_label,
         Message::Root(RootMsg::RootBack),
         Message::Root(RootMsg::RootNext),
     )
+}
+
+/// A disabled Start's reason as the leading notice above a confirm summary,
+/// worded as the footer reason. While another ADB server holds the device,
+/// the notice carries the outlined Kill Server action the dashboard offers.
+pub(crate) fn start_block_notice<'a>(
+    reason: String,
+    kill_adb_server: bool,
+) -> Element<'a, Message> {
+    let notice = container(dialog_field_error(reason)).width(Length::Fill);
+    if !kill_adb_server {
+        return notice.into();
+    }
+    row![
+        notice,
+        m3_outlined_button(ltbox_core::i18n::tr("btn_kill_adb_server").to_string())
+            .on_press(Message::KillAdbServer),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
+    .into()
+}
+
+/// The neutral line under a wizard's first-step options while no device is
+/// reachable. Informational only; it never gates Next.
+pub(crate) fn wizard_device_note_line<'a>(note: String) -> Element<'a, Message> {
+    container(
+        text(note)
+            .size(theme::text_size::BODY_SMALL)
+            .style(muted_style)
+            .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+    )
+    .padding([8, 4])
+    .width(Length::Fill)
+    .into()
+}
+
+impl App {
+    /// The confirm-step notices for a disabled Start: empty when `reason` is
+    /// `None` (Start enabled or busy).
+    pub(crate) fn start_block_notices<'a>(
+        &self,
+        reason: Option<String>,
+    ) -> Vec<Element<'a, Message>> {
+        reason
+            .map(|reason| {
+                start_block_notice(
+                    reason,
+                    self.device.connection == ConnectionStatus::AdbServerBlocking,
+                )
+            })
+            .into_iter()
+            .collect()
+    }
 }
 
 /// Navigation-drawer item and compact-rail geometry.
@@ -1021,32 +1078,13 @@ impl App {
     }
 }
 
-pub(crate) fn wizard_nav_generic<'a>(
-    can_back: bool,
-    next_label: &str,
-    primary_role: WizardPrimaryRole,
-    can_next: bool,
-    back_label: &str,
-    back_msg: Message,
-    next_msg: Message,
-) -> Element<'a, Message> {
-    wizard_nav_generic_with_disabled_next_tooltip(
-        can_back,
-        next_label,
-        primary_role,
-        can_next,
-        None,
-        back_label,
-        back_msg,
-        next_msg,
-    )
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn wizard_nav_generic_with_leading_action<'a>(
     leading_action: WizardLeadingAction,
     next_label: &str,
     primary_role: WizardPrimaryRole,
     can_next: bool,
+    disabled_next_hint: Option<String>,
     leading_label: &str,
     leading_msg: Message,
     next_msg: Message,
@@ -1056,7 +1094,7 @@ pub(crate) fn wizard_nav_generic_with_leading_action<'a>(
         next_label,
         primary_role,
         can_next,
-        None,
+        disabled_next_hint,
         leading_label,
         leading_msg,
         next_msg,

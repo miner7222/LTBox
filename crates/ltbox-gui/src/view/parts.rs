@@ -253,13 +253,7 @@ impl App {
                 2 => self.t("btn_start").to_string(),
                 _ => self.t("btn_next").to_string(),
             };
-            let is_start = self.flash_parts.step == 2 || self.flash_parts.step == 0;
-            // No loader-fit gate: by Confirm the device is in EDL (the GPT scan
-            // got it there), where the model cannot be polled, and that scan
-            // already validated the loader.
-            let can = self.flash_parts.can_next()
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || self.device_reachable());
+            let can = self.flash_parts_nav_can();
             let leading_action = if self.flash_parts.step == 1 {
                 partition_table_leading_action(self.flash_parts.entry_connection)
             } else {
@@ -281,6 +275,7 @@ impl App {
                 &label,
                 primary_role,
                 can,
+                self.flash_parts_nav_block_reason(),
                 leading_label,
                 if self.flash_parts.step == 0 {
                     Message::FlashParts(FlashPartsMsg::FlashPartsClose)
@@ -720,7 +715,80 @@ impl App {
                 ));
             }
         }
-        self.confirm_step_frame(groups, vec![], vec![])
+        let mut leading = if self.flash_parts_nav_can() {
+            vec![]
+        } else {
+            self.start_block_notices(self.flash_parts_nav_block_reason())
+        };
+        leading.extend(groups);
+        self.confirm_step_frame(leading, vec![], vec![])
+    }
+
+    /// Whether the Flash Partitions footer's Scan/Next/Start is enabled.
+    pub(crate) fn flash_parts_nav_can(&self) -> bool {
+        let is_start = self.flash_parts.step == 2 || self.flash_parts.step == 0;
+        // No loader-fit gate: by Confirm the device is in EDL (the GPT scan
+        // got it there), where the model cannot be polled, and that scan
+        // already validated the loader.
+        self.flash_parts.can_next()
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || self.device_reachable())
+    }
+
+    /// Why Flash Partitions' Scan or Start is disabled: the device, once the
+    /// step's own input is complete.
+    pub(crate) fn flash_parts_nav_block_reason(&self) -> Option<String> {
+        let is_start = self.flash_parts.step == 2 || self.flash_parts.step == 0;
+        if !is_start || !self.flash_parts.can_next() || self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
+    }
+
+    /// Whether the Dump Partitions footer's Scan/Dump is enabled. Both talk
+    /// to the device, so both are gated on reachability.
+    pub(crate) fn dump_parts_nav_can(&self) -> bool {
+        self.dump_parts.can_next() && !self.operation.is_running() && self.device_reachable()
+    }
+
+    /// Why Dump Partitions' Scan or Dump is disabled: the device.
+    pub(crate) fn dump_parts_nav_block_reason(&self) -> Option<String> {
+        if !self.dump_parts.can_next() || self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
+    }
+
+    /// Whether the Dump Physical footer's Next/Dump is enabled. Both talk to
+    /// EDL; gate on a reachable device.
+    pub(crate) fn dump_phys_nav_can(&self) -> bool {
+        self.dump_phys.can_next() && !self.operation.is_running() && self.device_reachable()
+    }
+
+    /// Why Dump Physical's Next or Dump is disabled: the device.
+    pub(crate) fn dump_phys_nav_block_reason(&self) -> Option<String> {
+        if !self.dump_phys.can_next() || self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
+    }
+
+    /// Whether the Flash Physical footer's Next/Start is enabled.
+    pub(crate) fn flash_phys_nav_can(&self) -> bool {
+        let is_start = self.flash_phys.step == 2;
+        // No loader-fit gate: by Confirm the device is in EDL, where the
+        // model cannot be polled, and the loader already opened the session.
+        self.flash_phys.can_next()
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || self.device_reachable())
+    }
+
+    /// Why Flash Physical's Start is disabled: the device.
+    pub(crate) fn flash_phys_nav_block_reason(&self) -> Option<String> {
+        if self.flash_phys.step != 2 || !self.flash_phys.can_next() || self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
     }
 
     pub(crate) fn view_dump_parts_wizard(&self) -> Element<'_, Message> {
@@ -759,11 +827,7 @@ impl App {
             } else {
                 self.t("btn_scan").to_string()
             };
-            // Both Scan (step 0) and Dump (step 1) talk to the device; gate
-            // both on reachability.
-            let can = self.dump_parts.can_next()
-                && !self.operation.is_running()
-                && self.device_reachable();
+            let can = self.dump_parts_nav_can();
             let leading_action = if self.dump_parts.step == 1 {
                 partition_table_leading_action(self.dump_parts.entry_connection)
             } else {
@@ -779,6 +843,7 @@ impl App {
                 &label,
                 WizardPrimaryRole::Primary,
                 can,
+                self.dump_parts_nav_block_reason(),
                 leading_label,
                 if self.dump_parts.step == 0 {
                     Message::DumpParts(DumpPartsMsg::DumpPartsClose)
@@ -1003,15 +1068,13 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            // Both Scan and Dump talk to EDL; gate on a reachable device.
-            let can = self.dump_phys.can_next()
-                && !self.operation.is_running()
-                && self.device_reachable();
-            wizard_nav_generic(
+            let can = self.dump_phys_nav_can();
+            wizard_nav_generic_with_disabled_next_tooltip(
                 true,
                 &label,
                 WizardPrimaryRole::Primary,
                 can,
+                self.dump_phys_nav_block_reason(),
                 self.t("btn_back"),
                 if self.dump_phys.step == 0 {
                     Message::DumpPhys(DumpPhysMsg::DumpPhysClose)
@@ -1136,21 +1199,18 @@ impl App {
                 _ => self.t("btn_next").to_string(),
             };
             let is_start = self.flash_phys.step == 2;
-            // No loader-fit gate: by Confirm the device is in EDL, where the
-            // model cannot be polled, and the loader already opened the session.
-            let can = self.flash_phys.can_next()
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || self.device_reachable());
+            let can = self.flash_phys_nav_can();
             let primary_role = if is_start {
                 WizardPrimaryRole::Destructive
             } else {
                 WizardPrimaryRole::Primary
             };
-            wizard_nav_generic(
+            wizard_nav_generic_with_disabled_next_tooltip(
                 true,
                 &label,
                 primary_role,
                 can,
+                self.flash_phys_nav_block_reason(),
                 self.t("btn_back"),
                 if self.flash_phys.step == 0 {
                     Message::FlashPhys(FlashPhysMsg::FlashPhysClose)
@@ -1272,7 +1332,11 @@ impl App {
     pub(crate) fn flash_phys_confirm_step(&self) -> Element<'_, Message> {
         let pairs = self.flash_phys.active_pairs();
 
-        let mut leading: Vec<Element<'_, Message>> = Vec::new();
+        let mut leading: Vec<Element<'_, Message>> = if self.flash_phys_nav_can() {
+            Vec::new()
+        } else {
+            self.start_block_notices(self.flash_phys_nav_block_reason())
+        };
 
         if !pairs.is_empty() {
             let mut list = column![

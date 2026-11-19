@@ -69,6 +69,95 @@ impl App {
         .into()
     }
 
+    /// `(needs_system, system_ok, loader_ok)` for the Advanced footer.
+    /// Change Country Code (PatchDevinfo) runs over EDL but is launched from
+    /// ADB, where the model is read, so its Start requires ADB. Its picked
+    /// loader must still fit the connected model at Start (the device may have
+    /// been swapped after the loader was picked).
+    fn adv_nav_system_gate(&self, is_start: bool) -> (bool, bool, bool) {
+        let needs_system =
+            is_start && matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo));
+        let system_ok = self.device.connection == ConnectionStatus::Adb;
+        let loader_ok = !needs_system
+            || self
+                .adv_wizard
+                .file_path
+                .as_deref()
+                .map(|p| self.loader_fits_model(std::path::Path::new(p)))
+                .unwrap_or(true);
+        (needs_system, system_ok, loader_ok)
+    }
+
+    fn adv_nav_detect_arb_step0(&self) -> bool {
+        matches!(self.adv_wizard.action, Some(AdvAction::DetectArb)) && self.adv_wizard.step == 0
+    }
+
+    /// Whether the Advanced wizard footer's Next/Start is enabled.
+    pub(crate) fn adv_nav_can(&self) -> bool {
+        let detect_arb_step0 = self.adv_nav_detect_arb_step0();
+        let is_start = self.adv_wizard.is_confirm_step() || detect_arb_step0;
+        // DetectArb's Start needs a reachable device. Other ops need no device.
+        let needs_device = matches!(self.adv_wizard.action, Some(AdvAction::DetectArb));
+        let (needs_system, system_ok, loader_ok) = self.adv_nav_system_gate(is_start);
+        (if detect_arb_step0 {
+            self.can_query_rollback()
+        } else {
+            self.adv_wizard.can_next()
+        }) && !self.operation.is_running()
+            && (!is_start || !needs_device || self.device_reachable())
+            && (!needs_system || system_ok)
+            && loader_ok
+    }
+
+    /// Why the Advanced footer is disabled: Change Country's ADB / loader-fit
+    /// gate, or DetectArb's device. A model without rollback protection is
+    /// stated in DetectArb's body; a missing loader is the picker's own state.
+    pub(crate) fn adv_nav_block_reason(&self) -> Option<String> {
+        let detect_arb_step0 = self.adv_nav_detect_arb_step0();
+        let is_start = self.adv_wizard.is_confirm_step() || detect_arb_step0;
+        let (needs_system, system_ok, loader_ok) = self.adv_nav_system_gate(is_start);
+        if needs_system && !system_ok {
+            Some(self.t("adv_country_needs_system").to_string())
+        } else if needs_system && !loader_ok {
+            Some(self.t("loader_model_mismatch_tooltip").to_string())
+        } else if detect_arb_step0
+            && is_rollback_protected_model(&self.device.model)
+            && !self.operation.is_running()
+        {
+            // The device first, so "the connected device" is never claimed
+            // without one; then a picked loader that no longer fits it.
+            self.device_block_reason().or_else(|| {
+                let unfit = self.rollback_query_needs_loader()
+                    && self.adv_wizard.file_path.as_deref().is_some_and(|path| {
+                        std::path::Path::new(path).is_file()
+                            && !self.loader_fits_model(std::path::Path::new(path))
+                    });
+                unfit.then(|| self.t("loader_model_mismatch_tooltip").to_string())
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Whether the Simple Firmware Flasher footer's Next/Start is enabled.
+    pub(crate) fn simple_flash_nav_can(&self) -> bool {
+        let is_start = self.simple_flash.step == 1;
+        self.simple_flash.can_next()
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || self.device_reachable())
+    }
+
+    /// Why the Simple Firmware Flasher's Start is disabled: the device.
+    pub(crate) fn simple_flash_nav_block_reason(&self) -> Option<String> {
+        if self.simple_flash.step != 1
+            || !self.simple_flash.can_next()
+            || self.operation.is_running()
+        {
+            return None;
+        }
+        self.device_block_reason()
+    }
+
     /// Advanced wizard. PatchDevinfo: source/country/confirm/exec.
     /// Others: source/confirm/exec.
     pub(crate) fn view_adv_wizard(&self) -> Element<'_, Message> {
@@ -141,38 +230,8 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let is_start = is_confirm || detect_arb_step0;
-            // DetectArb's Start needs a reachable device. Change Country Code
-            // (PatchDevinfo) runs over EDL but is launched from ADB, where the
-            // model is read, so its Start requires ADB. Other ops need no device.
-            let needs_device = matches!(self.adv_wizard.action, Some(AdvAction::DetectArb));
-            let needs_system =
-                is_start && matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo));
-            let system_ok = self.device.connection == ConnectionStatus::Adb;
-            // Change Country's picked loader must still fit the connected model at
-            // Start (the device may have been swapped after the loader was picked).
-            let loader_ok = !needs_system
-                || self
-                    .adv_wizard
-                    .file_path
-                    .as_deref()
-                    .map(|p| self.loader_fits_model(std::path::Path::new(p)))
-                    .unwrap_or(true);
-            let can = (if detect_arb_step0 {
-                self.can_query_rollback()
-            } else {
-                self.adv_wizard.can_next()
-            }) && !self.operation.is_running()
-                && (!is_start || !needs_device || self.device_reachable())
-                && (!needs_system || system_ok)
-                && loader_ok;
-            // Explain a Start disabled by the ADB / loader-fit gate on hover.
-            let hint: Option<String> = if needs_system && !system_ok {
-                Some(self.t("adv_country_needs_system").to_string())
-            } else if needs_system && !loader_ok {
-                Some(self.t("loader_model_mismatch_tooltip").to_string())
-            } else {
-                None
-            };
+            let can = self.adv_nav_can();
+            let hint = self.adv_nav_block_reason();
             // Only a Start that writes to the device is destructive; DetectArb's
             // Start and the local-file actions are reads.
             let primary_role = if is_start
@@ -424,7 +483,19 @@ impl App {
         } else {
             self.t("adv_confirm_source")
         };
+        // Only Change Country Code writes to the device among the actions that
+        // reach this step; the local-file tools get no device row or effect.
+        let mut notices = Vec::new();
         let mut grid_rows = Vec::new();
+        if self.adv_wizard.needs_country() {
+            notices.push(confirm_effect_line(
+                self.t("adv_country_confirm_effect").to_string(),
+            ));
+            grid_rows.push(self.confirm_device_row());
+        }
+        if !self.adv_nav_can() {
+            notices.extend(self.start_block_notices(self.adv_nav_block_reason()));
+        }
         if self.adv_wizard.needs_country() {
             let code = self.adv_wizard.country.clone().unwrap_or(dash.clone());
             grid_rows.push(confirm_definition_row(self.t("adv_confirm_country"), &code));
@@ -464,10 +535,10 @@ impl App {
                 }
             }
             grid_rows.push(confirm_path_row(source_label, &path));
-            return self.confirm_step_frame(vec![], grid_rows, vec![]);
+            return self.confirm_step_frame(notices, grid_rows, vec![]);
         }
         self.confirm_step_frame(
-            vec![],
+            notices,
             grid_rows,
             vec![confirm_path_row(source_label, &path)],
         )
@@ -560,19 +631,18 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            let can = self.simple_flash.can_next()
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || self.device_reachable());
+            let can = self.simple_flash_nav_can();
             let primary_role = if is_start {
                 WizardPrimaryRole::Destructive
             } else {
                 WizardPrimaryRole::Primary
             };
-            wizard_nav_generic(
+            wizard_nav_generic_with_disabled_next_tooltip(
                 true,
                 &label,
                 primary_role,
                 can,
+                self.simple_flash_nav_block_reason(),
                 self.t("btn_back"),
                 if self.simple_flash.step == 0 {
                     // Back on the intro step returns to the Advanced grid.
@@ -669,8 +739,15 @@ impl App {
                 .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
         );
         self.confirm_step_frame(
-            vec![warning],
+            if self.simple_flash_nav_can() {
+                vec![warning]
+            } else {
+                let mut leading = self.start_block_notices(self.simple_flash_nav_block_reason());
+                leading.push(warning);
+                leading
+            },
             vec![
+                self.confirm_device_row(),
                 confirm_definition_row(self.t("flash_confirm_region"), &unknown),
                 confirm_definition_row(self.t("flash_confirm_target"), &unknown),
                 confirm_definition_row(self.t("flash_confirm_data"), &unknown),

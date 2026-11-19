@@ -42,20 +42,18 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            let can = self.unroot.can_next()
-                && ltbox_core::model::capabilities(&self.device.model).unroot
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || unroot_connection_ready(self.device.connection));
+            let can = self.unroot_nav_can();
             let primary_role = if is_start {
                 WizardPrimaryRole::Destructive
             } else {
                 WizardPrimaryRole::Primary
             };
-            wizard_nav_generic(
+            wizard_nav_generic_with_disabled_next_tooltip(
                 self.unroot.step > 0,
                 &label_owned,
                 primary_role,
                 can,
+                self.unroot_nav_block_reason(),
                 self.t("btn_back"),
                 Message::Unroot(UnrootMsg::UnrootBack),
                 Message::Unroot(UnrootMsg::UnrootNext),
@@ -100,6 +98,28 @@ impl App {
                 _ => None,
             },
         )
+    }
+
+    /// Whether the Unroot footer's Next/Start is enabled.
+    pub(crate) fn unroot_nav_can(&self) -> bool {
+        let is_start = self.unroot.step == 3;
+        self.unroot.can_next()
+            && ltbox_core::model::capabilities(&self.device.model).unroot
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || unroot_connection_ready(self.device.connection))
+    }
+
+    /// Why the Unroot footer is disabled: the model (every step), then its
+    /// stricter connection rule (Start only), with its own message.
+    pub(crate) fn unroot_nav_block_reason(&self) -> Option<String> {
+        if !ltbox_core::model::capabilities(&self.device.model).unroot {
+            return Some(self.model_unsupported_reason());
+        }
+        if self.unroot.step != 3 || !self.unroot.can_next() || self.operation.is_running() {
+            return None;
+        }
+        (!unroot_connection_ready(self.device.connection))
+            .then(|| self.t("err_unroot_connection_required").to_string())
     }
 
     pub(crate) fn unroot_type_step(&self) -> Element<'_, Message> {
@@ -158,7 +178,10 @@ impl App {
                 metrics,
             )
         };
-        let cards = column![lkm_card, gki_card].spacing(8.0).width(Length::Fill);
+        let mut cards = column![lkm_card, gki_card].spacing(8.0).width(Length::Fill);
+        if let Some(note) = self.wizard_device_note() {
+            cards = cards.push(wizard_device_note_line(note));
+        }
         wizard_selection_step(
             content_width,
             self.t("unroot_method_title").to_string(),
@@ -317,7 +340,10 @@ impl App {
                     ),
                     (
                         self.t("unroot_backup_manifest_recorded_at").to_string(),
-                        info.recorded_at.clone().unwrap_or_else(|| missing.clone()),
+                        info.recorded_at
+                            .as_deref()
+                            .map(backup::format_recorded_at)
+                            .unwrap_or_else(|| missing.clone()),
                     ),
                     (
                         self.t("unroot_backup_manifest_slot").to_string(),
@@ -360,24 +386,67 @@ impl App {
             .folder_path
             .clone()
             .unwrap_or_else(|| dash.clone());
-        let notices = if unroot_connection_ready(self.device.connection) {
+        let notices = if self.unroot_nav_can() {
             vec![]
         } else {
-            vec![dialog_field_error(
-                self.t("err_unroot_connection_required").to_string(),
-            )]
+            self.start_block_notices(self.unroot_nav_block_reason())
         };
         self.confirm_step_frame(
             notices,
-            vec![confirm_definition_row(
-                self.t("unroot_step_method"),
-                &method,
-            )],
+            vec![
+                self.confirm_device_row(),
+                confirm_definition_row(self.t("unroot_step_method"), &method),
+            ],
             vec![
                 confirm_path_row(self.t("edl_loader_label"), &loader),
-                confirm_path_row(self.t("unroot_folder_title"), &folder),
+                self.unroot_confirm_backup_row(&folder),
             ],
         )
+    }
+
+    /// Backup row: `{model} · {slot} · {date}` over the folder path. A folder
+    /// without a readable manifest shows the path alone. The mismatch chip only
+    /// informs; the worker's own check still decides.
+    fn unroot_confirm_backup_row<'a>(&self, folder: &str) -> Element<'a, Message> {
+        let label = self.t("unroot_confirm_backup");
+        let Some(Ok(info)) = self.unroot.selected_manifest.as_ref() else {
+            return confirm_path_row(label, folder);
+        };
+        let part = |value: Option<String>| value.unwrap_or_else(|| "—".to_string());
+        let summary = [
+            part(info.model.clone()),
+            part(info.slot.clone()),
+            part(info.recorded_at.as_deref().map(backup::format_recorded_at)),
+        ]
+        .join(" · ");
+        let mut value = column![
+            text(summary)
+                .size(theme::text_size::BODY_MEDIUM)
+                .font(theme::emphasis::medium())
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            compact_review_path(folder),
+        ]
+        .spacing(4)
+        .width(Length::Fill);
+        if self.backup_is_from_another_model(info) {
+            value = value.push(dialog_field_error(
+                self.t("unroot_backup_model_mismatch").to_string(),
+            ));
+        }
+        confirm_definition_content(label, value.into())
+    }
+
+    /// Same test as the worker: a fingerprint naming a known model that is not
+    /// the device's. No verdict when the device model or the fingerprint is
+    /// missing.
+    fn backup_is_from_another_model(&self, info: &backup::BackupManifestInfo) -> bool {
+        let Some(fingerprint) = info.fingerprint.as_deref().filter(|f| !f.is_empty()) else {
+            return false;
+        };
+        !self.device.model.is_empty()
+            && ltbox_core::model::fingerprint_names_known_model(fingerprint)
+            && !fingerprint_token_match(fingerprint, &self.device.model)
     }
 
     pub(crate) fn unroot_exec_step(&self) -> Element<'_, Message> {

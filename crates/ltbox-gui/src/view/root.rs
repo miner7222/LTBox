@@ -83,10 +83,7 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            let can = self.root.can_next()
-                && ltbox_core::model::capabilities(&self.device.model).root
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || self.device_reachable());
+            let can = self.root_nav_can();
             let primary_role = if is_start {
                 WizardPrimaryRole::Destructive
             } else {
@@ -97,6 +94,7 @@ impl App {
                 &label_owned,
                 primary_role,
                 can,
+                self.root_nav_block_reason(),
                 self.t("btn_back"),
             )
         } else {
@@ -115,6 +113,27 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+
+    /// Whether the Root footer's Next/Start is enabled.
+    pub(crate) fn root_nav_can(&self) -> bool {
+        let is_start = self.root.step == 6;
+        self.root.can_next()
+            && ltbox_core::model::capabilities(&self.device.model).root
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || self.device_reachable())
+    }
+
+    /// Why the Root footer is disabled: the model (every step), then the
+    /// device (Start only). A missing choice is visible on the step itself.
+    pub(crate) fn root_nav_block_reason(&self) -> Option<String> {
+        if !ltbox_core::model::capabilities(&self.device.model).root {
+            return Some(self.model_unsupported_reason());
+        }
+        if self.root.step != 6 || !self.root.can_next() || self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
     }
 
     fn root_step_copy(&self) -> (String, Option<String>) {
@@ -500,6 +519,9 @@ impl App {
         for f in families {
             cards = cards.push(mk(f));
         }
+        if let Some(note) = self.wizard_device_note() {
+            cards = cards.push(wizard_device_note_line(note));
+        }
 
         wizard_selection_step(
             content_width,
@@ -833,7 +855,10 @@ impl App {
             .map(|f| self.t(f.label_key()).to_string())
             .unwrap_or_else(|| dash.clone());
 
-        let mut grid_rows = vec![confirm_definition_row(self.t("root_step_type"), &fam)];
+        let mut grid_rows = vec![
+            self.confirm_device_row(),
+            confirm_definition_row(self.t("root_step_type"), &fam),
+        ];
         let mut trailing_rows = Vec::new();
 
         if self.root.is_skroot() {
@@ -888,6 +913,9 @@ impl App {
                 .unwrap_or_else(|| dash.clone());
             grid_rows.push(confirm_definition_row(self.t("root_step_provider"), &prov));
             grid_rows.push(confirm_definition_row(self.t("root_step_version"), &ver));
+            if let Some(tag) = self.root.release_tag.as_deref() {
+                grid_rows.push(confirm_definition_row(self.t("root_confirm_release"), tag));
+            }
             if self.root.is_nightly() {
                 let src = self
                     .root
@@ -895,10 +923,11 @@ impl App {
                     .map(|s| self.t(s.label_key()).to_string())
                     .unwrap_or_else(|| dash.clone());
                 grid_rows.push(confirm_definition_row(self.t("root_step_source"), &src));
-                if self.root.run_id.is_some() {
-                    let id = self.root.run_id.clone().unwrap_or_else(|| dash.clone());
-                    grid_rows.push(confirm_definition_row(self.t("nightly_run_id_label"), &id));
-                }
+            }
+            // A picked build that carries a run ID is stored as `run_id`, not
+            // `release_tag`, whatever the channel; show whichever the worker gets.
+            if let Some(id) = self.root.run_id.as_deref() {
+                grid_rows.push(confirm_definition_row(self.t("nightly_run_id_label"), id));
             }
         }
 
@@ -926,7 +955,36 @@ impl App {
         trailing_rows.push(confirm_path_row(self.t("edl_loader_label"), &folder));
 
         grid_rows.extend(trailing_rows);
-        self.confirm_step_frame(vec![], grid_rows, vec![])
+        let mut leading: Vec<_> = self
+            .root_confirm_partition()
+            .map(|partition| {
+                confirm_effect_line(tr_args!("root_confirm_effect", partition = partition))
+            })
+            .into_iter()
+            .collect();
+        if !self.root_nav_can() {
+            leading.extend(self.start_block_notices(self.root_nav_block_reason()));
+        }
+        self.confirm_step_frame(leading, grid_rows, vec![])
+    }
+
+    /// The partition the root worker replaces, from the same resolver and
+    /// inputs it uses. `None` when the family is unset or the worker would
+    /// reject the model before writing, so no effect line is claimed.
+    fn root_confirm_partition(&self) -> Option<&'static str> {
+        use ltbox_patch::root_pipeline::{RootFamily, resolve_root_image_target};
+        let family = match self.root.family? {
+            Family::Magisk => RootFamily::Magisk,
+            Family::KernelSU => RootFamily::KernelSU,
+            Family::APatch => RootFamily::APatch,
+            Family::Skroot => RootFamily::Skroot,
+        };
+        let caps = self.model_capabilities();
+        let gki = self.root.is_gki();
+        if self.device.model.is_empty() || !caps.root || (gki && !caps.gki_root) {
+            return None;
+        }
+        Some(resolve_root_image_target(family, gki, &self.device.model).partition_base())
     }
 
     pub(crate) fn root_flash_step(&self) -> Element<'_, Message> {

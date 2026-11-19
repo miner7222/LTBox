@@ -108,6 +108,17 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashNext => {
+                // UI model pre-check, in front of the worker's own. Before any
+                // step change: Confirm advances to Flash before starting. The
+                // step's inline reason states the cause and clears itself, so
+                // no global error that would outlive it.
+                if matches!(
+                    self.flash.current_step(),
+                    FlashStep::Folder | FlashStep::Confirm
+                ) && self.flash_model_precheck_error().is_some()
+                {
+                    return Task::none();
+                }
                 if self.flash.current_step() == FlashStep::Region {
                     match self.flash.region_selection {
                         Some(FlashRegionSelection::Auto) => {
@@ -266,6 +277,11 @@ impl App {
             }
             FlashMsg::FlashFirmwareIdentityDialogAction => {
                 let dialog = self.flash.firmware_identity_dialog.take();
+                if self.flash_model_precheck_error().is_some() {
+                    // Close without advancing; the folder step's banner and
+                    // footer reason state the mismatch.
+                    return Task::none();
+                }
                 if matches!(dialog, Some(FirmwareIdentityDialog::Ready))
                     && self.flash.current_step() == FlashStep::Folder
                 {
@@ -335,6 +351,10 @@ impl App {
             }
             FlashMsg::FlashExecStart => {
                 if !self.flash.bootloader_execution_allowed() {
+                    return Task::none();
+                }
+                if let Some(error) = self.flash_model_precheck_error() {
+                    self.error_msg = Some(error);
                     return Task::none();
                 }
                 #[cfg(feature = "demo")]
@@ -851,6 +871,164 @@ mod tests {
         assert!(!app.flash.loader_required);
         assert!(app.flash.loader_override.is_none());
         assert!(app.flash.loader_error.is_none());
+    }
+
+    fn precheck_app(conn: ConnectionStatus, device_model: &str, fingerprint: Option<&str>) -> App {
+        let mut app = App::default();
+        app.device.connection = conn;
+        app.device.model = device_model.to_string();
+        app.flash.firmware_folder = Some("/tmp/fw".to_string());
+        app.flash.firmware_identity = Some(FirmwareIdentity {
+            efisp_load: ltbox_patch::efisp_load::EfispLoad::Undetermined,
+            key_class: ltbox_patch::key_map::KeyClass::Testkey,
+            fingerprint: fingerprint.map(str::to_string),
+            model_token: fingerprint.map(|_| "TB520FU".to_string()),
+        });
+        app
+    }
+
+    const TB520FU_FINGERPRINT: &str = "Lenovo/TB520FU/TB520FU:17/CP2A/test:user/test-keys";
+
+    #[test]
+    fn flash_model_precheck_matches_the_connected_model() {
+        for conn in [ConnectionStatus::Adb, ConnectionStatus::Fastboot] {
+            let app = precheck_app(conn, "TB520FU", Some(TB520FU_FINGERPRINT));
+            assert!(app.flash_model_precheck().is_match());
+            assert!(app.flash_model_precheck_error().is_none());
+        }
+        // With no device the polled model is not current, so neither a match
+        // nor a mismatch is claimed from it.
+        for model in ["TB520FU", "TB323FU"] {
+            let app = precheck_app(ConnectionStatus::None, model, Some(TB520FU_FINGERPRINT));
+            let precheck = app.flash_model_precheck();
+            assert!(!precheck.is_match() && !precheck.is_mismatch());
+            assert!(app.flash_model_precheck_error().is_none());
+        }
+        // The worker strips spaces from the polled model before matching.
+        let app = precheck_app(ConnectionStatus::Adb, "TB 520FU", Some(TB520FU_FINGERPRINT));
+        assert!(app.flash_model_precheck().is_match());
+    }
+
+    #[test]
+    fn flash_model_precheck_reports_a_different_model() {
+        let app = precheck_app(ConnectionStatus::Adb, "TB323FU", Some(TB520FU_FINGERPRINT));
+        assert!(app.flash_model_precheck().is_mismatch());
+        assert!(app.flash_model_precheck_error().is_some());
+    }
+
+    #[test]
+    fn flash_model_precheck_agrees_with_the_worker_predicate() {
+        let fingerprints = [
+            TB520FU_FINGERPRINT,
+            "Lenovo/TB323FU/TB323FU:15/AQ3A/ZUXOS_1.1.10:user/release-keys",
+            "Lenovo/TB376FC_PRC/TB376FC:15/build/TB376FC_CN_OPEN_USER:user/release-keys",
+            "Lenovo/TB322FC/TB322FC:15/example:user/release-keys",
+        ];
+        for fingerprint in fingerprints {
+            for model in ltbox_core::model::SUPPORTED_MODELS {
+                let app = precheck_app(ConnectionStatus::Adb, model, Some(fingerprint));
+                let worker_accepts = ltbox_core::model::fingerprint_model_match(
+                    fingerprint,
+                    &model.replace(' ', ""),
+                );
+                let precheck = app.flash_model_precheck();
+                assert_eq!(
+                    precheck.is_match(),
+                    worker_accepts,
+                    "{model} / {fingerprint}"
+                );
+                assert_eq!(
+                    precheck.is_mismatch(),
+                    !worker_accepts,
+                    "{model} / {fingerprint}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn flash_model_precheck_is_not_checked_without_a_device_model() {
+        for model in ["", " "] {
+            let mut app = precheck_app(ConnectionStatus::Adb, model, Some(TB520FU_FINGERPRINT));
+            assert!(app.flash_model_precheck().is_not_checked());
+            app.flash.set_step(FlashStep::Confirm);
+            let _task = app.update_flash(FlashMsg::FlashExecStart);
+            assert!(app.operation.is_running());
+        }
+    }
+
+    #[test]
+    fn flash_model_precheck_is_not_checked_without_a_fingerprint() {
+        let mut app = precheck_app(ConnectionStatus::Adb, "TB323FU", None);
+        assert!(app.flash_model_precheck().is_not_checked());
+        app.flash.firmware_identity = None;
+        assert!(app.flash_model_precheck().is_not_checked());
+        assert!(app.flash_model_precheck_error().is_none());
+    }
+
+    #[test]
+    fn flash_model_precheck_is_not_checked_on_an_edl_start() {
+        let mut app = precheck_app(ConnectionStatus::Edl, "TB323FU", Some(TB520FU_FINGERPRINT));
+        assert!(app.flash_model_precheck().is_not_checked());
+        // Not checked never blocks: the worker reads the model over EDL.
+        app.flash.set_step(FlashStep::Confirm);
+        let _task = app.update_flash(FlashMsg::FlashExecStart);
+        assert!(app.operation.is_running());
+        assert!(app.error_msg.is_none());
+    }
+
+    #[test]
+    fn flash_model_precheck_mismatch_does_not_start_the_flash() {
+        let mut app = precheck_app(ConnectionStatus::Adb, "TB323FU", Some(TB520FU_FINGERPRINT));
+        app.flash.set_step(FlashStep::Confirm);
+        let before = app.log_lines.clone();
+
+        let _task = app.update_flash(FlashMsg::FlashExecStart);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.log_lines, before);
+        // The exec step has no inline reason, so this path keeps the error.
+        assert!(app.error_msg.is_some());
+
+        app.error_msg = None;
+        let _task = app.update_flash(FlashMsg::FlashNext);
+        assert_eq!(app.flash.current_step(), FlashStep::Confirm);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.log_lines, before);
+        // Confirm states the mismatch inline; no stale global duplicate.
+        assert!(app.error_msg.is_none());
+        assert_eq!(
+            app.flash_nav_block_reason(),
+            app.flash_model_precheck_error()
+        );
+    }
+
+    #[test]
+    fn flash_model_precheck_mismatch_holds_the_folder_step() {
+        let mut app = precheck_app(ConnectionStatus::Adb, "TB323FU", Some(TB520FU_FINGERPRINT));
+        app.flash.set_step(FlashStep::Folder);
+        app.flash.firmware_identity_dialog = Some(FirmwareIdentityDialog::Ready);
+
+        let _task = app.update_flash(FlashMsg::FlashFirmwareIdentityDialogAction);
+        assert!(app.flash.firmware_identity_dialog.is_none());
+        assert_eq!(app.flash.current_step(), FlashStep::Folder);
+        assert!(app.error_msg.is_none());
+        assert_eq!(
+            app.flash_nav_block_reason(),
+            app.flash_model_precheck_error()
+        );
+
+        let _task = app.update_flash(FlashMsg::FlashNext);
+        assert_eq!(app.flash.current_step(), FlashStep::Folder);
+        assert!(!app.flash.firmware_identity_pending);
+        assert!(app.error_msg.is_none());
+
+        // The same firmware on the right tablet advances.
+        app.device.model = "TB520FU".to_string();
+        app.error_msg = None;
+        app.flash.firmware_identity_dialog = Some(FirmwareIdentityDialog::Ready);
+        let _task = app.update_flash(FlashMsg::FlashFirmwareIdentityDialogAction);
+        assert_eq!(app.flash.current_step(), FlashStep::Confirm);
+        assert!(app.error_msg.is_none());
     }
 
     fn started_lines(setting: RollbackSetting) -> Vec<String> {

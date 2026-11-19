@@ -89,19 +89,18 @@ impl App {
             } else {
                 self.t("btn_next").to_string()
             };
-            let can = self.sysupdate.can_next()
-                && !(self.operation.is_running() && is_start)
-                && (!is_start || self.device_reachable());
+            let can = self.sysupdate_nav_can();
             let primary_role = if is_start {
                 WizardPrimaryRole::Destructive
             } else {
                 WizardPrimaryRole::Primary
             };
-            wizard_nav_generic(
+            wizard_nav_generic_with_disabled_next_tooltip(
                 self.sysupdate.step > 0,
                 &label_owned,
                 primary_role,
                 can,
+                self.sysupdate_nav_block_reason(),
                 self.t("btn_back"),
                 Message::Sys(SysMsg::SysBack),
                 Message::Sys(SysMsg::SysNext),
@@ -143,6 +142,25 @@ impl App {
                 (title, self.exec_app_bar_subtitle())
             }
         }
+    }
+
+    /// Whether the System Updates footer's Next/Start is enabled.
+    pub(crate) fn sysupdate_nav_can(&self) -> bool {
+        let is_start = self.sysupdate.step == self.sysupdate.steps().len() - 2;
+        self.sysupdate.can_next()
+            && !(self.operation.is_running() && is_start)
+            && (!is_start || self.device_reachable())
+    }
+
+    /// Why System Updates' Start is disabled. The Rescue region is always
+    /// chosen before Confirm (the popup advances to it), so only the device
+    /// remains.
+    pub(crate) fn sysupdate_nav_block_reason(&self) -> Option<String> {
+        let is_start = self.sysupdate.step == self.sysupdate.steps().len() - 2;
+        if !is_start || !self.sysupdate.can_next() || self.operation.is_running() {
+            return None;
+        }
+        self.device_block_reason()
     }
 
     pub(crate) fn sysupdate_action_step(&self) -> Element<'_, Message> {
@@ -202,6 +220,9 @@ impl App {
             (!rescue_disabled).then_some(Message::Sys(SysMsg::SysAction(SysUpdateAction::Rescue))),
             metrics,
         ));
+        if let Some(note) = self.wizard_device_note() {
+            cards = cards.push(wizard_device_note_line(note));
+        }
         wizard_selection_step(
             content_width,
             self.t("sysupdate_action_title").to_string(),
@@ -216,10 +237,10 @@ impl App {
             .action
             .map(|a| self.t(a.label_key()).to_string())
             .unwrap_or_else(|| dash.clone());
-        let mut grid_rows = vec![confirm_definition_row(
-            self.t("sysupdate_step_action"),
-            &action,
-        )];
+        let mut grid_rows = vec![
+            self.confirm_device_row(),
+            confirm_definition_row(self.t("sysupdate_step_action"), &action),
+        ];
         let mut trailing_rows = Vec::new();
         // Rescue: echo the chosen firmware folder and region for confirmation.
         if self.sysupdate.is_rescue() {
@@ -239,7 +260,21 @@ impl App {
                 &region,
             ));
         }
-        self.confirm_step_frame(vec![], grid_rows, trailing_rows)
+        // What the worker changes per action: OTA settings and packages over
+        // ADB for Disable/Enable, vendor_boot over EDL for Rescue.
+        let effect = self.sysupdate.action.map(|action| match action {
+            SysUpdateAction::Disable => self.t("sysupdate_confirm_effect_disable"),
+            SysUpdateAction::Enable => self.t("sysupdate_confirm_effect_enable"),
+            SysUpdateAction::Rescue => self.t("sysupdate_confirm_effect_rescue"),
+        });
+        let mut leading: Vec<_> = effect
+            .map(|sentence| confirm_effect_line(sentence.to_string()))
+            .into_iter()
+            .collect();
+        if !self.sysupdate_nav_can() {
+            leading.extend(self.start_block_notices(self.sysupdate_nav_block_reason()));
+        }
+        self.confirm_step_frame(leading, grid_rows, trailing_rows)
     }
 
     pub(crate) fn sysupdate_rescue_folder_step(&self) -> Element<'_, Message> {
@@ -274,12 +309,31 @@ impl App {
         }
     }
 
-    /// App-bar subtitle during execution: only the safety guidance from the
-    /// shared status copy; completion and failure details stay in the body.
+    /// App-bar subtitle during execution: which device (and, for the two
+    /// firmware flashers, which firmware folder) the run is writing to. The
+    /// do-not-disconnect caution lives in the progress card. Parts that are
+    /// not known are left out; `None` when nothing is known.
     pub(crate) fn exec_app_bar_subtitle(&self) -> Option<String> {
-        self.operation
-            .is_running()
-            .then(|| self.t("exec_executing_subtitle").to_string())
+        if !self.operation.is_running() {
+            return None;
+        }
+        let firmware_folder = match self.operation.phase_kind() {
+            Some(OperationPhaseKind::Flash) => self.flash.firmware_folder.as_deref(),
+            Some(OperationPhaseKind::SimpleFlash) => self.simple_flash.firmware_folder.as_deref(),
+            _ => None,
+        }
+        .and_then(|folder| std::path::Path::new(folder).file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+        let parts: Vec<String> = [
+            Some(self.device.market_name.clone()),
+            Some(self.device.model.clone()),
+            firmware_folder,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.trim().is_empty())
+        .collect();
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
 
     /// Shared execution view: current activity, phase checklist and live log.
@@ -343,7 +397,11 @@ impl App {
                     format_bytes_auto(snapshot.operation_total_bytes)
                 )
             });
-        let transferred = byte_progress.clone().unwrap_or_else(|| "—".to_string());
+        // Name of the running phase for the step counter. Skipped when the card
+        // title already is that name, so the text is not drawn twice.
+        let step_name = current_step
+            .map(|step| step.label.clone())
+            .filter(|label| !label.is_empty() && *label != now_label);
 
         let mut now_copy = column![
             text(now_label)
@@ -358,14 +416,21 @@ impl App {
         // the steps itself.
         if self.window_size_class() == WindowSizeClass::Compact && !self.operation.steps.is_empty()
         {
+            let n = self.operation.current_step().saturating_add(1);
+            let total = self.operation.steps.len();
+            let position = match step_name {
+                Some(name) => tr_args!(
+                    "exec_step_position_named",
+                    n = n,
+                    total = total,
+                    name = name
+                ),
+                None => tr_args!("exec_step_position", n = n, total = total),
+            };
             now_copy = now_copy.push(
-                text(tr_args!(
-                    "exec_step_position",
-                    n = self.operation.current_step().saturating_add(1),
-                    total = self.operation.steps.len()
-                ))
-                .size(theme::text_size::BODY_SMALL)
-                .style(muted_style),
+                text(position)
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style),
             );
         }
         if let Some(bytes) = write_progress.and_then(current_partition_size) {
@@ -427,62 +492,82 @@ impl App {
             .padding([10.0, 14.0])
             .width(Length::FillPortion(1))
         };
-        let metrics = container(
+        // The Transferred cell exists only while there is a byte count to show.
+        let mut metric_cells = row![metric(
+            self.t("exec_metric_transport").to_string(),
+            transport
+        )]
+        .spacing(0)
+        .width(Length::Fill);
+        if let Some(bytes) = byte_progress {
+            metric_cells = metric_cells
+                .push(metric_divider())
+                .push(metric(self.t("exec_metric_transferred").to_string(), bytes));
+        }
+        metric_cells = metric_cells.push(metric_divider()).push(metric(
+            self.t("exec_metric_elapsed").to_string(),
+            format_exec_duration(elapsed),
+        ));
+        let metrics = container(metric_cells)
+            .width(Length::Fill)
+            .style(|t: &Theme| container::Style {
+                border: iced::Border {
+                    color: pal_of(t).outline_variant,
+                    width: 1.0,
+                    radius: theme::shape::MD.into(),
+                },
+                ..Default::default()
+            });
+        let mut step_card_body = column![
             row![
-                metric(self.t("exec_metric_transport").to_string(), transport,),
-                metric_divider(),
-                metric(self.t("exec_metric_transferred").to_string(), transferred),
-                metric_divider(),
-                metric(
-                    self.t("exec_metric_elapsed").to_string(),
-                    format_exec_duration(elapsed),
-                ),
+                now_copy,
+                text(format!("{progress_pct}%"))
+                    .size(theme::text_size::TITLE_MEDIUM)
+                    .font(theme::emphasis::medium()),
             ]
-            .spacing(0)
-            .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(|t: &Theme| container::Style {
-            border: iced::Border {
-                color: pal_of(t).outline_variant,
-                width: 1.0,
-                radius: theme::shape::MD.into(),
-            },
-            ..Default::default()
-        });
-        let step_card = container(
-            column![
+            .spacing(16.0)
+            .align_y(iced::Alignment::Start),
+            iced::widget::progress_bar(0.0..=1.0, progress)
+                .girth(6)
+                .style(|t: &Theme| {
+                    let p = pal_of(t);
+                    iced::widget::progress_bar::Style {
+                        background: p.surface_container_highest.into(),
+                        bar: p.primary.into(),
+                        border: iced::Border {
+                            radius: theme::shape::FULL.into(),
+                            ..Default::default()
+                        },
+                    }
+                }),
+            metrics,
+        ]
+        .spacing(14.0)
+        .width(Length::Fill);
+        // Safety caution inside the card while the device is being written.
+        if is_busy {
+            step_card_body = step_card_body.push(
                 row![
-                    now_copy,
-                    text(format!("{progress_pct}%"))
-                        .size(theme::text_size::TITLE_MEDIUM)
-                        .font(theme::emphasis::medium()),
-                ]
-                .spacing(16.0)
-                .align_y(iced::Alignment::Start),
-                iced::widget::progress_bar(0.0..=1.0, progress)
-                    .girth(6)
-                    .style(|t: &Theme| {
-                        let p = pal_of(t);
-                        iced::widget::progress_bar::Style {
-                            background: p.surface_container_highest.into(),
-                            bar: p.primary.into(),
-                            border: iced::Border {
-                                radius: theme::shape::FULL.into(),
-                                ..Default::default()
-                            },
+                    icon::banner_warning().size(18.0).style(|t: &Theme| {
+                        iced::widget::text::Style {
+                            color: Some(pal_of(t).warning),
                         }
                     }),
-                metrics,
-            ]
-            .spacing(14.0)
-            .width(Length::Fill),
-        )
-        .padding([16.0, 18.0])
-        .width(Length::Fill)
-        .style(|t: &Theme| {
-            theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::MD)
-        });
+                    text(self.t("exec_executing_subtitle").to_string())
+                        .size(theme::text_size::BODY_SMALL)
+                        .style(muted_style)
+                        .width(Length::Fill),
+                ]
+                .spacing(10.0)
+                .align_y(iced::Alignment::Center),
+            );
+        }
+        let step_card = container(step_card_body)
+            .padding([16.0, 18.0])
+            .width(Length::Fill)
+            .style(|t: &Theme| {
+                theme::surface_card_style(t, theme::SurfaceLevel::Default, theme::shape::MD)
+            });
 
         let operation_complete = !is_busy && !is_error;
         let current_index = self

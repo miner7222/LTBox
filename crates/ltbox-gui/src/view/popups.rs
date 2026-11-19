@@ -1527,6 +1527,13 @@ impl App {
             .as_ref()
             .expect("firmware identity dialog must be open");
         let ready = matches!(dialog, FirmwareIdentityDialog::Ready);
+        // A model mismatch turns the action into Close: it never advances.
+        let model_error = if ready {
+            self.flash_model_precheck_error()
+        } else {
+            None
+        };
+        let advances = ready && model_error.is_none();
         let title_key = if ready {
             "flash_firmware_identity_title"
         } else {
@@ -1559,7 +1566,7 @@ impl App {
                         self.t(efisp_key),
                     ));
                 }
-                details
+                details = details
                     .push(info_kv_center(
                         self.t("flash_firmware_identity_key"),
                         self.t(verdict_key),
@@ -1567,8 +1574,18 @@ impl App {
                     .push(info_kv_center(
                         self.t("flash_firmware_identity_model"),
                         model,
-                    ))
-                    .into()
+                    ));
+                if let Some(error) = &model_error {
+                    details = details.push(
+                        text(error.clone())
+                            .size(theme::text_size::BODY_MEDIUM)
+                            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                            .style(|t: &Theme| iced::widget::text::Style {
+                                color: Some(pal_of(t).error),
+                            }),
+                    );
+                }
+                details.into()
             }
             FirmwareIdentityDialog::Failed(error) => text(error.clone())
                 .size(theme::text_size::BODY_MEDIUM)
@@ -1576,8 +1593,8 @@ impl App {
                 .into(),
         };
 
-        let action_label = if ready { "btn_next" } else { "btn_close" };
-        let action = if ready {
+        let action_label = if advances { "btn_next" } else { "btn_close" };
+        let action = if advances {
             m3_filled_button(self.t(action_label).to_string())
         } else {
             m3_outlined_button(self.t(action_label).to_string())

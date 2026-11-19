@@ -247,8 +247,11 @@ impl App {
         let import_path = self.konabess.import_path.as_deref().unwrap_or(dash);
 
         self.confirm_step_frame(
-            vec![],
+            vec![confirm_effect_line(
+                self.t("konabess_confirm_effect").to_string(),
+            )],
             vec![
+                self.confirm_device_row(),
                 confirm_definition_row(self.t("konabess_confirm_chip"), chip),
                 confirm_definition_row(self.t("konabess_table_target"), &target),
                 confirm_definition_row(self.t("konabess_confirm_device_values"), &stock_shape),

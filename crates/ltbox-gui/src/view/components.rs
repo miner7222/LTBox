@@ -686,6 +686,17 @@ pub(crate) fn confirm_definition_row<'a>(label: &str, value: &str) -> Element<'a
     )
 }
 
+/// One wrapping body sentence stating what a device-writing confirm step will
+/// change. Callers pass it as the first leading element of
+/// [`App::confirm_step_frame`] and only when the sentence holds for the route.
+pub(crate) fn confirm_effect_line<'a>(sentence: String) -> Element<'a, Message> {
+    text(sentence)
+        .size(theme::text_size::BODY_MEDIUM)
+        .width(Length::Fill)
+        .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+        .into()
+}
+
 /// Measure against the value column, not the window, and retain the full path in a tooltip.
 pub(crate) fn confirm_path_row<'a>(label: &str, value: &str) -> Element<'a, Message> {
     confirm_definition_content(label, compact_review_path(value))
@@ -1310,6 +1321,28 @@ impl NightlySource {
 }
 
 impl App {
+    /// Device row shared by every device-writing confirm step:
+    /// `{market_name} · {model} · {connection} · {slot}`. An empty name or
+    /// model reads as a dash; the slot part is left out while it is unknown.
+    pub(crate) fn confirm_device_row<'a>(&self) -> Element<'a, Message> {
+        let or_dash = |value: &str| {
+            if value.is_empty() {
+                "—".to_string()
+            } else {
+                value.to_string()
+            }
+        };
+        let mut parts = vec![
+            or_dash(&self.device.market_name),
+            or_dash(&self.device.model),
+            or_dash(self.t(self.connection_label_key())),
+        ];
+        if !self.device.slot.is_empty() {
+            parts.push(self.device.slot.clone());
+        }
+        confirm_definition_row(self.t("dash_device"), &parts.join(" · "))
+    }
+
     /// Shared confirm-screen frame below the in-content step heading. Leading
     /// rows are full-width callouts or lists; review values use the same
     /// one-column definition list as the editable full-flash confirmation.

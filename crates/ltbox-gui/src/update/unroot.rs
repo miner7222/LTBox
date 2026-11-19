@@ -34,6 +34,7 @@ impl App {
             UnrootMsg::UnrootBackupPicked(path) => {
                 if std::path::Path::new(&path).is_dir() {
                     self.unroot.folder_path = Some(path);
+                    self.unroot.selected_manifest = None;
                 }
                 Task::none()
             }
@@ -100,6 +101,13 @@ impl App {
                     return self.update(Message::Unroot(UnrootMsg::UnrootExecStart));
                 }
                 self.unroot.next();
+                // Every route that picks a folder (list, browse, recent) passes
+                // through this Next, so the manifest is read here, once, for
+                // the folder the confirm step will show.
+                self.unroot.selected_manifest = (self.unroot.step == 3)
+                    .then_some(self.unroot.folder_path.as_deref())
+                    .flatten()
+                    .map(|folder| backup::read_backup_manifest(std::path::Path::new(folder)));
                 // On entering the loader step with a usable remembered loader,
                 // pre-fill it and skip to the folder step (as `RootNext` does at
                 // step 5). Back returns to the skipped step; `is_none()` keeps a
@@ -118,6 +126,7 @@ impl App {
             }
             UnrootMsg::UnrootBack => {
                 self.unroot.back();
+                self.unroot.selected_manifest = None;
                 Task::none()
             }
             UnrootMsg::UnrootExecStart => {

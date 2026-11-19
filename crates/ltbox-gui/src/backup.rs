@@ -70,6 +70,18 @@ pub(crate) fn read_backup_manifest(folder: &Path) -> Result<BackupManifestInfo, 
     serde_json::from_reader(file).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// `recorded_at` as local `YYYY-MM-DD HH:MM:SS`. A value that is not RFC 3339
+/// is returned unchanged rather than hidden.
+pub(crate) fn format_recorded_at(value: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(value.trim())
+        .map(|time| {
+            time.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|_| value.to_string())
+}
+
 fn path_component(value: &str, fallback: &str) -> String {
     let value = value.trim();
     let sanitized: String = value
@@ -239,6 +251,26 @@ pub(crate) fn write_backup_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Timelike};
+
+    #[test]
+    fn format_recorded_at_drops_fraction_and_offset_to_local_seconds() {
+        let local = Local
+            .with_ymd_and_hms(2026, 1, 15, 12, 34, 56)
+            .single()
+            .unwrap()
+            .with_nanosecond(123_456_789)
+            .unwrap();
+        let recorded = local.to_rfc3339_opts(chrono::SecondsFormat::Nanos, false);
+        assert!(recorded.contains(".123456789"));
+        assert_eq!(format_recorded_at(&recorded), "2026-01-15 12:34:56");
+    }
+
+    #[test]
+    fn format_recorded_at_returns_an_unparsable_value_unchanged() {
+        assert_eq!(format_recorded_at("last Tuesday"), "last Tuesday");
+        assert_eq!(format_recorded_at(""), "");
+    }
 
     #[test]
     fn same_second_runs_preserve_previous_bytes_and_isolate_models() {

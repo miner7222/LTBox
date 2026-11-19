@@ -40,6 +40,10 @@ pub(crate) struct UnrootWizard {
     pub(crate) backup_scan_request: Option<std::time::Instant>,
     pub(crate) backup_manifest_request: Option<std::time::Instant>,
     pub(crate) backup_manifest_dialog: Option<crate::backup::BackupManifestDialog>,
+    /// Manifest of the selected backup folder, read once on entering the
+    /// confirm step and dropped when the step is left or a folder is picked.
+    /// `None` until read; `Err` for a folder with no readable manifest.
+    pub(crate) selected_manifest: Option<Result<crate::backup::BackupManifestInfo, String>>,
 }
 
 pub(crate) const UNROOT_STEPS: &[&str] = &[

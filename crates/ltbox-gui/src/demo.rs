@@ -65,6 +65,7 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "view:flash-parts",
     "view:flash-parts-confirm",
     "view:dump-parts",
+    "view:flash-confirm-no-device",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +75,10 @@ pub(crate) enum Scene {
     AdbConflict,
     SoftwareFix,
     DualUsbAdvisory,
-    Wizard { flow: Flow, step: WizardStep },
+    Wizard {
+        flow: Flow,
+        step: WizardStep,
+    },
     View(View),
     KonaBessTable,
     RebootWait,
@@ -82,6 +86,9 @@ pub(crate) enum Scene {
     AdvancedRegionTarget,
     SysUpdateRescue(SysUpdateRescueScene),
     PartitionTable(PartitionTableScene),
+    /// The `same:confirm` review with no tablet polled: Start disabled with
+    /// its device reason.
+    FlashConfirmNoDevice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +173,7 @@ impl Scene {
             }
             "view:flash-parts" => Some(Self::PartitionTable(PartitionTableScene::Flash)),
             "view:dump-parts" => Some(Self::PartitionTable(PartitionTableScene::Dump)),
+            "view:flash-confirm-no-device" => Some(Self::FlashConfirmNoDevice),
             _ => {
                 let (flow, step) = value.split_once(':')?;
                 let flow = match flow {
@@ -190,7 +198,9 @@ impl Scene {
 
     fn poll_result(self) -> DevicePollResult {
         match self {
-            Self::SoftwareFix | Self::DriversMissing => return DevicePollResult::default(),
+            Self::SoftwareFix | Self::DriversMissing | Self::FlashConfirmNoDevice => {
+                return DevicePollResult::default();
+            }
             Self::AdbConflict => {
                 return DevicePollResult {
                     status: ConnectionStatus::AdbServerBlocking,
@@ -281,6 +291,7 @@ pub(crate) fn initialize(app: &mut App) {
         Scene::AdvancedRegionTarget => apply_advanced_region_target_scene(app),
         Scene::SysUpdateRescue(rescue_scene) => apply_sysupdate_rescue_scene(app, rescue_scene),
         Scene::PartitionTable(table) => apply_partition_table_scene(app, table),
+        Scene::FlashConfirmNoDevice => apply_wizard_scene(app, Flow::Same, WizardStep::Confirm),
         Scene::SoftwareFix
         | Scene::DualUsbAdvisory
         | Scene::Dashboard
@@ -643,6 +654,19 @@ fn apply_wizard_scene(app: &mut App, flow: Flow, step: WizardStep) {
         target: Some(target),
         data_mode: Some(data_mode),
         firmware_folder: Some(FIRMWARE_FOLDER.to_string()),
+        // Past the folder step the inspection has run. Testkey keeps the
+        // Bootloader step out, so the step indices above stay valid.
+        firmware_identity: matches!(step, WizardStep::Confirm | WizardStep::Flash).then(|| {
+            FirmwareIdentity {
+                efisp_load: ltbox_patch::efisp_load::EfispLoad::Undetermined,
+                key_class: ltbox_patch::key_map::KeyClass::Testkey,
+                fingerprint: Some(
+                    "Lenovo/TB520FU_ROW/TB520FU:16/BP2A.250605.031/ZUI_17.5.10.096_ST_251127:user/release-keys"
+                        .to_string(),
+                ),
+                model_token: Some("TB520FU".to_string()),
+            }
+        }),
         ..FlashWizard::default()
     };
     app.wf_config = config.clone();
@@ -1047,6 +1071,7 @@ mod tests {
 
         for (scene, status) in [
             (Scene::DriversMissing, ConnectionStatus::None),
+            (Scene::FlashConfirmNoDevice, ConnectionStatus::None),
             (Scene::AdbConflict, ConnectionStatus::AdbServerBlocking),
         ] {
             let mut app = App::default();
