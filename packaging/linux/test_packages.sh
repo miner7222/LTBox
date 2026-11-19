@@ -28,8 +28,8 @@ done
 for distro in ubuntu:24.04 debian:13-slim fedora:latest; do
     docker run --rm -v "${PWD}/test-packages:/packages:ro" "${distro}" sh -ceu '
         if command -v apt-get >/dev/null; then
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/ltbox.deb
+            apt-get -o Acquire::Retries=5 update
+            DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y /packages/ltbox.deb
             test "$(cat /usr/share/ltbox/ltbox.install-source)" = deb
         else
             dnf install -y /packages/ltbox.rpm
