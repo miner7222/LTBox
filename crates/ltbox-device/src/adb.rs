@@ -82,12 +82,29 @@ pub enum AdbError {
     CommandFailed(String),
     #[error("Timeout waiting for device")]
     Timeout,
+    /// More than one Android/EDL USB device is attached, so no single target
+    /// can be chosen. Never a connect or authorization failure.
+    #[error("Multiple Android/EDL USB devices found. Disconnect other devices and try again.")]
+    MultipleDevices,
     /// Failed to read or write the LTBox-owned ADB RSA private key.
     #[error("Failed to prepare ADB key: {0}")]
     Key(String),
 }
 
 type Result<T> = std::result::Result<T, AdbError>;
+
+/// Map a failed `connect_device` to the state token `check_device_state`
+/// reports. The multi-device guard is its own error, never a token: a token
+/// would send the UI to "unauthorized" or "kill adb server".
+fn connect_failure_state(err: &AdbError, adb_server_running: bool) -> Result<Option<&'static str>> {
+    match err {
+        AdbError::MultipleDevices => Err(AdbError::MultipleDevices),
+        // An external adb server holds the interface; a distinct state lets
+        // the UI offer "kill server" instead.
+        _ if adb_server_running => Ok(Some("adb_server_blocking")),
+        _ => Ok(Some("unauthorized")),
+    }
+}
 
 /// Upper bound on `wait_for_device`. Re-enumeration after a reboot can take
 /// well over a minute on a cold boot; a shorter bound fails working devices.
@@ -147,8 +164,11 @@ impl AdbManager {
     /// `self.serial` from `getprop ro.serialno`, since VID:PID cannot tell
     /// two units of the same model apart.
     fn connect_device(&mut self) -> Result<&mut ADBUSBDevice> {
-        crate::selection::ensure_single_usb_target()
-            .map_err(|e| AdbError::Client(e.to_string()))?;
+        crate::selection::ensure_single_usb_target().map_err(|e| match e {
+            crate::selection::UsbSelectionError::MultipleDevices => AdbError::MultipleDevices,
+            crate::selection::UsbSelectionError::Enumeration(_) => AdbError::Client(e.to_string()),
+            other => AdbError::Client(other.to_string()),
+        })?;
         if self.device.is_none() {
             let key_path = Self::ensure_key_path()?;
             // See `CONNECT_RETRY_ATTEMPTS`. Re-autodetecting per attempt also
@@ -210,8 +230,11 @@ impl AdbManager {
         }
         match self.connect_device() {
             Ok(_) => Ok(true),
-            Err(_) => {
+            Err(err) => {
                 self.drop_device();
+                if matches!(err, AdbError::MultipleDevices) {
+                    return Err(err);
+                }
                 Ok(false)
             }
         }
@@ -230,6 +253,7 @@ impl AdbManager {
     /// | Device visible + auth ok + the expected `CLSE` shell refusal | `Ok(Some("sideload"))` |
     /// | Device visible + auth fails AND a process holds `127.0.0.1:5037` | `Ok(Some("adb_server_blocking"))` |
     /// | Device visible + auth fails AND no adb server present | `Ok(Some("unauthorized"))` |
+    /// | More than one Android/EDL USB device attached | `Err(AdbError::MultipleDevices)` |
     ///
     /// `adb_client` discards the connect banner, so sideload is inferred from
     /// minadbd's exact `CLSE` shell refusal; rescue mode answers the same way
@@ -256,14 +280,12 @@ impl AdbManager {
                 }
                 Ok(self.cached_bootmode)
             }
-            Err(_) => {
-                // An external adb server holds the interface; a distinct
-                // state lets the UI offer "kill server" instead.
-                if adb_server_running() {
-                    Ok(Some("adb_server_blocking"))
-                } else {
-                    Ok(Some("unauthorized"))
-                }
+            Err(err) => {
+                self.drop_device();
+                // Skip the TCP probe when the answer is already an error.
+                let server_running =
+                    !matches!(err, AdbError::MultipleDevices) && adb_server_running();
+                connect_failure_state(&err, server_running)
             }
         }
     }
@@ -596,11 +618,32 @@ impl Default for AdbManager {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdbError, ensure_key_at_path, is_adbd_dropped_after_reboot, is_sideload_shell_refusal,
-        remove_corrupt_key, validate_key_file, write_key_atomic,
+        AdbError, connect_failure_state, ensure_key_at_path, is_adbd_dropped_after_reboot,
+        is_sideload_shell_refusal, remove_corrupt_key, validate_key_file, write_key_atomic,
     };
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use std::path::PathBuf;
+
+    #[test]
+    fn connect_failure_state_keeps_multiple_devices_an_error() {
+        assert!(matches!(
+            connect_failure_state(&AdbError::MultipleDevices, false),
+            Err(AdbError::MultipleDevices)
+        ));
+        assert!(matches!(
+            connect_failure_state(&AdbError::MultipleDevices, true),
+            Err(AdbError::MultipleDevices)
+        ));
+        let other = AdbError::Client("USB Error: Busy".into());
+        assert!(matches!(
+            connect_failure_state(&other, true),
+            Ok(Some("adb_server_blocking"))
+        ));
+        assert!(matches!(
+            connect_failure_state(&other, false),
+            Ok(Some("unauthorized"))
+        ));
+    }
 
     #[test]
     fn only_exact_shell_refusal_is_sideload() {

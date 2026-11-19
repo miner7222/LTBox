@@ -424,6 +424,7 @@ fn map_target_selection_error(error: crate::selection::UsbSelectionError) -> Fas
     match error {
         crate::selection::UsbSelectionError::MultipleDevices => FastbootError::MultipleDevices,
         crate::selection::UsbSelectionError::Enumeration(error) => FastbootError::Usb(error),
+        other => FastbootError::Usb(other.to_string()),
     }
 }
 
