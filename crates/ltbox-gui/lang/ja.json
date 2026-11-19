@@ -906,6 +906,7 @@
   "log_root_manager_apk_manual_reminder": "実行中にマネージャー APK がインストールされませんでした。今すぐ手動でインストールしてください：{path}",
   "log_root_manager_apk_push_failed": "マネージャー APK をデバイスにコピーできませんでした。以下のローカルファイルから手動でインストールしてください。",
   "log_root_manager_apk_pushed": "デバイス上の {path} にマネージャー APK をコピーしました — インストールするにはデバイスでそのファイルを開いてください。",
+  "log_root_manager_app_flash_warning": "マネージャーアプリで root のインストール、更新、アンインストールを行わないでください。アプリは LTBox による AVB 再署名なしでブートイメージを書き込むため、タブレットが起動しなくなる場合があります。これらの操作は LTBox で行ってください。",
   "log_root_patched": "パッチ済みイメージの準備完了：{image} → {path}",
   "log_root_repack_image": "magiskboot repack {image}",
   "log_root_unpack_image": "magiskboot unpack {image}",

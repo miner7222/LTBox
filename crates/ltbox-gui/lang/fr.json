@@ -906,6 +906,7 @@
   "log_root_manager_apk_manual_reminder": "L’APK du gestionnaire n’a pas été installé pendant l’opération — installez-le manuellement maintenant : {path}",
   "log_root_manager_apk_push_failed": "Impossible de copier l’APK du gestionnaire sur l’appareil ; installez-le manuellement à partir du fichier local ci-dessous.",
   "log_root_manager_apk_pushed": "APK du gestionnaire copié dans {path} sur l’appareil — ouvrez ce fichier sur l’appareil pour l’installer.",
+  "log_root_manager_app_flash_warning": "N’installez pas, ne mettez pas à jour et ne désinstallez pas le root depuis l’application du gestionnaire : elle flashe l’image boot sans la nouvelle signature AVB de LTBox, et la tablette risque de ne plus démarrer. Utilisez LTBox pour ces opérations.",
   "log_root_patched": "Image patchée prête : {image} → {path}",
   "log_root_repack_image": "magiskboot repack {image}",
   "log_root_unpack_image": "magiskboot unpack {image}",

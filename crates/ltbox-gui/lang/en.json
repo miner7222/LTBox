@@ -906,6 +906,7 @@
   "log_root_manager_apk_manual_reminder": "Manager APK was not installed during the run — install it manually now: {path}",
   "log_root_manager_apk_push_failed": "Could not copy the manager APK to the device; install it manually from the local file below.",
   "log_root_manager_apk_pushed": "Copied the manager APK to {path} on the device — open that file on the device to install it.",
+  "log_root_manager_app_flash_warning": "Do not install, update or uninstall root from the manager app: it flashes the boot image without LTBox's AVB re-signing, and the tablet may not boot. Use LTBox for these instead.",
   "log_root_patched": "Patched image ready: {image} → {path}",
   "log_root_repack_image": "magiskboot repack {image}",
   "log_root_unpack_image": "magiskboot unpack {image}",

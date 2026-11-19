@@ -751,6 +751,16 @@ pub(crate) fn root_worker(
                 "[Root] {}",
                 ltbox_core::i18n::tr("live_image_flash_completed")
             );
+            // Manager apps flash boot/init_boot without LTBox's AVB rebuild.
+            // GBL routes (efisp) do not verify that image, so in-app flashing is
+            // safe there; SKRoot has no manager that rewrites boot.
+            if !uses_gbl && !is_skroot_route {
+                live!(
+                    log,
+                    "[Root] {}",
+                    ltbox_core::i18n::tr("log_root_manager_app_flash_warning")
+                );
+            }
             Ok(())
         })();
     match device_phase_result {

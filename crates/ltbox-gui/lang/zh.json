@@ -906,6 +906,7 @@
   "log_root_manager_apk_manual_reminder": "管理器 APK 未在本次运行中安装——请立即手动安装：{path}",
   "log_root_manager_apk_push_failed": "无法将管理器 APK 复制到设备——请从下方本地文件手动安装。",
   "log_root_manager_apk_pushed": "已将管理器 APK 复制到设备的 {path}——在设备上打开该文件进行安装。",
+  "log_root_manager_app_flash_warning": "请勿在管理器应用中安装、更新或卸载 Root：应用刷写 boot 镜像时不会经过 LTBox 的 AVB 重新签名，平板可能无法启动。请改用 LTBox 执行这些操作。",
   "log_root_patched": "补丁镜像已就绪：{image} → {path}",
   "log_root_repack_image": "magiskboot 重打包 {image}",
   "log_root_unpack_image": "magiskboot 解包 {image}",

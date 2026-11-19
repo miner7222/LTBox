@@ -906,6 +906,7 @@
   "log_root_manager_apk_manual_reminder": "APK менеджера не был установлен в ходе выполнения — установите вручную сейчас: {path}",
   "log_root_manager_apk_push_failed": "Не удалось скопировать APK менеджера на устройство — установите вручную из локального файла ниже.",
   "log_root_manager_apk_pushed": "APK менеджера скопирован на устройство в {path} — откройте этот файл на устройстве, чтобы установить его.",
+  "log_root_manager_app_flash_warning": "Не устанавливайте, не обновляйте и не удаляйте root из приложения менеджера: оно прошивает образ boot без переподписи AVB от LTBox, и планшет может не загрузиться. Используйте для этого LTBox.",
   "log_root_patched": "Образ с патчем готов: {image} → {path}",
   "log_root_repack_image": "magiskboot переупаковка {image}",
   "log_root_unpack_image": "magiskboot распаковка {image}",
