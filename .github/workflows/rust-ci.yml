@@ -37,7 +37,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_XWIN_VERSION: "0.22.0"
+  CARGO_XWIN_VERSION: "0.23.1"
   NODE_OPTIONS: --no-deprecation
   RUSTC_WRAPPER: ""
   RUSTFLAGS: -D warnings
