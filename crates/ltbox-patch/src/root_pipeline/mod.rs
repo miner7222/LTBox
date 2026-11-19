@@ -266,7 +266,10 @@ pub fn provider_workflow(provider: RootProvider) -> Option<(&'static str, &'stat
         RootProvider::MagiskFork | RootProvider::KernelSULocal => return None,
         RootProvider::KernelSU => ("build-manager.yml", "main"),
         RootProvider::KernelSUNext => ("build-manager-ci.yml", "dev"),
-        RootProvider::SukiSU => ("build-manager.yml", "main"),
+        // SukiSU-Nova replaced `build-manager.yml` with `ci.yml`. Its runs are
+        // built for a Forgejo runner and currently upload no GitHub artifacts,
+        // so the lookup reports no usable nightly until upstream restores them.
+        RootProvider::SukiSU => ("ci.yml", "main"),
         RootProvider::BakaSU => ("build-manager.yml", "main"),
         RootProvider::APatch => ("build.yml", "main"),
         RootProvider::FolkPatch => ("build.yml", "main"),
@@ -280,9 +283,8 @@ pub fn provider_workflow(provider: RootProvider) -> Option<(&'static str, &'stat
 /// builds (BakaSU does, the KernelSU-Next `-ci` workflow does not).
 pub fn provider_release_workflows(provider: RootProvider) -> &'static [&'static str] {
     match provider {
-        RootProvider::KernelSU | RootProvider::SukiSU | RootProvider::BakaSU => {
-            &["release.yml", "build-manager.yml"]
-        }
+        RootProvider::KernelSU | RootProvider::BakaSU => &["release.yml", "build-manager.yml"],
+        RootProvider::SukiSU => &["release.yml", "ci.yml"],
         RootProvider::KernelSUNext => &["release.yml", "build-manager-ci.yml"],
         _ => &[],
     }
