@@ -53,6 +53,13 @@ pub(crate) struct KonaBessWizard {
     /// Initial selection is part of the inspection pause; cancelling it abandons
     /// the prepared device flow. Reopening the picker from the table does not.
     pub(crate) target_popup_abandons_on_dismiss: bool,
+    /// Whether the table step's advisory chip has its finding panel open.
+    /// Collapsed by default; hard errors are always shown regardless.
+    pub(crate) warnings_expanded: bool,
+    /// Rows whose bus/other property detail the user opened, keyed by
+    /// (group position, level position). Positions shift when the table is
+    /// replaced or a level is added or removed, so those paths clear it.
+    pub(crate) expanded_rows: std::collections::BTreeSet<(usize, usize)>,
     pub(crate) prepared: Option<KonaBessPrepared>,
 }
 
@@ -82,6 +89,12 @@ pub(crate) fn gpu_property_editability(
         GpuPropertyLocation::Level if property_name == "reg" => GpuPropertyEditability::ReadOnly,
         GpuPropertyLocation::Level => GpuPropertyEditability::Editable,
     }
+}
+
+/// Level properties outside the table's main columns (level, frequency,
+/// voltage). They are edited in the row's expandable detail.
+pub(crate) fn is_row_detail_property(property_name: &str) -> bool {
+    !matches!(property_name, "reg" | "qcom,gpu-freq" | "qcom,level")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -154,6 +167,7 @@ impl KonaBessWizard {
         self.edited_table = Some(table.clone());
         self.stock_table = Some(table);
         self.cell_edits.clear();
+        self.expanded_rows.clear();
         self.edited_dirty = false;
         self.import_path = None;
         self.import_error = None;
@@ -242,6 +256,7 @@ impl KonaBessWizard {
         }
         self.edited_table = Some(table);
         self.cell_edits.clear();
+        self.expanded_rows.clear();
         self.edited_dirty = self.edited_table != self.stock_table;
         self.import_warnings = export.import_warnings;
         Ok(())
@@ -311,6 +326,70 @@ impl KonaBessWizard {
             .is_some_and(|path| issue.path == path)
     }
 
+    /// `(hard_error, warning)` for one cell: a parse failure or blocking
+    /// finding is a hard error; a warning is reported only without one.
+    pub(crate) fn cell_finding(
+        &self,
+        validation: &GpuTableValidation,
+        key: GpuCellKey,
+    ) -> (bool, bool) {
+        let hard_error = self.cell_has_input_error(key)
+            || validation
+                .hard_errors
+                .iter()
+                .any(|issue| self.issue_matches_cell(issue, key));
+        let warning = !hard_error
+            && validation
+                .warnings
+                .iter()
+                .any(|issue| self.issue_matches_cell(issue, key));
+        (hard_error, warning)
+    }
+
+    /// `(hard_error, warning)` across every cell of one row's detail
+    /// properties, so a collapsed detail never hides a finding.
+    pub(crate) fn row_detail_findings(
+        &self,
+        validation: &GpuTableValidation,
+        group: usize,
+        level: usize,
+    ) -> (bool, bool) {
+        let Some(row) = self
+            .edited_table
+            .as_ref()
+            .and_then(|table| table.groups.get(group))
+            .and_then(|group| group.levels.get(level))
+        else {
+            return (false, false);
+        };
+        let mut findings = (false, false);
+        for (property_position, property) in row.properties.iter().enumerate() {
+            if !is_row_detail_property(&property.name) {
+                continue;
+            }
+            for cell in 0..property.cells.len() {
+                let (hard_error, warning) = self.cell_finding(
+                    validation,
+                    GpuCellKey::level(group, level, property_position, cell),
+                );
+                findings.0 |= hard_error;
+                findings.1 |= warning;
+            }
+        }
+        (findings.0, findings.1 && !findings.0)
+    }
+
+    /// A detail with a finding is always open; otherwise the user decides.
+    pub(crate) fn row_details_open(&self, group: usize, level: usize, has_finding: bool) -> bool {
+        has_finding || self.expanded_rows.contains(&(group, level))
+    }
+
+    pub(crate) fn toggle_row_details(&mut self, group: usize, level: usize) {
+        if !self.expanded_rows.remove(&(group, level)) {
+            self.expanded_rows.insert((group, level));
+        }
+    }
+
     /// Blocking parser/structural findings plus all non-blocking validation and
     /// retargeting advisories currently implied by the working table.
     pub(crate) fn editor_validation(&self) -> GpuTableValidation {
@@ -374,6 +453,7 @@ impl KonaBessWizard {
         };
         self.edited_table = Some(normalized.table);
         self.cell_edits.clear();
+        self.expanded_rows.clear();
         self.edited_dirty = self.edited_table != self.stock_table;
         true
     }
@@ -401,6 +481,7 @@ impl KonaBessWizard {
         };
         self.edited_table = Some(normalized.table);
         self.cell_edits.clear();
+        self.expanded_rows.clear();
         self.edited_dirty = self.edited_table != self.stock_table;
         true
     }
@@ -411,6 +492,7 @@ impl KonaBessWizard {
         };
         self.edited_table = Some(stock);
         self.cell_edits.clear();
+        self.expanded_rows.clear();
         self.edited_dirty = false;
         self.import_path = None;
         self.import_error = None;
@@ -423,6 +505,7 @@ impl KonaBessWizard {
         self.stock_table = None;
         self.edited_table = None;
         self.cell_edits.clear();
+        self.expanded_rows.clear();
         self.edited_dirty = false;
         self.import_path = None;
         self.import_error = None;
@@ -1172,5 +1255,89 @@ mod konabess_tests {
         assert!(wizard.stock_table.is_none());
         assert!(wizard.edited_table.is_none());
         assert!(!wizard.edited_dirty);
+    }
+
+    #[test]
+    fn expanded_rows_reset_when_rows_move_but_survive_cell_edits() {
+        let mut wizard = ready_wizard(700_000_000);
+        let frequency = GpuCellKey::level(0, 0, 1, 0);
+
+        wizard.toggle_row_details(0, 0);
+        wizard.edit_cell(frequency, "75".into());
+        wizard.edit_cell(frequency, "750".into());
+        assert!(wizard.expanded_rows.contains(&(0, 0)));
+        wizard.toggle_row_details(0, 0);
+        assert!(wizard.expanded_rows.is_empty());
+
+        wizard.toggle_row_details(0, 0);
+        assert!(wizard.add_level(0));
+        assert!(wizard.expanded_rows.is_empty());
+
+        wizard.toggle_row_details(0, 1);
+        assert!(wizard.remove_level(0, 1));
+        assert!(wizard.expanded_rows.is_empty());
+
+        wizard.toggle_row_details(0, 0);
+        assert!(wizard.revert_edits());
+        assert!(wizard.expanded_rows.is_empty());
+
+        wizard.toggle_row_details(0, 0);
+        wizard
+            .overwrite_edited_from_import(KonaBessExport {
+                chip: "sun".into(),
+                description: "import".into(),
+                table: table(950_000_000),
+                import_warnings: vec![],
+            })
+            .unwrap();
+        assert!(wizard.expanded_rows.is_empty());
+
+        wizard.toggle_row_details(0, 0);
+        assert!(wizard.select_target(1));
+        assert!(wizard.expanded_rows.is_empty());
+
+        wizard.toggle_row_details(0, 0);
+        wizard.apply_inspection_result(vec![candidate(1, Some("sun"), Some(700_000_000))], None);
+        assert!(wizard.expanded_rows.is_empty());
+    }
+
+    #[test]
+    fn detail_finding_forces_the_row_open_but_main_column_findings_do_not() {
+        let mut wizard = ready_wizard(700_000_000);
+        for table in [
+            wizard.stock_table.as_mut().unwrap(),
+            wizard.edited_table.as_mut().unwrap(),
+        ] {
+            table.groups[0].levels[0].properties.push(GpuProperty {
+                name: "qcom,bus-freq".into(),
+                cells: vec![7],
+            });
+        }
+        let validation = wizard.editor_validation();
+        let (hard_error, _) = wizard.row_detail_findings(&validation, 0, 0);
+        assert!(!hard_error);
+        assert!(!wizard.row_details_open(0, 0, false));
+
+        // A finding in a main column stays on the main row.
+        wizard.edit_cell(GpuCellKey::level(0, 0, 1, 0), "fast".into());
+        let validation = wizard.editor_validation();
+        assert!(!wizard.row_detail_findings(&validation, 0, 0).0);
+
+        wizard.edit_cell(GpuCellKey::level(0, 0, 3, 0), "x".into());
+        let validation = wizard.editor_validation();
+        let (hard_error, warning) = wizard.row_detail_findings(&validation, 0, 0);
+        assert!(hard_error && !warning);
+        assert!(wizard.row_details_open(0, 0, hard_error));
+        // The user toggle cannot close a row that holds a finding.
+        wizard.toggle_row_details(0, 0);
+        assert!(wizard.row_details_open(0, 0, hard_error));
+        wizard.toggle_row_details(0, 0);
+        assert!(wizard.row_details_open(0, 0, hard_error));
+        assert!(!wizard.row_details_open(0, 0, false));
+        // Other rows are unaffected.
+        assert_eq!(
+            wizard.row_detail_findings(&validation, 0, 9),
+            (false, false)
+        );
     }
 }

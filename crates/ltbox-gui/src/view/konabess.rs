@@ -160,12 +160,31 @@ impl App {
         toolbar = toolbar.push(revert_button).push(import_button);
 
         let mut content = column![toolbar].spacing(8.0).width(Length::Fill);
-        if let (Some(table), Some(stock), Some(chip)) = (
+        let validation = self.konabess.editor_validation();
+        // Summary chips, the comparable-only note and the advisory chip share
+        // one wrapping line so the table keeps the height.
+        let mut summary_line = match (
             self.konabess.edited_table.as_ref(),
             self.konabess.stock_table.as_ref(),
             self.konabess.selected_chip(),
         ) {
-            content = content.push(gpu_summary_view(table, stock, chip, self));
+            (Some(table), Some(stock), Some(chip)) => {
+                Some(gpu_summary_view(table, stock, chip, self))
+            }
+            _ => None,
+        };
+        if !validation.warnings.is_empty() {
+            summary_line = Some(
+                summary_line
+                    .unwrap_or_else(summary_line_row)
+                    .push(advisory_chip(
+                        finding_count(&validation.warnings),
+                        self.konabess.warnings_expanded,
+                    )),
+            );
+        }
+        if let Some(summary_line) = summary_line {
+            content = content.push(summary_line.wrap().vertical_spacing(6.0));
         }
         if let Some(error) = self.konabess.import_error.as_deref() {
             content = content.push(
@@ -182,11 +201,11 @@ impl App {
                     .style(muted_style),
             );
         }
-        let validation = self.konabess.editor_validation();
+        // Hard errors block Next, so their panel is never collapsed.
         if !validation.hard_errors.is_empty() {
             content = content.push(finding_panel(&validation.hard_errors, false, self));
         }
-        if !validation.warnings.is_empty() {
+        if !validation.warnings.is_empty() && self.konabess.warnings_expanded {
             content = content.push(finding_panel(&validation.warnings, true, self));
         }
         content = content.push(widget::rule::horizontal(1).style(shell_rule_style));
@@ -200,14 +219,6 @@ impl App {
                 .width(Length::Fill)
                 .into(),
         });
-        content = content.push(
-            text(self.t("konabess_attribution").to_string())
-                .size(theme::text_size::LABEL_SMALL)
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Right)
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                .style(muted_style),
-        );
 
         let padded = content.padding(20.0);
         if fill_height {
@@ -419,13 +430,38 @@ fn ordered_property_names(group: &ltbox_patch::konabess::GpuGroup) -> Vec<&str> 
 }
 
 const GPU_TABLE_HEADER_HEIGHT: f32 = 42.0;
-const GPU_TABLE_ROW_HEIGHT: f32 = 58.0;
-const GPU_LEVEL_COLUMN_WIDTH: f32 = 136.0;
-const GPU_FREQUENCY_COLUMN_WIDTH: f32 = 142.0;
-const GPU_VOLTAGE_COLUMN_WIDTH: f32 = 230.0;
+/// One body row: a 12 px input or pick list is 12 × 1.3 + 2 × 7 = 29.6 px tall,
+/// plus 4 px cell padding above and below, rounded up with 2.4 px to spare.
+const GPU_TABLE_ROW_HEIGHT: f32 = 40.0;
+/// A row whose frequency differs from stock stacks the stock hint
+/// (11 × 1.3 = 14.3 px) under the input: 29.6 + 1 + 14.3 + 8 = 52.9 px.
+const GPU_TABLE_HINT_ROW_HEIGHT: f32 = 56.0;
+/// Row action buttons (detail toggle, Remove icon), sized to the row instead
+/// of the 48 px default.
+const GPU_ROW_ACTION_HEIGHT: f32 = GPU_TABLE_ROW_HEIGHT - 8.0;
+// The main row must fit the 700 px content area of the 820 px minimum
+// window (820 - 80 rail - 2 × 20 padding): 112 + 112 + 204 + 106 + 160 = 694.
+/// Level id plus one badge; the widest is ru "Начальный":
+/// 13 + 5 + (62.9 + 12) + 16 = 108.9 px.
+const GPU_LEVEL_COLUMN_WIDTH: f32 = 112.0;
+/// The input, or the ru stock hint "Заводское {value}" (94.7 px), plus 16.
+const GPU_FREQUENCY_COLUMN_WIDTH: f32 = 112.0;
+/// The 158 px picker (fits "SUPER_TURBO_NO_CPR"), 7 px gap, the three-digit
+/// vote (about 20 px) and 16 px padding: 201 px.
+const GPU_VOLTAGE_COLUMN_WIDTH: f32 = 204.0;
 const GPU_DELTA_COLUMN_WIDTH: f32 = 106.0;
-const GPU_ACTION_COLUMN_WIDTH: f32 = 76.0;
+/// Finding marker, detail toggle, at least 8 px, Remove icon button. The
+/// widest toggle is fr "Masquer" (57.5 + 2 × 16 = 89.5 px):
+/// 5 + 14 + 4 + 89.5 + 8 + 32 + 5 = 157.5 px.
+const GPU_ACTION_COLUMN_WIDTH: f32 = 160.0;
+/// Compact Remove icon button, sized to the row like the text button.
+const GPU_ROW_ICON_BUTTON_SIZE: f32 = GPU_ROW_ACTION_HEIGHT;
+const GPU_VOTE_PICKER_WIDTH: f32 = 158.0;
+/// Detail input widths per cell: bus values are small integers; other
+/// properties keep the per-cell width their former table column gave them.
 const GPU_BUS_INPUT_WIDTH: f32 = 68.0;
+const GPU_DETAIL_CELL_WIDTH: f32 = 110.0;
+const GPU_DETAIL_PADDING: f32 = 12.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GpuTableColumn {
@@ -481,13 +517,35 @@ fn gpu_table_columns(table: &ltbox_patch::konabess::GpuTable) -> Vec<GpuTableCol
     columns.extend(
         property_names
             .into_iter()
-            .filter(|name| {
-                !matches!(*name, "reg" | "qcom,gpu-freq" | "qcom,level")
-                    && !name.starts_with("qcom,bus-")
-            })
+            .filter(|name| is_row_detail_property(name) && !name.starts_with("qcom,bus-"))
             .map(|name| GpuTableColumn::Other(name.to_string())),
     );
     columns
+}
+
+/// Width of a main-row column. Bus and other properties have none: they are
+/// edited in the row detail.
+fn gpu_main_column_width(column: &GpuTableColumn) -> Option<f32> {
+    match column {
+        GpuTableColumn::Frequency => Some(GPU_FREQUENCY_COLUMN_WIDTH),
+        GpuTableColumn::Voltage => Some(GPU_VOLTAGE_COLUMN_WIDTH),
+        GpuTableColumn::Delta => Some(GPU_DELTA_COLUMN_WIDTH),
+        GpuTableColumn::Bus(_) | GpuTableColumn::Other(_) => None,
+    }
+}
+
+/// Property names shown in a row detail, in column order.
+fn detail_property_names(columns: &[GpuTableColumn]) -> Vec<&str> {
+    columns
+        .iter()
+        .flat_map(|column| match column {
+            GpuTableColumn::Bus(names) => names.iter().map(String::as_str).collect(),
+            GpuTableColumn::Other(name) => vec![name.as_str()],
+            GpuTableColumn::Frequency | GpuTableColumn::Voltage | GpuTableColumn::Delta => {
+                Vec::new()
+            }
+        })
+        .collect()
 }
 
 fn scalar_property(properties: &[ltbox_patch::konabess::GpuProperty], name: &str) -> Option<u32> {
@@ -583,7 +641,7 @@ fn gpu_summary_view<'a>(
     stock: &ltbox_patch::konabess::GpuTable,
     chip: &str,
     app: &'a App,
-) -> Element<'a, Message> {
+) -> iced::widget::Row<'a, Message> {
     let summary = gpu_comparison_summary(table, stock, chip);
     let frequency_changes = if summary.frequency_changes_by_bin.is_empty() {
         app.t("konabess_summary_none").to_string()
@@ -605,30 +663,95 @@ fn gpu_summary_view<'a>(
         || app.t("common_unknown").to_string(),
         |vote| voltage_label(chip, vote),
     );
-    let mut metrics = row![
-        summary_metric(
+    let mut metrics = summary_line_row()
+        .push(summary_metric(
             app.t("konabess_summary_chip"),
             format!("{chip} · {}", app.device.model),
-        ),
-        summary_metric(app.t("konabess_summary_stock_max"), stock_max),
-        summary_metric(
+        ))
+        .push(summary_metric(
+            app.t("konabess_summary_stock_max"),
+            stock_max,
+        ))
+        .push(summary_metric(
             app.t("konabess_summary_undervolted"),
             summary.undervolted_levels.to_string(),
-        ),
-        summary_metric(
+        ))
+        .push(summary_metric(
             app.t("konabess_summary_frequency_changes"),
             frequency_changes,
-        ),
-    ]
-    .spacing(8.0)
-    .width(Length::Fill)
-    .align_y(iced::Alignment::Center);
+        ));
     if summary.has_non_comparable_bin {
         metrics = metrics.push(summary_partial_note(
             app.t("konabess_summary_comparable_only"),
         ));
     }
-    metrics.wrap().vertical_spacing(6.0).into()
+    metrics
+}
+
+/// The row the table step wraps into its single summary line.
+fn summary_line_row<'a>() -> iced::widget::Row<'a, Message> {
+    row![]
+        .spacing(8.0)
+        .width(Length::Fill)
+        .align_y(iced::Alignment::Center)
+}
+
+/// Compact advisory chip on the summary line. It toggles the advisory finding
+/// panel; hard errors never go through it.
+fn advisory_chip(count: usize, expanded: bool) -> Element<'static, Message> {
+    let label = row![
+        lucide_icon(icon::banner_warning(), 13.0, |theme: &Theme| {
+            pal_of(theme).on_warning_container
+        }),
+        text(tr_args!(
+            "konabess_warning_summary",
+            count = count.to_string()
+        ))
+        .size(11.0)
+        .font(theme::emphasis::medium())
+        .wrapping(iced::widget::text::Wrapping::None),
+    ]
+    .spacing(5.0)
+    // A button lays its content out from the top-left, so the row has to fill
+    // the 26 px pill for `align_y` to centre it like the plain chips.
+    .height(Length::Fill)
+    .align_y(iced::Alignment::Center);
+    button(label)
+        .height(Length::Fixed(26.0))
+        .padding([0.0, 10.0])
+        .on_press(Message::KonaBess(KonaBessMsg::KonaBessToggleWarnings))
+        .style(move |theme: &Theme, status| advisory_chip_style(theme, status, expanded))
+        .into()
+}
+
+fn advisory_chip_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    expanded: bool,
+) -> iced::widget::button::Style {
+    let palette = pal_of(theme);
+    let base = palette.warning_container;
+    let background = match status {
+        iced::widget::button::Status::Hovered => {
+            theme::mix_color(base, palette.on_warning_container, theme::state::HOVER)
+        }
+        iced::widget::button::Status::Pressed => {
+            theme::mix_color(base, palette.on_warning_container, theme::state::PRESSED)
+        }
+        _ => base,
+    };
+    iced::widget::button::Style {
+        background: Some(background.into()),
+        text_color: palette.on_warning_container,
+        border: iced::Border {
+            color: palette.warning,
+            // The open panel is shown under the line; a heavier outline marks
+            // the chip that controls it.
+            width: if expanded { 2.0 } else { 1.0 },
+            radius: theme::shape::FULL.into(),
+        },
+        ..Default::default()
+    }
 }
 
 fn summary_metric(label: &str, value: String) -> Element<'static, Message> {
@@ -683,13 +806,15 @@ fn gpu_table_view<'a>(
     fill_height: bool,
 ) -> Element<'a, Message> {
     let columns = gpu_table_columns(table);
+    let main_columns = columns
+        .iter()
+        .filter_map(|column| Some((column, gpu_main_column_width(column)?)))
+        .collect::<Vec<_>>();
+    let detail_names = detail_property_names(&columns);
     let table_width = GPU_LEVEL_COLUMN_WIDTH
-        + columns
-            .iter()
-            .map(|column| gpu_table_column_width(table, column))
-            .sum::<f32>()
+        + main_columns.iter().map(|(_, width)| width).sum::<f32>()
         + GPU_ACTION_COLUMN_WIDTH;
-    let header = gpu_table_header(table, &columns, app);
+    let header = gpu_table_header(&main_columns, app);
     let mut groups = column![].spacing(18.0).width(Length::Fixed(table_width));
     let has_hard_errors = validation.has_hard_errors();
     for (group_position, group) in table.groups.iter().enumerate() {
@@ -743,34 +868,58 @@ fn gpu_table_view<'a>(
 
         let mut table_rows = column![].spacing(0).width(Length::Fixed(table_width));
         for (level_position, level) in group.levels.iter().enumerate() {
-            let mut remove_button = m3_text_button(app.t("konabess_remove_level").to_string());
-            if group.levels.len() > 1 && !has_hard_errors {
-                remove_button = remove_button.on_press(Message::KonaBess(
-                    KonaBessMsg::KonaBessRemoveLevel(group_position, level_position),
-                ));
-            }
-            let mut cells = row![level_cell(group, level_position, level.id, app)].spacing(0);
-            for column in &columns {
+            let row_height = gpu_row_height(level, stock_group, level_position);
+            let has_detail = level
+                .properties
+                .iter()
+                .any(|property| is_row_detail_property(&property.name));
+            let (detail_error, detail_warning) =
+                app.konabess
+                    .row_detail_findings(validation, group_position, level_position);
+            let finding = (detail_error || detail_warning).then_some(detail_error);
+            let detail_open = has_detail
+                && app
+                    .konabess
+                    .row_details_open(group_position, level_position, finding.is_some());
+            let mut cells =
+                row![level_cell(group, level_position, level.id, row_height, app)].spacing(0);
+            for (column, width) in &main_columns {
                 cells = cells.push(gpu_table_body_cell(
                     column,
-                    table,
+                    *width,
                     group_position,
                     level_position,
                     level,
                     stock_group,
+                    row_height,
                     app,
                     validation,
                 ));
             }
-            cells = cells.push(
-                container(remove_button)
-                    .padding([4.0, 5.0])
-                    .width(Length::Fixed(GPU_ACTION_COLUMN_WIDTH))
-                    .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
-                    .align_y(iced::alignment::Vertical::Center)
-                    .style(table_border_style(false)),
-            );
+            cells = cells.push(row_action_cell(
+                group_position,
+                level_position,
+                RowActionState {
+                    has_detail,
+                    detail_open,
+                    finding,
+                    can_remove: group.levels.len() > 1 && !has_hard_errors,
+                },
+                row_height,
+                app,
+            ));
             table_rows = table_rows.push(cells);
+            if detail_open {
+                table_rows = table_rows.push(row_detail_view(
+                    &detail_names,
+                    group_position,
+                    level_position,
+                    level,
+                    table_width,
+                    app,
+                    validation,
+                ));
+            }
         }
         groups = groups.push(column![group_heading, table_rows].spacing(6.0));
     }
@@ -813,18 +962,13 @@ fn gpu_table_view<'a>(
     .into()
 }
 
-fn gpu_table_header<'a>(
-    table: &ltbox_patch::konabess::GpuTable,
-    columns: &[GpuTableColumn],
-    app: &'a App,
-) -> Element<'a, Message> {
+fn gpu_table_header<'a>(columns: &[(&GpuTableColumn, f32)], app: &'a App) -> Element<'a, Message> {
     let mut header = row![table_header_cell(
         text(app.t("konabess_column_level").to_string()).size(11.0),
         GPU_LEVEL_COLUMN_WIDTH,
     )]
     .spacing(0);
-    for column in columns {
-        let width = gpu_table_column_width(table, column);
+    for (column, width) in columns {
         let content: Element<'a, Message> = match column {
             GpuTableColumn::Frequency => text(app.t("konabess_column_frequency").to_string())
                 .size(11.0)
@@ -835,24 +979,10 @@ fn gpu_table_header<'a>(
             GpuTableColumn::Delta => text(app.t("konabess_column_delta").to_string())
                 .size(11.0)
                 .into(),
-            GpuTableColumn::Bus(names) => column![
-                text(app.t("konabess_column_bus").to_string()).size(11.0),
-                text(
-                    names
-                        .iter()
-                        .map(|name| { name.strip_prefix("qcom,bus-").unwrap_or(name).to_string() })
-                        .collect::<Vec<_>>()
-                        .join(" / "),
-                )
-                .size(theme::text_size::LABEL_SMALL)
-                .font(theme::mono_font())
-                .style(muted_style),
-            ]
-            .spacing(1.0)
-            .into(),
-            GpuTableColumn::Other(name) => text(property_label(name)).size(11.0).into(),
+            // Never a main column; see `gpu_main_column_width`.
+            GpuTableColumn::Bus(_) | GpuTableColumn::Other(_) => continue,
         };
-        header = header.push(table_header_cell(content, width));
+        header = header.push(table_header_cell(content, *width));
     }
     header = header.push(table_header_cell(
         Space::new().width(Length::Shrink),
@@ -905,34 +1035,18 @@ fn group_property_chip(property: &ltbox_patch::konabess::GpuProperty) -> Element
     .into()
 }
 
-fn gpu_table_column_width(table: &ltbox_patch::konabess::GpuTable, column: &GpuTableColumn) -> f32 {
-    match column {
-        GpuTableColumn::Frequency => GPU_FREQUENCY_COLUMN_WIDTH,
-        GpuTableColumn::Voltage => GPU_VOLTAGE_COLUMN_WIDTH,
-        GpuTableColumn::Delta => GPU_DELTA_COLUMN_WIDTH,
-        GpuTableColumn::Bus(names) => {
-            16.0 + names.len().max(1) as f32 * (GPU_BUS_INPUT_WIDTH + 4.0) - 4.0
-        }
-        GpuTableColumn::Other(name) => table
-            .groups
-            .iter()
-            .map(|group| property_column_width(group, name))
-            .fold(190.0, f32::max),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn gpu_table_body_cell<'a>(
     column: &GpuTableColumn,
-    table: &ltbox_patch::konabess::GpuTable,
+    width: f32,
     group_position: usize,
     level_position: usize,
     level: &'a ltbox_patch::konabess::GpuLevel,
     stock_group: Option<&ltbox_patch::konabess::GpuGroup>,
+    row_height: f32,
     app: &'a App,
     validation: &ltbox_patch::konabess::GpuTableValidation,
 ) -> Element<'a, Message> {
-    let width = gpu_table_column_width(table, column);
     match column {
         GpuTableColumn::Frequency => {
             let property = level
@@ -940,21 +1054,19 @@ fn gpu_table_body_cell<'a>(
                 .iter()
                 .enumerate()
                 .find(|(_, property)| property.name == "qcom,gpu-freq");
-            let stock_frequency = stock_group
-                .and_then(|group| group.levels.get(level_position))
-                .and_then(|level| scalar_property(&level.properties, "qcom,gpu-freq"));
             match property {
                 Some((property_position, property)) => frequency_property_cell(
                     property,
                     |cell| {
                         GpuCellKey::level(group_position, level_position, property_position, cell)
                     },
-                    stock_frequency,
+                    changed_stock_frequency(level, stock_group, level_position),
                     width,
+                    row_height,
                     app,
                     validation,
                 ),
-                None => table_cell("—".to_string(), false, width),
+                None => table_cell("—".to_string(), false, width, row_height),
             }
         }
         GpuTableColumn::Voltage => {
@@ -970,10 +1082,11 @@ fn gpu_table_body_cell<'a>(
                         GpuCellKey::level(group_position, level_position, property_position, cell)
                     },
                     width,
+                    row_height,
                     app,
                     validation,
                 ),
-                None => table_cell("—".to_string(), false, width),
+                None => table_cell("—".to_string(), false, width, row_height),
             }
         }
         GpuTableColumn::Delta => {
@@ -988,36 +1101,38 @@ fn gpu_table_body_cell<'a>(
                 .and_then(|(edited, stock)| {
                     voltage_delta(app.konabess.selected_chip()?, edited, stock)
                 });
-            delta_cell(delta, width, app)
+            delta_cell(delta, width, row_height, app)
         }
-        GpuTableColumn::Bus(names) => bus_property_cell(
-            names,
-            group_position,
-            level_position,
-            level,
-            width,
-            app,
-            validation,
-        ),
-        GpuTableColumn::Other(name) => {
-            let property = level
-                .properties
-                .iter()
-                .enumerate()
-                .find(|(_, property)| property.name == *name);
-            match property {
-                Some((property_position, property)) => editable_property_cell(
-                    property,
-                    |cell| {
-                        GpuCellKey::level(group_position, level_position, property_position, cell)
-                    },
-                    width,
-                    app,
-                    validation,
-                ),
-                None => table_cell("—".to_string(), false, width),
-            }
+        // Never a main column; see `gpu_main_column_width`.
+        GpuTableColumn::Bus(_) | GpuTableColumn::Other(_) => {
+            Space::new().width(Length::Fixed(width)).into()
         }
+    }
+}
+
+/// The stock frequency to hint under an edited frequency, when the bin is
+/// comparable and the scalar frequency differs from stock.
+fn changed_stock_frequency(
+    level: &ltbox_patch::konabess::GpuLevel,
+    stock_group: Option<&ltbox_patch::konabess::GpuGroup>,
+    level_position: usize,
+) -> Option<u32> {
+    let stock_level = stock_group?.levels.get(level_position)?;
+    let stock = scalar_property(&stock_level.properties, "qcom,gpu-freq")?;
+    let current = scalar_property(&level.properties, "qcom,gpu-freq")?;
+    (current != stock).then_some(stock)
+}
+
+/// Rows stay compact unless the frequency cell stacks a stock hint.
+fn gpu_row_height(
+    level: &ltbox_patch::konabess::GpuLevel,
+    stock_group: Option<&ltbox_patch::konabess::GpuGroup>,
+    level_position: usize,
+) -> f32 {
+    if changed_stock_frequency(level, stock_group, level_position).is_some() {
+        GPU_TABLE_HINT_ROW_HEIGHT
+    } else {
+        GPU_TABLE_ROW_HEIGHT
     }
 }
 
@@ -1025,6 +1140,7 @@ fn level_cell<'a>(
     group: &ltbox_patch::konabess::GpuGroup,
     level_position: usize,
     level_id: u32,
+    row_height: f32,
     app: &'a App,
 ) -> Element<'a, Message> {
     let initial = scalar_property(&group.header_properties, "qcom,initial-pwrlevel")
@@ -1048,7 +1164,7 @@ fn level_cell<'a>(
     container(content)
         .padding([4.0, 8.0])
         .width(Length::Fixed(GPU_LEVEL_COLUMN_WIDTH))
-        .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
+        .height(Length::Fixed(row_height))
         .align_y(iced::alignment::Vertical::Center)
         .style(derived_table_cell_style)
         .into()
@@ -1086,17 +1202,15 @@ fn level_badge(value: &str, initial: bool) -> Element<'static, Message> {
 fn frequency_property_cell<'a>(
     property: &ltbox_patch::konabess::GpuProperty,
     key_for_cell: impl Fn(usize) -> GpuCellKey,
-    stock_frequency: Option<u32>,
+    stock_hint: Option<u32>,
     width: f32,
+    row_height: f32,
     app: &'a App,
     validation: &ltbox_patch::konabess::GpuTableValidation,
 ) -> Element<'a, Message> {
-    let current_frequency = (property.cells.len() == 1).then(|| property.cells[0]);
     let inputs = property_inputs(property, key_for_cell, width - 16.0, app, validation);
     let mut content = column![inputs].spacing(1.0);
-    if let (Some(current), Some(stock)) = (current_frequency, stock_frequency)
-        && current != stock
-    {
+    if let Some(stock) = stock_hint {
         content = content.push(
             text(tr_args!(
                 "konabess_stock_hint",
@@ -1110,7 +1224,7 @@ fn frequency_property_cell<'a>(
     container(content)
         .padding([4.0, 8.0])
         .width(Length::Fixed(width))
-        .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
+        .height(Length::Fixed(row_height))
         .align_y(iced::alignment::Vertical::Center)
         .style(table_border_style(false))
         .into()
@@ -1120,6 +1234,7 @@ fn voltage_property_cell<'a>(
     property: &ltbox_patch::konabess::GpuProperty,
     key_for_cell: impl Fn(usize) -> GpuCellKey,
     width: f32,
+    row_height: f32,
     app: &'a App,
     validation: &ltbox_patch::konabess::GpuTableValidation,
 ) -> Element<'a, Message> {
@@ -1145,7 +1260,7 @@ fn voltage_property_cell<'a>(
                 gpu_picker_style(theme, status, hard_error, warning)
             })
             .menu_style(m3_pick_list_menu_style)
-            .width(Length::Fixed(158.0));
+            .width(Length::Fixed(GPU_VOTE_PICKER_WIDTH));
             controls = controls.push(focus_button::cycle(
                 picker,
                 format!("gpu-vote-{key:?}"),
@@ -1171,7 +1286,7 @@ fn voltage_property_cell<'a>(
         controls = controls.push(gpu_text_input(
             app.konabess.cell_text(key, committed, &property.name),
             key,
-            158.0,
+            GPU_VOTE_PICKER_WIDTH,
             hard_error,
             warning,
         ));
@@ -1179,13 +1294,18 @@ fn voltage_property_cell<'a>(
     container(controls)
         .padding([4.0, 8.0])
         .width(Length::Fixed(width))
-        .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
+        .height(Length::Fixed(row_height))
         .align_y(iced::alignment::Vertical::Center)
         .style(table_border_style(false))
         .into()
 }
 
-fn delta_cell<'a>(delta: Option<VoltageDelta>, width: f32, app: &'a App) -> Element<'a, Message> {
+fn delta_cell<'a>(
+    delta: Option<VoltageDelta>,
+    width: f32,
+    row_height: f32,
+    app: &'a App,
+) -> Element<'a, Message> {
     let badge = delta.map(|delta| {
         let (label, tone) = match delta {
             VoltageDelta::Stock => (app.t("konabess_delta_stock").to_string(), DeltaTone::Stock),
@@ -1204,17 +1324,19 @@ fn delta_cell<'a>(delta: Option<VoltageDelta>, width: f32, app: &'a App) -> Elem
                 .font(theme::emphasis::medium())
                 .wrapping(iced::widget::text::Wrapping::None),
         )
+        // 6 px insets leave the badge text 106 - 2 × 6 - 2 × 6 = 82 px for a
+        // two-digit "{count} below stock".
         .height(Length::Fixed(22.0))
-        .padding([0.0, 8.0])
+        .padding([0.0, 6.0])
         .align_y(iced::alignment::Vertical::Center)
         .style(move |theme: &Theme| delta_badge_style(theme, tone))
     });
     let content: Element<'a, Message> =
         badge.map_or_else(|| Space::new().width(Length::Shrink).into(), Into::into);
     container(content)
-        .padding([4.0, 8.0])
+        .padding([4.0, 6.0])
         .width(Length::Fixed(width))
-        .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
+        .height(Length::Fixed(row_height))
         .align_y(iced::alignment::Vertical::Center)
         .style(table_border_style(false))
         .into()
@@ -1245,39 +1367,142 @@ fn delta_badge_style(theme: &Theme, tone: DeltaTone) -> container::Style {
     }
 }
 
-fn bus_property_cell<'a>(
-    names: &[String],
+#[derive(Debug, Clone, Copy)]
+struct RowActionState {
+    has_detail: bool,
+    detail_open: bool,
+    /// `Some(true)` for a hard error in the detail, `Some(false)` for a
+    /// warning. A finding keeps the detail open, so its toggle is disabled.
+    finding: Option<bool>,
+    can_remove: bool,
+}
+
+fn row_action_cell<'a>(
+    group_position: usize,
+    level_position: usize,
+    state: RowActionState,
+    row_height: f32,
+    app: &'a App,
+) -> Element<'a, Message> {
+    let mut actions = row![].spacing(4.0).align_y(iced::Alignment::Center);
+    if let Some(hard_error) = state.finding {
+        actions = actions.push(if hard_error {
+            lucide_icon(icon::banner_error(), 14.0, |theme: &Theme| {
+                pal_of(theme).error
+            })
+        } else {
+            lucide_icon(icon::banner_warning(), 14.0, |theme: &Theme| {
+                pal_of(theme).warning
+            })
+        });
+    }
+    if state.has_detail {
+        let (label_key, tip_key) = if state.detail_open {
+            ("konabess_row_details_hide", "konabess_row_details_hide_tip")
+        } else {
+            ("konabess_row_details", "konabess_row_details_tip")
+        };
+        let mut toggle = m3_text_button(app.t(label_key).to_string())
+            .height(Length::Fixed(GPU_ROW_ACTION_HEIGHT));
+        // Hard errors never block the toggle: the user opens the detail to
+        // fix them. Only a detail that a finding holds open cannot close.
+        if state.finding.is_none() {
+            toggle = toggle.on_press(Message::KonaBess(KonaBessMsg::KonaBessToggleRowDetails(
+                group_position,
+                level_position,
+            )));
+        }
+        actions = actions.push(row_action_tooltip(toggle, app.t(tip_key)));
+    }
+    let mut remove = m3_icon_button(icon::kpm_remove(), 16.0, m3_standard_icon_button_style)
+        .width(Length::Fixed(GPU_ROW_ICON_BUTTON_SIZE))
+        .height(Length::Fixed(GPU_ROW_ICON_BUTTON_SIZE));
+    if state.can_remove {
+        remove = remove.on_press(Message::KonaBess(KonaBessMsg::KonaBessRemoveLevel(
+            group_position,
+            level_position,
+        )));
+    }
+    actions = actions
+        .push(Space::new().width(Length::Fill))
+        .push(row_action_tooltip(remove, app.t("konabess_remove_level")));
+    container(actions)
+        .padding([4.0, 5.0])
+        .width(Length::Fixed(GPU_ACTION_COLUMN_WIDTH))
+        .height(Length::Fixed(row_height))
+        .align_y(iced::alignment::Vertical::Center)
+        .style(table_border_style(false))
+        .into()
+}
+
+fn row_action_tooltip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    tip: &str,
+) -> Element<'a, Message> {
+    widget::tooltip(
+        content,
+        container(text(tip.to_string()).size(11.0))
+            .padding([6.0, 10.0])
+            .style(|theme: &Theme| theme::tooltip_style(theme, theme::shape::SM)),
+        widget::tooltip::Position::Top,
+    )
+    .gap(6.0)
+    .into()
+}
+
+/// Every bus and other property of one level, edited with the same inputs,
+/// validation and messages the table columns used. It wraps inside the
+/// table width so it never brings back the horizontal scrollbar.
+fn row_detail_view<'a>(
+    detail_names: &[&str],
     group_position: usize,
     level_position: usize,
     level: &'a ltbox_patch::konabess::GpuLevel,
-    width: f32,
+    table_width: f32,
     app: &'a App,
     validation: &ltbox_patch::konabess::GpuTableValidation,
 ) -> Element<'a, Message> {
-    let mut controls = row![].spacing(4.0).align_y(iced::Alignment::Center);
-    for name in names {
-        let property = level
+    let inner_width = table_width - 2.0 * GPU_DETAIL_PADDING - 2.0;
+    let mut items = row![].spacing(16.0);
+    for name in detail_names {
+        let Some((property_position, property)) = level
             .properties
             .iter()
             .enumerate()
-            .find(|(_, property)| property.name == *name);
-        controls = controls.push(match property {
-            Some((property_position, property)) => property_inputs(
-                property,
-                |cell| GpuCellKey::level(group_position, level_position, property_position, cell),
-                GPU_BUS_INPUT_WIDTH,
-                app,
-                validation,
-            )
-            .into(),
-            None => derived_value_cell_with_width("—".to_string(), GPU_BUS_INPUT_WIDTH),
-        });
+            .find(|(_, property)| property.name == *name)
+        else {
+            continue;
+        };
+        let cell_width = if name.starts_with("qcom,bus-") {
+            GPU_BUS_INPUT_WIDTH
+        } else if matches!(*name, "qcom,level" | "qcom,cx-level") {
+            GPU_VOTE_PICKER_WIDTH
+        } else {
+            GPU_DETAIL_CELL_WIDTH
+        };
+        let cells = property.cells.len().max(1) as f32;
+        let available = (cells * cell_width + (cells - 1.0) * 6.0).min(inner_width);
+        let inputs = property_inputs(
+            property,
+            |cell| GpuCellKey::level(group_position, level_position, property_position, cell),
+            available,
+            app,
+            validation,
+        );
+        items = items.push(
+            column![
+                text(property_label(name))
+                    .size(theme::text_size::LABEL_SMALL)
+                    .font(theme::mono_font())
+                    .style(muted_style),
+                inputs.wrap().vertical_spacing(4.0),
+            ]
+            .spacing(3.0),
+        );
     }
-    container(controls)
-        .padding([4.0, 8.0])
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
-        .align_y(iced::alignment::Vertical::Center)
+    container(items.wrap().vertical_spacing(8.0))
+        .padding([8.0, GPU_DETAIL_PADDING])
+        .width(Length::Fixed(table_width))
         .style(table_border_style(false))
         .into()
 }
@@ -1295,7 +1520,12 @@ fn format_frequency_mhz(frequency_hz: u32) -> String {
     }
 }
 
-fn table_cell(value: String, header: bool, width: f32) -> Element<'static, Message> {
+fn table_cell(
+    value: String,
+    header: bool,
+    width: f32,
+    row_height: f32,
+) -> Element<'static, Message> {
     container(
         text(value)
             .size(if header { 11.0 } else { 12.0 })
@@ -1306,7 +1536,7 @@ fn table_cell(value: String, header: bool, width: f32) -> Element<'static, Messa
     .height(Length::Fixed(if header {
         GPU_TABLE_HEADER_HEIGHT
     } else {
-        GPU_TABLE_ROW_HEIGHT
+        row_height
     }))
     .align_y(iced::alignment::Vertical::Center)
     .style(table_border_style(header))
@@ -1326,23 +1556,6 @@ fn table_border_style(header: bool) -> impl Fn(&Theme) -> container::Style {
             ..Default::default()
         }
     }
-}
-
-fn editable_property_cell<'a>(
-    property: &ltbox_patch::konabess::GpuProperty,
-    key_for_cell: impl Fn(usize) -> GpuCellKey,
-    width: f32,
-    app: &'a App,
-    validation: &ltbox_patch::konabess::GpuTableValidation,
-) -> Element<'a, Message> {
-    let inputs = property_inputs(property, key_for_cell, width - 16.0, app, validation);
-    container(inputs)
-        .padding([7.0, 8.0])
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(GPU_TABLE_ROW_HEIGHT))
-        .align_y(iced::alignment::Vertical::Center)
-        .style(table_border_style(false))
-        .into()
 }
 
 fn property_inputs<'a>(
@@ -1408,17 +1621,7 @@ fn cell_validation_state(
     validation: &ltbox_patch::konabess::GpuTableValidation,
     key: GpuCellKey,
 ) -> (bool, bool) {
-    let hard_error = app.konabess.cell_has_input_error(key)
-        || validation
-            .hard_errors
-            .iter()
-            .any(|issue| app.konabess.issue_matches_cell(issue, key));
-    let warning = !hard_error
-        && validation
-            .warnings
-            .iter()
-            .any(|issue| app.konabess.issue_matches_cell(issue, key));
-    (hard_error, warning)
+    app.konabess.cell_finding(validation, key)
 }
 
 fn gpu_picker_style(
@@ -1557,31 +1760,6 @@ fn comparison_note_style(theme: &Theme) -> container::Style {
     }
 }
 
-fn property_cells_width(cell_count: usize) -> f32 {
-    ((cell_count.max(1) as f32) * 110.0 + 16.0).max(190.0)
-}
-
-fn property_column_width(group: &ltbox_patch::konabess::GpuGroup, name: &str) -> f32 {
-    group
-        .levels
-        .iter()
-        .filter_map(|level| {
-            level
-                .properties
-                .iter()
-                .find(|property| property.name == name)
-        })
-        .map(|property| property_cells_width(property.cells.len()))
-        .fold(
-            if matches!(name, "qcom,level" | "qcom,cx-level") {
-                260.0
-            } else {
-                190.0
-            },
-            f32::max,
-        )
-}
-
 fn property_label(name: &str) -> String {
     name.strip_prefix("qcom,").unwrap_or(name).to_string()
 }
@@ -1642,16 +1820,20 @@ fn finding_panel(
             tr_args!("konabess_error_summary", count = count.to_string()),
         )
     };
+    // The advisory panel only renders once its chip is expanded, so it lists
+    // every finding with its path, like the hard-error panel.
     let mut details = column![].spacing(3.0);
-    if !warning {
-        for issue in issues {
-            details = details.push(
-                text(localized_issue(issue, false, app))
-                    .size(theme::text_size::BODY_MEDIUM)
-                    .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
-                    .style(error_container_text_style),
-            );
-        }
+    for issue in issues {
+        details = details.push(
+            text(localized_issue(issue, warning, app))
+                .size(theme::text_size::BODY_MEDIUM)
+                .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                .style(if warning {
+                    warning_container_text_style
+                } else {
+                    error_container_text_style
+                }),
+        );
     }
     app.message_banner(severity, icon_glyph, title, details)
 }

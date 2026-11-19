@@ -391,6 +391,11 @@ pub(crate) enum KonaBessMsg {
     KonaBessCellChanged(GpuCellKey, String),
     KonaBessAddLevel(usize),
     KonaBessRemoveLevel(usize, usize),
+    /// Open or close the advisory finding panel under the table summary.
+    KonaBessToggleWarnings,
+    /// Open or close one level's bus/other property detail, by
+    /// (group position, level position).
+    KonaBessToggleRowDetails(usize, usize),
     KonaBessNext,
     KonaBessBack,
     /// Feed the retained workspace plus parsed device GPU tables into the

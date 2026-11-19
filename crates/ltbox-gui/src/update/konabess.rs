@@ -106,6 +106,14 @@ impl App {
                 self.konabess.remove_level(group, level);
                 Task::none()
             }
+            KonaBessMsg::KonaBessToggleWarnings => {
+                self.konabess.warnings_expanded = !self.konabess.warnings_expanded;
+                Task::none()
+            }
+            KonaBessMsg::KonaBessToggleRowDetails(group, level) => {
+                self.konabess.toggle_row_details(group, level);
+                Task::none()
+            }
             KonaBessMsg::KonaBessNext => {
                 match self.konabess.step {
                     0 => {
