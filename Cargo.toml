@@ -45,14 +45,14 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 # Release self-update archives use gzip-compressed tarballs on Linux/macOS.
 flate2 = "1"
 # Strict base64 decoding (KonaBess export URIs).
-base64 = "0.22"
+base64 = "0.23"
 tar = { version = "0.4", default-features = false }
 # Zstd (decompress ported-ROM `*.img.zst` payloads, e.g. `super.img.zst`).
 # Already linked transitively via kptools, so this adds no new C build surface.
-zstd = "0.13"
+zstd = "0.14"
 # LZMA-alone decoding for compressed ABL LinuxLoader images. This is already
 # present transitively through kptools/magiskboot.
-lzma-rust2 = "0.16.5"
+lzma-rust2 = "0.25"
 
 # UTF-8-guaranteed paths. `camino::Utf8PathBuf` is a drop-in `PathBuf`
 # replacement that rejects non-UTF-8 byte sequences at construction time,
@@ -102,7 +102,7 @@ serialport = "4"
 
 # GUI
 iced = { version = "0.14", features = ["tokio", "svg", "image", "advanced", "canvas"] }
-rfd = "0.17"
+rfd = "0.18"
 dirs = "7"
 fs4 = { version = "1", default-features = false }
 dark-light = "3"
