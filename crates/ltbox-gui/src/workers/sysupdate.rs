@@ -7,6 +7,19 @@ use crate::{
 };
 use ltbox_core::tr_args;
 
+/// `pm list packages` prints `package:<name>` per match; the filter is a substring match, so only
+/// an exact line counts.
+fn package_listed(output: &str, package: &str) -> bool {
+    let wanted = format!("package:{package}");
+    output.lines().any(|line| line.trim() == wanted)
+}
+
+/// `pm disable-user` / `pm enable` print `Package <name> new state: <state>` on success.
+fn package_state_set(output: &str, package: &str, state: &str) -> bool {
+    let wanted = format!("Package {package} new state: {state}");
+    output.lines().any(|line| line.trim() == wanted)
+}
+
 fn package_reinstall_succeeded(output: &str, package: &str) -> bool {
     let prefix = format!("Package {package} installed for user: ");
     output.lines().any(|line| {
@@ -84,7 +97,7 @@ pub(crate) fn sysupdate_worker(
     match action {
         SysUpdateAction::Disable => {
             // Command echoes (`$ settings put ...` / `$ pm clear ...`) are suppressed; the user only needs
-            // the outcome (Uninstalled / Reinstalled / failure).
+            // the outcome (Uninstalled / Disabled / failure).
             ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(2));
             phases.mark_writes_started();
             adb.shell("settings put global ota_disable_automatic_update 1")
@@ -97,7 +110,7 @@ pub(crate) fn sysupdate_worker(
             for pkg in &packages {
                 let _ = adb.shell(&format!("pm clear {pkg}"));
 
-                match adb.shell(&format!("pm uninstall -k --user 0 {pkg}")) {
+                let uninstall_error = match adb.shell(&format!("pm uninstall -k --user 0 {pkg}")) {
                     Ok(out) if out.trim() == "Success" => {
                         succeeded += 1;
                         ltbox_core::live!(
@@ -105,16 +118,40 @@ pub(crate) fn sysupdate_worker(
                             "[ADB] {}",
                             tr_args!("live_adb_uninstalled", package = pkg)
                         );
+                        continue;
+                    }
+                    Ok(out) => out,
+                    Err(e) => e.to_string(),
+                };
+                // Android 17 refuses the per-user uninstall of these system apps. Disabling them for
+                // user 0 stops the OTA client as well, and Enable undoes either outcome.
+                ltbox_core::live!(
+                    log,
+                    "[ADB] {}",
+                    tr_args!(
+                        "live_adb_uninstall_blocked",
+                        package = pkg,
+                        error = uninstall_error
+                    )
+                );
+                match adb.shell(&format!("pm disable-user --user 0 {pkg}")) {
+                    Ok(out) if package_state_set(&out, pkg, "disabled-user") => {
+                        succeeded += 1;
+                        ltbox_core::live!(
+                            log,
+                            "[ADB] {}",
+                            tr_args!("live_adb_disabled", package = pkg)
+                        );
                     }
                     Ok(out) => ltbox_core::live!(
                         log,
                         "[ADB] {}",
-                        tr_args!("live_adb_uninstall_failed", package = pkg, error = out)
+                        tr_args!("live_adb_disable_failed", package = pkg, error = out)
                     ),
                     Err(e) => ltbox_core::live!(
                         log,
                         "[ADB] {}",
-                        tr_args!("live_adb_uninstall_failed", package = pkg, error = e)
+                        tr_args!("live_adb_disable_failed", package = pkg, error = e)
                     ),
                 }
             }
@@ -139,25 +176,8 @@ pub(crate) fn sysupdate_worker(
             ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(3));
             let mut succeeded = 0;
             for pkg in &packages {
-                match adb.shell(&format!("cmd package install-existing {pkg}")) {
-                    Ok(out) if package_reinstall_succeeded(&out, pkg) => {
-                        succeeded += 1;
-                        ltbox_core::live!(
-                            log,
-                            "[ADB] {}",
-                            tr_args!("live_adb_reinstalled", package = pkg)
-                        );
-                    }
-                    Ok(out) => ltbox_core::live!(
-                        log,
-                        "[ADB] {}",
-                        tr_args!("live_adb_reinstall_failed", package = pkg, error = out)
-                    ),
-                    Err(e) => ltbox_core::live!(
-                        log,
-                        "[ADB] {}",
-                        tr_args!("live_adb_reinstall_failed", package = pkg, error = e)
-                    ),
+                if restore_package(&mut adb, pkg, &mut log) {
+                    succeeded += 1;
                 }
             }
             ltbox_core::live!(
@@ -630,6 +650,60 @@ pub(crate) fn sysupdate_worker(
     }
 }
 
+/// Undo whichever outcome Disable left: reinstall the package for user 0 if it was uninstalled,
+/// then enable it if it was disabled. `true` when it ends installed and enabled.
+fn restore_package(
+    adb: &mut ltbox_device::adb::AdbManager,
+    pkg: &str,
+    log: &mut Vec<String>,
+) -> bool {
+    let failed = |log: &mut Vec<String>, error: String| {
+        ltbox_core::live!(
+            log,
+            "[ADB] {}",
+            tr_args!("live_adb_reinstall_failed", package = pkg, error = error)
+        );
+        false
+    };
+    let installed = match adb.shell(&format!("pm list packages --user 0 {pkg}")) {
+        Ok(out) => package_listed(&out, pkg),
+        Err(e) => return failed(log, e.to_string()),
+    };
+    if !installed {
+        match adb.shell(&format!("cmd package install-existing {pkg}")) {
+            Ok(out) if package_reinstall_succeeded(&out, pkg) => ltbox_core::live!(
+                log,
+                "[ADB] {}",
+                tr_args!("live_adb_reinstalled", package = pkg)
+            ),
+            Ok(out) => return failed(log, out),
+            Err(e) => return failed(log, e.to_string()),
+        }
+    }
+    let disabled = match adb.shell(&format!("pm list packages -d --user 0 {pkg}")) {
+        Ok(out) => package_listed(&out, pkg),
+        Err(e) => return failed(log, e.to_string()),
+    };
+    if !disabled {
+        if installed {
+            ltbox_core::live!(
+                log,
+                "[ADB] {}",
+                tr_args!("live_adb_already_enabled", package = pkg)
+            );
+        }
+        return true;
+    }
+    match adb.shell(&format!("pm enable --user 0 {pkg}")) {
+        Ok(out) if package_state_set(&out, pkg, "enabled") => {
+            ltbox_core::live!(log, "[ADB] {}", tr_args!("live_adb_enabled", package = pkg));
+            true
+        }
+        Ok(out) => failed(log, out),
+        Err(e) => failed(log, e.to_string()),
+    }
+}
+
 /// Resolve Boot Recovery partition LUN via the shared map.
 /// Expected LUN 4 for vendor_boot / vbmeta on supported models.
 fn rescue_partition_lun(part_name: &str) -> Option<u8> {
@@ -664,6 +738,42 @@ mod tests {
             "",
         ] {
             assert!(!package_reinstall_succeeded(output, package), "{output}");
+        }
+    }
+
+    #[test]
+    fn package_listing_matches_only_the_exact_package() {
+        let package = "com.lenovo.ota";
+        assert!(package_listed("package:com.lenovo.ota\r\n", package));
+        assert!(package_listed(
+            "package:com.lenovo.ota.helper\npackage:com.lenovo.ota",
+            package
+        ));
+        for output in ["package:com.lenovo.ota.helper", "", "com.lenovo.ota"] {
+            assert!(!package_listed(output, package), "{output}");
+        }
+    }
+
+    #[test]
+    fn package_state_change_needs_the_requested_state() {
+        let package = "com.lenovo.ota";
+        assert!(package_state_set(
+            "Package com.lenovo.ota new state: disabled-user\r\n",
+            package,
+            "disabled-user"
+        ));
+        assert!(package_state_set(
+            "Package com.lenovo.ota new state: enabled",
+            package,
+            "enabled"
+        ));
+        for output in [
+            "Package com.lenovo.ota new state: disabled-user",
+            "Error: java.lang.SecurityException: Cannot disable a protected package",
+            "Package other new state: enabled",
+            "",
+        ] {
+            assert!(!package_state_set(output, package, "enabled"), "{output}");
         }
     }
 
