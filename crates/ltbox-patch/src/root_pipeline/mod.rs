@@ -226,33 +226,12 @@ pub struct LocalKsuFiles {
 impl LocalKsuFiles {
     /// Reject incomplete files and wrong ELF architecture/type before staging.
     pub fn validate(&self) -> Result<()> {
-        use std::io::Read;
         let mut apk = zip::ZipArchive::new(fs::File::open(&self.manager_apk)?)
             .map_err(|e| LtboxError::Patch(format!("Manager APK: {e}")))?;
         apk.by_name("AndroidManifest.xml")
             .map_err(|e| LtboxError::Patch(format!("Manager APK manifest: {e}")))?;
         for (path, module) in [(&self.ksuinit, false), (&self.module, true)] {
-            let mut file = fs::File::open(path)?;
-            let mut header = [0u8; 64];
-            file.read_exact(&mut header)?;
-            let kind = u16::from_le_bytes([header[16], header[17]]);
-            if &header[..4] != b"\x7fELF"
-                || header[4] != 2
-                || header[5] != 1
-                || u16::from_le_bytes([header[18], header[19]]) != 183
-                || (module && kind != 1)
-                || (!module && !matches!(kind, 2 | 3))
-            {
-                return Err(LtboxError::Patch(format!(
-                    "Expected an arm64 {}: {}",
-                    if module {
-                        "ELF module"
-                    } else {
-                        "ELF executable"
-                    },
-                    path.display()
-                )));
-            }
+            ksu::validate_arm64_elf(path, module)?;
         }
         Ok(())
     }

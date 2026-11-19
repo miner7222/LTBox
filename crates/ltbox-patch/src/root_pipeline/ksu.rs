@@ -322,21 +322,23 @@ fn branch_rejected(lower_filename: &str, kver: &str, device_branch: Option<&str>
     }
 }
 
+/// Pick the release `*_kernelsu.ko` asset for this kernel. Architecture is
+/// honoured independently of listing order: aarch64 first, then unmarked,
+/// never an x86/32-bit ARM/RISC-V build.
 fn select_ksu_release_ko_asset(
     assets: &[(String, String)],
     kver: &str,
     device_branch: Option<&str>,
 ) -> Option<(String, String)> {
     let want = kver.to_lowercase();
-    assets
-        .iter()
-        .find(|(n, _)| {
-            let lower = n.to_lowercase();
-            lower.ends_with("_kernelsu.ko")
-                && ksu_ko_kver_matches(&lower, &want)
-                && !branch_rejected(&lower, &want, device_branch)
-        })
-        .cloned()
+    let names: Vec<String> = assets.iter().map(|(n, _)| n.clone()).collect();
+    let picked = select_arch_safe_artifact(&names, |n| {
+        let lower = n.to_lowercase();
+        lower.ends_with("_kernelsu.ko")
+            && ksu_ko_kver_matches(&lower, &want)
+            && !branch_rejected(&lower, &want, device_branch)
+    })?;
+    assets.iter().find(|(n, _)| n == &picked).cloned()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -348,13 +350,55 @@ enum ArtifactArchitecture {
 
 fn artifact_architecture(name: &str) -> ArtifactArchitecture {
     let lower = name.to_ascii_lowercase();
-    if lower.contains("x86_64") || lower.contains("x86") || lower.contains("amd64") {
+    if lower.contains("aarch64") || lower.contains("arm64") {
+        return ArtifactArchitecture::Aarch64;
+    }
+    // A bare `arm` token (`ksuinit-arm`, `lkm_arm_x`) is 32-bit ARM; `arm64`
+    // was handled above and `armv7`/`armeabi`/`armhf` are matched explicitly.
+    let bare_arm = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|token| token == "arm");
+    if lower.contains("x86")
+        || lower.contains("amd64")
+        || lower.contains("armv7")
+        || lower.contains("armeabi")
+        || lower.contains("armhf")
+        || lower.contains("riscv")
+        || bare_arm
+    {
         ArtifactArchitecture::Rejected
-    } else if lower.contains("aarch64") || lower.contains("arm64") {
-        ArtifactArchitecture::Aarch64
     } else {
         ArtifactArchitecture::Unmarked
     }
+}
+
+/// Require an arm64 little-endian ELF64 of the right kind: `module` means a
+/// relocatable `kernelsu.ko` (ET_REL), otherwise an executable `ksuinit`
+/// (ET_EXEC/ET_DYN). Hard error otherwise; never a silent fallback.
+pub(crate) fn validate_arm64_elf(path: &Path, module: bool) -> Result<()> {
+    use std::io::Read;
+    let mut header = [0u8; 64];
+    let read_ok = fs::File::open(path)?.read_exact(&mut header).is_ok();
+    let kind = u16::from_le_bytes([header[16], header[17]]);
+    if !read_ok
+        || &header[..4] != b"\x7fELF"
+        || header[4] != 2
+        || header[5] != 1
+        || u16::from_le_bytes([header[18], header[19]]) != 183
+        || (module && kind != 1)
+        || (!module && !matches!(kind, 2 | 3))
+    {
+        return Err(LtboxError::Patch(format!(
+            "Expected an arm64 {}: {}",
+            if module {
+                "ELF module"
+            } else {
+                "ELF executable"
+            },
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 /// Pick an arm64-safe artifact independently of the order returned by GitHub.
@@ -544,6 +588,7 @@ fn download_ksu_ko_artifact(
         )?;
     }
     let _ = fs::remove_file(&ko_zip_path);
+    validate_arm64_elf(&staging_dir.join("kernelsu.ko"), true)?;
     Ok(())
 }
 
@@ -784,6 +829,7 @@ pub(super) fn download_ksu_release_payload(
         } else {
             download_to_file(ko_url, &ko_path, log)?;
         }
+        validate_arm64_elf(&ko_path, true)?;
     }
 
     let release_init =
@@ -795,6 +841,7 @@ pub(super) fn download_ksu_release_payload(
         } else {
             download_to_file(url, &init, log)?;
         }
+        validate_arm64_elf(&init, false)?;
     }
     if release_ko.is_some() && release_init.is_some() {
         return Ok(());
@@ -931,6 +978,7 @@ pub(super) fn download_ksu_release_payload(
     )?;
     drop(entry);
     let _ = fs::remove_file(&tmp_zip);
+    validate_arm64_elf(&init_path, false)?;
     ltbox_core::live!(
         log,
         "[KSU] {}",
@@ -1043,6 +1091,7 @@ pub fn download_ksu_payload_nightly(
         )?;
     }
     let _ = fs::remove_file(&init_zip_path);
+    validate_arm64_elf(&staging_dir.join("init"), false)?;
     ltbox_core::live!(log, "[KSU] {}", tr("log_ksu_staged_nightly_init"));
     Ok(run_id)
 }
@@ -1469,6 +1518,102 @@ mod tests {
             None
         );
         assert_eq!(select_ksuinit_artifact(&artifacts), None);
+    }
+
+    #[test]
+    fn artifact_architecture_classifies_real_release_names() {
+        use super::{ArtifactArchitecture as A, artifact_architecture};
+        for name in [
+            "ksuinit-aarch64",
+            "ksuinit-arm64.zip",
+            "lkm-aarch64-android12-5.10_kernelsu.ko",
+            "lkm-aarch64-android13-5.10_kernelsu.ko",
+            "lkm-arm64-android14-6.1_kernelsu.ko",
+        ] {
+            assert!(artifact_architecture(name) == A::Aarch64, "{name}");
+        }
+        for name in [
+            "ksuinit-arm",
+            "ksuinit-riscv64",
+            "ksuinit-x86_64",
+            "ksuinit-armv7",
+            "ksuinit-armeabi-v7a",
+            "ksuinit-armhf",
+            "lkm-arm-android14-6.1_kernelsu.ko",
+            "lkm_arm_android14-6.1_kernelsu.ko",
+            "lkm-x86_64-android14-6.1_kernelsu.ko",
+        ] {
+            assert!(artifact_architecture(name) == A::Rejected, "{name}");
+        }
+        assert!(artifact_architecture("android14-5.15_kernelsu.ko") == A::Unmarked);
+        assert!(artifact_architecture("ksuinit") == A::Unmarked);
+    }
+
+    #[test]
+    fn ksuinit_selection_skips_32bit_and_riscv() {
+        let artifacts = vec![
+            "ksuinit-arm".to_string(),
+            "ksuinit-riscv64".to_string(),
+            "ksuinit-x86_64".to_string(),
+            "ksuinit-aarch64".to_string(),
+        ];
+        assert_eq!(
+            select_ksuinit_artifact(&artifacts),
+            Some("ksuinit-aarch64".to_string())
+        );
+        assert_eq!(
+            select_ksuinit_artifact(&artifacts[..3]),
+            None,
+            "no arm64 ksuinit must be a hard miss"
+        );
+    }
+
+    #[test]
+    fn ksu_release_asset_selection_is_arch_safe_in_any_order() {
+        let asset = |name: &str| (name.to_string(), format!("https://example.invalid/{name}"));
+        let x86_first = vec![
+            asset("lkm-x86_64-android12-5.10_kernelsu.ko"),
+            asset("lkm-aarch64-android12-5.10_kernelsu.ko"),
+        ];
+        assert_eq!(
+            select_ksu_release_ko_asset(&x86_first, "5.10", Some("android12"))
+                .map(|(name, _)| name),
+            Some("lkm-aarch64-android12-5.10_kernelsu.ko".to_string())
+        );
+        let x86_only = vec![asset("lkm-x86_64-android12-5.10_kernelsu.ko")];
+        assert!(select_ksu_release_ko_asset(&x86_only, "5.10", Some("android12")).is_none());
+    }
+
+    fn elf_header(machine: u16, kind: u16) -> [u8; 64] {
+        let mut h = [0u8; 64];
+        h[..4].copy_from_slice(b"\x7fELF");
+        h[4] = 2;
+        h[5] = 1;
+        h[16..18].copy_from_slice(&kind.to_le_bytes());
+        h[18..20].copy_from_slice(&machine.to_le_bytes());
+        h
+    }
+
+    #[test]
+    fn validate_arm64_elf_checks_machine_and_kind() {
+        use super::validate_arm64_elf;
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let arm_ko = write("arm.ko", &elf_header(183, 1));
+        let x86_ko = write("x86.ko", &elf_header(62, 1));
+        let arm_exec = write("init", &elf_header(183, 3));
+        let short = write("short", b"\x7fELF");
+        assert!(validate_arm64_elf(&arm_ko, true).is_ok());
+        assert!(validate_arm64_elf(&x86_ko, true).is_err());
+        assert!(validate_arm64_elf(&arm_ko, false).is_err());
+        assert!(validate_arm64_elf(&arm_exec, false).is_ok());
+        assert!(validate_arm64_elf(&arm_exec, true).is_err());
+        let err = validate_arm64_elf(&short, true).unwrap_err().to_string();
+        assert!(err.contains("Expected an arm64 ELF module"), "{err}");
     }
 
     #[test]
