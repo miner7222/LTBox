@@ -9,12 +9,6 @@ ignore = [
     # observing many timed signing operations, which this offline desktop flow
     # does not expose. Revisit when a fixed `rsa` ships.
     "RUSTSEC-2023-0071", # rsa Marvin timing side channel via adb_client; no fixed 0.9 release
-    # Unmaintained, no known vulnerability: clap 2 and env_logger 0.7, reached
-    # only through magiskboot v0.1.3's pb-rs build dependency. magiskboot-rs
-    # 3ab1094 builds pb-rs without them; drop these three with that bump.
-    "RUSTSEC-2021-0139", # ansi_term unmaintained
-    "RUSTSEC-2024-0375", # atty unmaintained
-    "RUSTSEC-2026-0542", # humantime unmaintained (wraps chrono)
     # `chrono` unmaintained, no known vulnerability and "No safe upgrade is
     # available". adb_client 4 depends on it unconditionally, so moving LTBox's
     # own timestamps to jiff/time would not remove it. Revisit when adb_client
