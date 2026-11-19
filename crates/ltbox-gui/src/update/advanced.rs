@@ -270,7 +270,8 @@ impl App {
                     // A successful GPT scan proves the device is in EDL; reflect it
                     // now (the poll may still show ADB/Fastboot) so a sidebar bounce
                     // keeps the loaded table via `advanced_in_progress`.
-                    self.apply_device_snapshot(DevicePollResult {
+                    // It enumerated no USB devices, so the tablet choice is left alone.
+                    self.apply_observed_connection(DevicePollResult {
                         status: ConnectionStatus::Edl,
                         ..DevicePollResult::default()
                     });
@@ -463,7 +464,8 @@ impl App {
                     // A successful GPT scan proves the device is in EDL; reflect it
                     // now (the poll may still show ADB/Fastboot) so a sidebar bounce
                     // keeps the loaded table via `advanced_in_progress`.
-                    self.apply_device_snapshot(DevicePollResult {
+                    // It enumerated no USB devices, so the tablet choice is left alone.
+                    self.apply_observed_connection(DevicePollResult {
                         status: ConnectionStatus::Edl,
                         ..DevicePollResult::default()
                     });

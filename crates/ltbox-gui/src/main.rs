@@ -22,6 +22,7 @@ mod country_flags;
 mod demo;
 #[cfg(feature = "demo")]
 mod demo_logs;
+mod device_choice;
 mod device_name;
 mod device_queries;
 mod device_snapshot;

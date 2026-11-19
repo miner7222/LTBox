@@ -149,6 +149,9 @@ impl App {
         if self.dual_usb_help_open {
             layers.push(self.dual_usb_help_dialog());
         }
+        if self.device_choice.dialog.is_some() {
+            layers.push(self.device_choice_dialog());
+        }
         if let Some((title, body)) = &self.help_dialog {
             layers.push(m3_dialog(dialog_sections(
                 text(title.clone())

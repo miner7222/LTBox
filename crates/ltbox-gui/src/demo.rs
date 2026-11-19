@@ -14,6 +14,7 @@
 //! ```
 
 use crate::*;
+use ltbox_device::selection::DeviceMode;
 
 const FIRMWARE_FOLDER: &str =
     "/Users/ltbox/Firmware/TB520FU_ROW_OPEN_USER_Q00002.0_W_ZUI_17.5.10.096_ST_251127";
@@ -27,6 +28,10 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "adb-conflict",
     "software-fix",
     "dual-usb-advisory",
+    "multi-device",
+    "multi-device-dialog",
+    "multi-device-chosen",
+    "multi-device-edl",
     "same:region",
     "same:target",
     "same:data",
@@ -75,6 +80,14 @@ pub(crate) enum Scene {
     AdbConflict,
     SoftwareFix,
     DualUsbAdvisory,
+    /// Three devices attached: the choose banner and the card list.
+    MultiDevice,
+    /// The same three devices with the choice dialog open and no row staged.
+    MultiDeviceDialog,
+    /// One of the three chosen: the normal card with the re-pick button.
+    MultiDeviceChosen,
+    /// Two devices in EDL: the "cannot tell apart" banner.
+    MultiDeviceEdl,
     Wizard {
         flow: Flow,
         step: WizardStep,
@@ -141,6 +154,10 @@ impl Scene {
             "adb-conflict" => Some(Self::AdbConflict),
             "software-fix" => Some(Self::SoftwareFix),
             "dual-usb-advisory" => Some(Self::DualUsbAdvisory),
+            "multi-device" => Some(Self::MultiDevice),
+            "multi-device-dialog" => Some(Self::MultiDeviceDialog),
+            "multi-device-chosen" => Some(Self::MultiDeviceChosen),
+            "multi-device-edl" => Some(Self::MultiDeviceEdl),
             "view:root" => Some(Self::View(View::Root)),
             "view:unroot" => Some(Self::View(View::Unroot)),
             "view:sysupdate" => Some(Self::View(View::SystemUpdate)),
@@ -207,6 +224,27 @@ impl Scene {
                     ..DevicePollResult::default()
                 };
             }
+            Self::MultiDevice | Self::MultiDeviceDialog => {
+                return DevicePollResult {
+                    inventory: demo_choices(),
+                    ..DevicePollResult::default()
+                };
+            }
+            Self::MultiDeviceChosen => {
+                return DevicePollResult {
+                    inventory: demo_choices(),
+                    ..Self::Dashboard.poll_result()
+                };
+            }
+            Self::MultiDeviceEdl => {
+                return DevicePollResult {
+                    inventory: vec![
+                        demo_choice(DeviceMode::Edl, None, Some("Demo tablet"), 1),
+                        demo_choice(DeviceMode::Edl, None, Some("Demo tablet"), 2),
+                    ],
+                    ..DevicePollResult::default()
+                };
+            }
             Self::DualUsbAdvisory => {
                 return DevicePollResult {
                     status: ConnectionStatus::Adb,
@@ -251,6 +289,35 @@ impl Scene {
     }
 }
 
+/// Three selectable devices, the last without a product string.
+fn demo_choices() -> Vec<crate::device_choice::DeviceChoice> {
+    vec![
+        demo_choice(DeviceMode::Adb, Some("DEMO0001"), Some("Demo tablet"), 1),
+        demo_choice(DeviceMode::Adb, Some("DEMO0002"), Some("Demo tablet"), 2),
+        demo_choice(DeviceMode::Fastboot, Some("DEMO0003"), None, 3),
+    ]
+}
+
+fn demo_choice(
+    mode: DeviceMode,
+    serial: Option<&str>,
+    product: Option<&str>,
+    port: u8,
+) -> crate::device_choice::DeviceChoice {
+    crate::device_choice::DeviceChoice::from_candidate(&ltbox_device::selection::UsbCandidate {
+        mode,
+        serial: serial.map(str::to_owned),
+        location: ltbox_device::selection::UsbLocation {
+            bus_id: "demo".to_string(),
+            port_chain: vec![port],
+        },
+        vendor_id: 0x18d1,
+        product_id: 0x4ee0,
+        product: product.map(str::to_owned),
+        instance_id: None,
+    })
+}
+
 pub(crate) fn initialize(app: &mut App) {
     let Some(value) = std::env::var_os("LTBOX_DEMO") else {
         return;
@@ -292,11 +359,37 @@ pub(crate) fn initialize(app: &mut App) {
         Scene::SysUpdateRescue(rescue_scene) => apply_sysupdate_rescue_scene(app, rescue_scene),
         Scene::PartitionTable(table) => apply_partition_table_scene(app, table),
         Scene::FlashConfirmNoDevice => apply_wizard_scene(app, Flow::Same, WizardStep::Confirm),
+        Scene::MultiDevice | Scene::MultiDeviceDialog | Scene::MultiDeviceChosen => {
+            apply_multi_device_scene(app, scene);
+        }
         Scene::SoftwareFix
         | Scene::DualUsbAdvisory
+        | Scene::MultiDeviceEdl
         | Scene::Dashboard
         | Scene::DriversMissing
         | Scene::AdbConflict => {}
+    }
+}
+
+/// Enter the choice state the scene names. App state only: a demo scene never
+/// reaches `ltbox_device::selection`, and later demo polls keep the state
+/// because they report the same inventory.
+fn apply_multi_device_scene(app: &mut App, scene: Scene) {
+    let inventory = app.device_choice.inventory.clone();
+    let first = inventory.first().map(|device| device.id.clone());
+    app.device_choice.apply_with(inventory, false, true);
+    // The returned target action is dropped: a demo choice never reaches the
+    // device layer.
+    match scene {
+        Scene::MultiDeviceDialog => {
+            let _ = app.device_choice.handle(DeviceChoiceMsg::Open);
+        }
+        Scene::MultiDeviceChosen => {
+            if let Some(id) = first {
+                let _ = app.device_choice.handle(DeviceChoiceMsg::PickNow(id));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1091,6 +1184,112 @@ mod tests {
                 assert!(app.device.firmware.is_empty());
                 assert!(app.device.firmware_full.is_empty());
             }
+        }
+    }
+
+    #[test]
+    fn multi_device_scenes_show_the_matching_state_and_block_start() {
+        use crate::device_choice::MultiDeviceState;
+
+        for (scene, state, len) in [
+            (Scene::MultiDevice, MultiDeviceState::NeedsChoice, 3),
+            (Scene::MultiDeviceEdl, MultiDeviceState::MultipleEdl, 2),
+        ] {
+            let mut app = App::default();
+            for _ in 0..2 {
+                drop(app.update(Message::DevicePolled(scene.poll_result())));
+                assert_eq!(app.device.connection, ConnectionStatus::None);
+                assert_eq!(app.device_choice.state, state);
+                assert_eq!(app.device_choice.inventory.len(), len);
+                assert_eq!(
+                    app.device_block_reason().as_deref(),
+                    Some(app.t("start_blocked_multi_device"))
+                );
+            }
+            // Leaving the multi-device situation restores the normal path.
+            drop(app.update(Message::DevicePolled(Scene::Dashboard.poll_result())));
+            assert_eq!(app.device_choice.state, MultiDeviceState::Single);
+            assert_eq!(app.device_block_reason(), None);
+        }
+    }
+
+    #[test]
+    fn choice_scenes_render_the_choice_states_and_block_start() {
+        use crate::device_choice::MultiDeviceState;
+
+        for (scene, state, dialog) in [
+            (Scene::MultiDevice, MultiDeviceState::NeedsChoice, None),
+            (
+                Scene::MultiDeviceDialog,
+                MultiDeviceState::NeedsChoice,
+                Some(None),
+            ),
+            (Scene::MultiDeviceChosen, MultiDeviceState::Chosen, None),
+        ] {
+            let mut app = App::default();
+            drop(app.update(Message::DevicePolled(scene.poll_result())));
+            apply_multi_device_scene(&mut app, scene);
+            assert_eq!(app.device_choice.state, state, "{scene:?}");
+            assert_eq!(app.device_choice.inventory.len(), 3);
+            assert_eq!(app.device_choice.dialog, dialog, "{scene:?}");
+            if state == MultiDeviceState::Chosen {
+                assert_eq!(app.device_block_reason(), None);
+                assert_eq!(app.device.model, "TB520FU");
+                assert!(app.device_choice.chosen.is_some());
+            } else {
+                assert_eq!(
+                    app.device_block_reason().as_deref(),
+                    Some(app.t("start_blocked_multi_device"))
+                );
+                assert_eq!(app.device_choice.chosen, None);
+            }
+            // The views build for every state, including the dialog layer.
+            drop(app.view());
+        }
+    }
+
+    #[test]
+    fn choice_scenes_keep_their_state_across_polls_without_a_target() {
+        use crate::device_choice::{MultiDeviceState, test_target};
+
+        for (scene, state, dialog) in [
+            (Scene::MultiDevice, MultiDeviceState::NeedsChoice, None),
+            (
+                Scene::MultiDeviceDialog,
+                MultiDeviceState::NeedsChoice,
+                Some(None),
+            ),
+            (Scene::MultiDeviceChosen, MultiDeviceState::Chosen, None),
+            (Scene::MultiDeviceEdl, MultiDeviceState::MultipleEdl, None),
+        ] {
+            let mut app = App {
+                demo_scene: Some(scene),
+                startup_disclaimer_open: false,
+                ..App::default()
+            };
+            drop(app.update(Message::DevicePolled(scene.poll_result())));
+            if scene != Scene::MultiDeviceEdl {
+                apply_multi_device_scene(&mut app, scene);
+            }
+            let chosen = app.device_choice.chosen.clone();
+            for _ in 0..3 {
+                // A demo poll tick, as `Message::PollDevice` produces it.
+                drop(app.update(Message::PollDevice));
+                drop(app.update(Message::DevicePollFinished(
+                    app.queries.sequence(),
+                    poll_result(&app),
+                )));
+                assert_eq!(app.device_choice.state, state, "{scene:?}");
+                assert_eq!(app.device_choice.dialog, dialog, "{scene:?}");
+                assert_eq!(app.device_choice.chosen, chosen, "{scene:?}");
+            }
+            // Picking in a demo scene changes app state only.
+            if let Some(device) = app.device_choice.inventory.last().cloned() {
+                drop(app.update(Message::DeviceChoice(
+                    crate::message::DeviceChoiceMsg::PickNow(device.id),
+                )));
+            }
+            assert!(test_target::calls().is_empty(), "{scene:?}");
         }
     }
 

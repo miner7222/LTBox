@@ -77,7 +77,9 @@ fn check_candidate_count(count: usize) -> Result<(), UsbSelectionError> {
 /// Counts physical device entries once even if they expose several Android
 /// interfaces. Zero devices is allowed while a mode transition is in progress.
 /// Transport-specific discovery still checks its own complete candidate set.
-pub fn ensure_single_usb_target() -> Result<(), UsbSelectionError> {
+/// Callers outside this module go through `ensure_unambiguous_target` or
+/// `ensure_untargeted_single`, which also read the session target.
+fn ensure_single_usb_target() -> Result<(), UsbSelectionError> {
     // The guard only needs the count, so it skips the string descriptor reads.
     let candidates = collect_candidates(false)?;
     check_candidate_count(candidates.len())

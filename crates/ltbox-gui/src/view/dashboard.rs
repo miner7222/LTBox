@@ -151,6 +151,76 @@ impl App {
         )
     }
 
+    /// The banner for the multi-device states, with the button that opens the
+    /// choice dialog when a choice is possible.
+    fn multi_device_banner(&self) -> Option<Element<'_, Message>> {
+        let (body_key, can_choose) = match self.device_choice.state {
+            device_choice::MultiDeviceState::Single | device_choice::MultiDeviceState::Chosen => {
+                return None;
+            }
+            device_choice::MultiDeviceState::NeedsChoice => (
+                if self.device_choice.rechoose {
+                    "dash_multi_device_rechoose"
+                } else {
+                    "dash_multi_device_choose"
+                },
+                true,
+            ),
+            device_choice::MultiDeviceState::MultipleEdl => ("dash_multi_edl", false),
+            device_choice::MultiDeviceState::Unselectable => {
+                ("dash_multi_device_disconnect", false)
+            }
+        };
+        let body = text(self.t(body_key).to_string())
+            .size(theme::text_size::BODY_MEDIUM)
+            .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+            .style(warning_container_text_style)
+            .width(Length::Fill);
+        let choose: Option<Element<'_, Message>> = can_choose.then(|| {
+            button(
+                text(self.t("btn_choose_device").to_string())
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            )
+            .on_press_maybe(
+                (!self.operation.is_running())
+                    .then_some(Message::DeviceChoice(DeviceChoiceMsg::Open)),
+            )
+            .padding([10.0, 18.0])
+            .height(Length::Fixed(40.0))
+            .style(banner_filled_btn_style)
+            .into()
+        });
+        Some(self.message_banner_with_trailing(
+            BannerSeverity::Warning,
+            icon::banner_warning(),
+            self.t("dash_multi_device_title").to_string(),
+            body,
+            choose,
+        ))
+    }
+
+    /// The card body while the user must choose: one connected choice row per
+    /// device, scrolling inside the card past three rows. A row chooses at once.
+    fn device_choice_card_list(&self) -> Element<'_, Message> {
+        let mut rows = column![].spacing(2.0).width(Length::Fill);
+        for (index, device) in self.device_choice.inventory.iter().enumerate() {
+            let (label, detail) = self.device_choice_row_copy(index, device);
+            rows = rows.push(dialog_choice(
+                label,
+                Some(detail),
+                false,
+                Some(Message::DeviceChoice(DeviceChoiceMsg::PickNow(
+                    device.id.clone(),
+                ))),
+            ));
+        }
+        container(iced::widget::scrollable(rows).style(m3_scrollable_style))
+            .max_height(super::popups::DEVICE_CHOICE_LIST_MAX_HEIGHT)
+            .width(Length::Fill)
+            .into()
+    }
+
     /// The device card body while nothing is connected: a title and the three
     /// steps that get a tablet detected.
     fn dashboard_no_device_steps(&self) -> Element<'_, Message> {
@@ -234,9 +304,13 @@ impl App {
             banners.push(self.software_fix_banner());
         }
 
+        // With several devices nothing was read, so an ADB, sideload or platform
+        // banner would describe a device LTBox never looked at.
+        if let Some(banner) = self.multi_device_banner() {
+            banners.push(banner);
         // ADB access problems win over the platform warning: an unreadable
         // `ro.boot.hardware` would otherwise read as "unsupported platform".
-        if self.device.connection == ConnectionStatus::AdbServerBlocking {
+        } else if self.device.connection == ConnectionStatus::AdbServerBlocking {
             let msg = text(self.t("dash_adb_server_blocking").to_string())
                 .size(theme::text_size::BODY_MEDIUM)
                 .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
@@ -308,12 +382,13 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
 
+        let needs_choice = self.device_choice.state == device_choice::MultiDeviceState::NeedsChoice;
         // Reserve the portrait's height even before a model is known.
         let mut identity = row![]
             .height(64.0)
             .spacing(16.0)
             .align_y(iced::Alignment::Center);
-        if !self.device.model.is_empty() {
+        if !needs_choice && !self.device.model.is_empty() {
             let portrait: Element<'_, Message> = match device_portrait(&self.device.model) {
                 DevicePortrait::Png(handle) => iced::widget::image(handle)
                     .content_fit(iced::ContentFit::ScaleDown)
@@ -331,16 +406,27 @@ impl App {
                     .align_y(iced::alignment::Vertical::Center),
             );
         }
-        let device_name = if self.device.market_name.is_empty() {
-            if self.device.model.is_empty() {
-                self.t("dash_device").to_string()
-            } else {
-                model.to_string()
-            }
+        // With a choice pending no device was read, so the card names the choice.
+        let (device_name, identity_detail) = if needs_choice {
+            (
+                self.t("device_choice_title").to_string(),
+                self.t("device_choice_body").to_string(),
+            )
+        } else if self.device.market_name.is_empty() {
+            (
+                if self.device.model.is_empty() {
+                    self.t("dash_device").to_string()
+                } else {
+                    model.to_string()
+                },
+                device_identity_detail(model, &self.device.android_version),
+            )
         } else {
-            self.device.market_name.clone()
+            (
+                self.device.market_name.clone(),
+                device_identity_detail(model, &self.device.android_version),
+            )
         };
-        let identity_detail = device_identity_detail(model, &self.device.android_version);
         identity = identity.push(
             column![
                 text(device_name)
@@ -351,6 +437,17 @@ impl App {
             .spacing(4.0)
             .width(Length::Fill),
         );
+        // Only with a choice behind it: with one device there is nothing to change.
+        if self.device_choice.state == device_choice::MultiDeviceState::Chosen
+            && self.device_choice.inventory.len() >= 2
+        {
+            identity = identity.push(
+                m3_text_button(self.t("btn_change_device").to_string()).on_press_maybe(
+                    (!self.operation.is_running())
+                        .then_some(Message::DeviceChoice(DeviceChoiceMsg::Open)),
+                ),
+            );
+        }
         let label = |key: &'static str| -> Element<'_, Message> {
             text(self.t(key).to_string())
                 .size(theme::text_size::LABEL_SMALL)
@@ -384,11 +481,19 @@ impl App {
         } else {
             value(arb.to_string())
         };
-        let actions = dashboard_action_availability(
-            &self.device.serial,
-            &self.device.firmware_full,
-            &self.device.firmware,
-        );
+        let actions = if needs_choice {
+            DashboardActionAvailability {
+                ota: false,
+                qfil: false,
+                info: false,
+            }
+        } else {
+            dashboard_action_availability(
+                &self.device.serial,
+                &self.device.firmware_full,
+                &self.device.firmware,
+            )
+        };
         let quick_actions = row![
             dashboard_quick_action(
                 self.t("dash_action_ota_lookup").to_string(),
@@ -409,7 +514,9 @@ impl App {
         .spacing(8.0)
         .align_y(iced::Alignment::Center);
         // No tablet: the table would be four rows of dashes, so say what to do.
-        let details: Element<'_, Message> = if self.device.connection == ConnectionStatus::None {
+        let details: Element<'_, Message> = if needs_choice {
+            self.device_choice_card_list()
+        } else if self.device.connection == ConnectionStatus::None {
             self.dashboard_no_device_steps()
         } else {
             column![

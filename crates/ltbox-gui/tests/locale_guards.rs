@@ -883,6 +883,8 @@ const DRIVER_OPTIONS: &[CopySource] = &[
 ];
 const DIRECT_UPDATE_READY_ACTIONS: &[CopySource] =
     &[key("btn_close"), key("update_dialog_install")];
+/// The device-choice dialog uses the same 520 px card as the update dialog.
+const DEVICE_CHOICE_DIALOG_ACTIONS: &[CopySource] = &[key("btn_cancel"), key("btn_use_device")];
 
 /// `loader_picker_subtitle` picks one of these on every loader step.
 const LOADER_SUBTITLES: [&str; 3] = [
@@ -1128,6 +1130,12 @@ const CONSTRAINED_SLOTS: &[ConstrainedSlot] = &[
         name: "self-update.ready-action-row",
         kind: SlotKind::ActionRow(ActionRowSlot {
             actions: DIRECT_UPDATE_READY_ACTIONS,
+        }),
+    },
+    ConstrainedSlot {
+        name: "dashboard.device-choice-dialog-action-row",
+        kind: SlotKind::ActionRow(ActionRowSlot {
+            actions: DEVICE_CHOICE_DIALOG_ACTIONS,
         }),
     },
     ConstrainedSlot {

@@ -4,8 +4,12 @@ use crate::focus_button::{self as button, button};
 use crate::*;
 use iced::widget::{self, Space, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Theme};
+use ltbox_device::selection::DeviceMode;
 use theme::with_alpha;
 
+/// Three 72 px choice rows and their 2 px gaps: longer lists scroll.
+pub(super) const DEVICE_CHOICE_LIST_MAX_HEIGHT: f32 = 3.0 * 72.0 + 2.0 * 2.0;
+const DEVICE_CHOICE_DIALOG_WIDTH: f32 = DIALOG_WIDTH_MD;
 const COUNTRY_LIST_HEIGHT: f32 = 300.0;
 const COUNTRY_ROW_HEIGHT: f32 = 56.0;
 const COUNTRY_FLAG_WIDTH: f32 = 20.0;
@@ -1386,6 +1390,83 @@ impl App {
             .width(Length::Fixed(theme::DIALOG_WIDTH_MD))
             .into();
         m3_dialog(popup_content)
+    }
+
+    /// Name and supporting line of one device row, shared by the dialog and the
+    /// dashboard card list. `index` is the device's place in the list.
+    pub(crate) fn device_choice_row_copy(
+        &self,
+        index: usize,
+        device: &device_choice::DeviceChoice,
+    ) -> (String, String) {
+        let label = if device.product.trim().is_empty() {
+            tr_args!("device_choice_unnamed", index = index + 1)
+        } else {
+            device.product.clone()
+        };
+        let mode = match device.mode {
+            DeviceMode::Adb => "conn_adb",
+            DeviceMode::Fastboot => "conn_fastboot",
+            DeviceMode::Edl => "conn_edl",
+            DeviceMode::Other => "common_unknown",
+        };
+        let serial = match &device.serial {
+            Some(serial) => serial.clone(),
+            None => self.t("device_choice_no_serial").to_string(),
+        };
+        let detail = tr_args!(
+            "device_choice_row_detail",
+            mode = self.t(mode),
+            serial = serial
+        );
+        (label, detail)
+    }
+
+    /// Dashboard dialog that stages one attached device and commits it. No row
+    /// starts selected; "Use this tablet" stays disabled until one is.
+    pub(crate) fn device_choice_dialog(&self) -> Element<'_, Message> {
+        let staged = self.device_choice.dialog.as_ref().and_then(Option::as_ref);
+        let mut rows = column![].spacing(2.0).width(Length::Fill);
+        for (index, device) in self.device_choice.inventory.iter().enumerate() {
+            let (label, detail) = self.device_choice_row_copy(index, device);
+            rows = rows.push(dialog_choice(
+                label,
+                Some(detail),
+                staged == Some(&device.id),
+                Some(Message::DeviceChoice(DeviceChoiceMsg::Pick(
+                    device.id.clone(),
+                ))),
+            ));
+        }
+        let body = column![
+            text(self.t("device_choice_body").to_string())
+                .size(theme::text_size::BODY_MEDIUM)
+                .style(muted_style)
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                .width(Length::Fill),
+            container(scrollable(rows).style(m3_scrollable_style))
+                .max_height(DEVICE_CHOICE_LIST_MAX_HEIGHT)
+                .width(Length::Fill),
+        ]
+        .spacing(16.0);
+        m3_dialog(popup_sections(
+            text(self.t("device_choice_title").to_string())
+                .size(theme::text_size::DIALOG_HEADLINE)
+                .line_height(32.0 / 24.0),
+            body,
+            row![
+                Space::new().width(Length::Fill),
+                m3_outlined_button(self.t("btn_cancel").to_string())
+                    .on_press(Message::DeviceChoice(DeviceChoiceMsg::Cancel)),
+                m3_filled_button(self.t("btn_use_device").to_string()).on_press_maybe(
+                    staged.map(|_| Message::DeviceChoice(DeviceChoiceMsg::Confirm))
+                ),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            DEVICE_CHOICE_DIALOG_WIDTH,
+            false,
+        ))
     }
 
     /// PRC / ROW radio popup for the Advanced RegionConvert wizard: two choices,

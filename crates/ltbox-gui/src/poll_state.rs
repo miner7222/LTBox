@@ -31,6 +31,9 @@ pub(crate) struct DevicePollResult {
     /// to a different device.
     pub(crate) serial: String,
     pub(crate) platform_supported: Option<bool>, // None = unknown, Some(true) = qcom, Some(false) = unsupported
+    /// Android/EDL USB devices seen before any transport was opened. Two or
+    /// more means the poll opened none and `status` is `None`.
+    pub(crate) inventory: Vec<crate::device_choice::DeviceChoice>,
 }
 
 /// Loading state for the device-info popup.
@@ -244,7 +247,7 @@ pub(crate) fn transition_to_edl(
     conn: ConnectionStatus,
     log: &mut Vec<String>,
 ) -> std::result::Result<(), String> {
-    ltbox_device::selection::ensure_single_usb_target().map_err(|e| e.to_string())?;
+    ltbox_device::selection::ensure_unambiguous_target().map_err(|e| e.to_string())?;
     let live = probe_connection_for_edl().unwrap_or(conn);
     ensure_edl(live, "EDL", log).map_err(|()| ltbox_core::i18n::tr("err_edl_transition_failed"))
 }

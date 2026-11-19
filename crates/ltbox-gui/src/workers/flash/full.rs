@@ -151,33 +151,30 @@ pub(crate) fn flash_worker(
         active_slot: Option<String>,
         raw_getvar_all: String,
     }
-    let probe_fastboot = || -> FastbootProbe {
-        match ltbox_device::fastboot::FastbootDevice::open() {
-            Ok(mut dev) => match dev.get_all_vars() {
-                Ok(v) => FastbootProbe {
-                    rollback_floors: ltbox_patch::rollback::classify_fastboot_rollback_floors(
-                        &v.rollback_indices,
-                    ),
-                    reachable: true,
-                    active_slot: v.current_slot,
-                    raw_getvar_all: v.raw_getvar_all,
-                },
-                Err(_) => FastbootProbe {
-                    rollback_floors: None,
-                    reachable: false,
-                    active_slot: None,
-                    raw_getvar_all: String::new(),
-                },
+    let probe_fastboot = || -> Result<FastbootProbe, String> {
+        let unreachable = || FastbootProbe {
+            rollback_floors: None,
+            reachable: false,
+            active_slot: None,
+            raw_getvar_all: String::new(),
+        };
+        let Some(mut dev) = fastboot_probe_step(ltbox_device::fastboot::FastbootDevice::open())?
+        else {
+            return Ok(unreachable());
+        };
+        Ok(match fastboot_probe_step(dev.get_all_vars())? {
+            Some(v) => FastbootProbe {
+                rollback_floors: ltbox_patch::rollback::classify_fastboot_rollback_floors(
+                    &v.rollback_indices,
+                ),
+                reachable: true,
+                active_slot: v.current_slot,
+                raw_getvar_all: v.raw_getvar_all,
             },
-            Err(_) => FastbootProbe {
-                rollback_floors: None,
-                reachable: false,
-                active_slot: None,
-                raw_getvar_all: String::new(),
-            },
-        }
+            None => unreachable(),
+        })
     };
-    let mut probe = probe_fastboot();
+    let mut probe = probe_fastboot()?;
     let adb_connected = matches!(conn, ConnectionStatus::Adb | ConnectionStatus::AdbRecovery);
     if !probe.reachable && adb_connected {
         ltbox_core::live!(
@@ -197,7 +194,7 @@ pub(crate) fn flash_worker(
             // slower), reusing one probe result per attempt.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             while std::time::Instant::now() < deadline {
-                probe = probe_fastboot();
+                probe = probe_fastboot()?;
                 if probe.reachable {
                     break;
                 }
@@ -205,7 +202,7 @@ pub(crate) fn flash_worker(
             }
             // Final probe after the loop so the full 60s deadline is covered.
             if !probe.reachable {
-                probe = probe_fastboot();
+                probe = probe_fastboot()?;
             }
             if !probe.reachable {
                 if let Some(error) = reboot_err {
@@ -1978,9 +1975,52 @@ fn validate_no_efisp_rollback(
     }
 }
 
+/// One Fastboot probe step. A selection error (several devices, or not the
+/// chosen one) aborts the flash with the error; any other failure only means
+/// Fastboot is not reachable yet.
+fn fastboot_probe_step<T>(
+    result: Result<T, ltbox_device::fastboot::FastbootError>,
+) -> Result<Option<T>, String> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if crate::workers::edl_transition::is_fastboot_selection_error(&error) => Err(
+            tr_args!("err_fastboot_open_failed", error = error.to_string()),
+        ),
+        Err(_) => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::fastboot_probe_step;
     use super::{XiaoxinRollbackDecision, xiaoxin_rollback_decision};
+    use ltbox_device::fastboot::FastbootError;
+
+    #[test]
+    fn fastboot_probe_selection_errors_abort_and_others_read_unreachable() {
+        for error in [
+            FastbootError::MultipleDevices,
+            FastbootError::AmbiguousTarget,
+            FastbootError::TargetMismatch {
+                expected: "A".into(),
+                found: "B".into(),
+            },
+            FastbootError::Selection("refused".into()),
+        ] {
+            // The text goes through the locale table, so only the abort is pinned.
+            let outcome = fastboot_probe_step::<()>(Err(error));
+            assert!(outcome.is_err(), "{outcome:?}");
+        }
+        for error in [
+            FastbootError::DeviceNotFound,
+            FastbootError::Usb("gone".into()),
+            FastbootError::CommandFailed("getvar".into()),
+        ] {
+            assert_eq!(fastboot_probe_step::<()>(Err(error)), Ok(None));
+        }
+        assert_eq!(fastboot_probe_step(Ok(7)), Ok(Some(7)));
+    }
+
     use crate::arb_overlay::{
         EFISP_EXPECTED_ASSETS, EFISP_GBL_RELEASE_TAG, efisp_expected_asset, efisp_expected_sha256,
         verify_efisp_asset,

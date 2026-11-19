@@ -149,6 +149,8 @@ pub(crate) struct App {
     pub(crate) reboot_wait_dialog_open: bool,
     pub(crate) software_fix: software_fix::State,
     pub(crate) device: DeviceSnapshot,
+    /// Attached USB devices from the latest poll and whether they can be told apart.
+    pub(crate) device_choice: device_choice::DeviceChoiceState,
     pub(crate) queries: DeviceQueries,
     pub(crate) adb_server_kill_in_flight: bool,
     /// Device-info popup state. `Some((serial, state))` while open.
@@ -378,6 +380,7 @@ impl Default for App {
             reboot_wait_dialog_open: false,
             software_fix: software_fix::State::default(),
             device: DeviceSnapshot::default(),
+            device_choice: device_choice::DeviceChoiceState::default(),
             queries: DeviceQueries::default(),
             adb_server_kill_in_flight: false,
             device_info_popup: None,

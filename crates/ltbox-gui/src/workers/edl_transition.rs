@@ -3,6 +3,52 @@
 
 use crate::{ConnectionStatus, EdlEntryAction, edl_entry_action};
 use ltbox_core::tr_args;
+use ltbox_device::adb::AdbError;
+use ltbox_device::fastboot::FastbootError;
+use ltbox_device::selection::{DeviceMode, UsbSelectionError};
+
+/// Which device to talk to is unsettled: abort, never wait for a manual EDL
+/// reboot of some device.
+fn is_adb_selection_error(error: &AdbError) -> bool {
+    matches!(
+        error,
+        AdbError::MultipleDevices
+            | AdbError::AmbiguousTarget
+            | AdbError::TargetMismatch { .. }
+            | AdbError::Selection(_)
+    )
+}
+
+pub(crate) fn is_fastboot_selection_error(error: &FastbootError) -> bool {
+    matches!(
+        error,
+        FastbootError::MultipleDevices
+            | FastbootError::AmbiguousTarget
+            | FastbootError::TargetMismatch { .. }
+            | FastbootError::Selection(_)
+    )
+}
+
+/// Whether the target has entered EDL, for the ADB wait after a Fastboot reboot.
+/// Without a target this is `edl::check_device()` as before. With one it is the
+/// EDL resolve; a refused proof is stored in `refused` and ends the wait at once
+/// instead of reading as "not yet".
+fn target_reached_edl(targeted: bool, refused: &mut Option<String>) -> bool {
+    if !targeted {
+        return ltbox_device::edl::check_device();
+    }
+    match ltbox_device::selection::resolve(DeviceMode::Edl) {
+        Ok(found) => found.is_some(),
+        Err(UsbSelectionError::Enumeration(error)) => {
+            tracing::debug!("USB enumeration failed while waiting for EDL: {error}");
+            false
+        }
+        Err(error) => {
+            *refused = Some(error.to_string());
+            true
+        }
+    }
+}
 
 /// Wait for the EDL (9008) port to appear and log the outcome. `Err` means it never did; the
 /// caller aborts after the no-port notice.
@@ -102,6 +148,9 @@ pub(crate) fn reboot_adb_to_edl(
                 "[{tag}] {}",
                 tr_args!("live_adb_state_probe_failed", error = e.to_string())
             );
+            if is_adb_selection_error(&e) {
+                return Err(());
+            }
             return wait_for_manual_edl(tag, log);
         }
     };
@@ -132,6 +181,9 @@ pub(crate) fn reboot_adb_to_edl(
                 "[{tag}] {}",
                 tr_args!("live_adb_reboot_edl_failed", error = e.to_string())
             );
+            if is_adb_selection_error(&e) {
+                return Err(());
+            }
             wait_for_manual_edl(tag, log)
         }
     }
@@ -148,6 +200,9 @@ pub(crate) fn fastboot_reboot_then_adb_edl(tag: &str, log: &mut Vec<String>) -> 
                     "[{tag}] {}",
                     tr_args!("live_fastboot_reboot_failed", error = e.to_string())
                 );
+                if is_fastboot_selection_error(&e) {
+                    return Err(());
+                }
                 return wait_for_manual_edl(tag, log);
             }
         }
@@ -157,7 +212,7 @@ pub(crate) fn fastboot_reboot_then_adb_edl(tag: &str, log: &mut Vec<String>) -> 
                 "[{tag}] {}",
                 tr_args!("err_fastboot_open_failed", error = e.to_string())
             );
-            if matches!(e, ltbox_device::fastboot::FastbootError::MultipleDevices) {
+            if is_fastboot_selection_error(&e) {
                 return Err(());
             }
             return wait_for_manual_edl(tag, log);
@@ -173,7 +228,15 @@ pub(crate) fn fastboot_reboot_then_adb_edl(tag: &str, log: &mut Vec<String>) -> 
     // Some devices reboot straight into EDL/9008 and never bring ADB up. Poll
     // the EDL port alongside the ADB wait so the moment 9008 appears we skip the
     // (otherwise full-timeout) ADB wait and go straight to EDL.
-    match mgr.wait_for_device_or(ltbox_device::edl::check_device) {
+    let targeted = ltbox_device::selection::current_target().is_some();
+    let mut refused = None;
+    let waited = mgr.wait_for_device_or(|| target_reached_edl(targeted, &mut refused));
+    if let Some(error) = refused {
+        // The EDL device that appeared cannot be proven to be the chosen one.
+        ltbox_core::live!(log, "[{tag}] {error}");
+        return Err(());
+    }
+    match waited {
         // ADB device came up — reuse the same `mgr` (it already holds the
         // cached `ADBUSBDevice`) for `reboot_adb_to_edl` instead of opening a
         // second one — see that fn's doc comment for the USB-claim race.
@@ -193,6 +256,9 @@ pub(crate) fn fastboot_reboot_then_adb_edl(tag: &str, log: &mut Vec<String>) -> 
                 "[{tag}] {}",
                 tr_args!("live_adb_wait_after_fastboot_failed", error = e.to_string())
             );
+            if is_adb_selection_error(&e) {
+                return Err(());
+            }
             wait_for_manual_edl(tag, log)
         }
     }
@@ -203,7 +269,7 @@ pub(crate) fn ensure_edl(
     tag: &str,
     log: &mut Vec<String>,
 ) -> Result<(), ()> {
-    if let Err(error) = ltbox_device::selection::ensure_single_usb_target() {
+    if let Err(error) = ltbox_device::selection::ensure_unambiguous_target() {
         ltbox_core::live!(log, "[{tag}] {error}");
         return Err(());
     }

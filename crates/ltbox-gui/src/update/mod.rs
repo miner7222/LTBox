@@ -22,6 +22,113 @@ mod sys;
 mod unroot;
 mod window;
 
+#[cfg(not(test))]
+fn read_session_target() -> Option<ltbox_device::selection::TargetIdentity> {
+    ltbox_device::selection::current_target()
+}
+
+/// Tests share one process-wide device-layer target across threads; read the
+/// per-thread stand-in instead.
+#[cfg(test)]
+fn read_session_target() -> Option<ltbox_device::selection::TargetIdentity> {
+    device_choice::test_target::current()
+}
+
+/// Probe ADB, then Fastboot, then (when `probe_edl`) EDL, filling `r` from the
+/// first that answers. Opens transports: the caller has decided that the
+/// device they reach is the single device or the session target.
+fn probe_transports(r: &mut DevicePollResult, probe_edl: bool) {
+    // ADB first: distinguish unauthorized /
+    // authorizing from a ready device.
+    let mut adb = ltbox_device::adb::AdbManager::new();
+    match adb.check_device_state() {
+        Ok(Some("adb_server_blocking")) => {
+            r.status = ConnectionStatus::AdbServerBlocking;
+            return;
+        }
+        Ok(Some("unauthorized")) | Ok(Some("authorizing")) => {
+            r.status = ConnectionStatus::AdbUnauthorized;
+            return;
+        }
+        Ok(Some("sideload")) => {
+            r.status = ConnectionStatus::AdbSideload;
+            return;
+        }
+        Ok(Some("device")) | Ok(Some("recovery")) => {
+            let raw_model = adb.get_model().ok().flatten().unwrap_or_default();
+            // Empty model = USB debugging off or auth pending (`adbd: error: closed`);
+            // report AdbUnauthorized so the dashboard doesn't call the platform
+            // unsupported.
+            if raw_model.is_empty() {
+                r.status = ConnectionStatus::AdbUnauthorized;
+                return;
+            }
+            // TWRP: `twrp_<model>` via `ro.product.device`.
+            r.status = if is_twrp_product(&raw_model) {
+                ConnectionStatus::AdbRecovery
+            } else {
+                ConnectionStatus::Adb
+            };
+            r.model = strip_twrp_prefix(&raw_model);
+            r.android_version = adb
+                .shell("getprop ro.build.version.release")
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            r.slot = adb.get_slot_suffix().ok().flatten().unwrap_or_default();
+            let fw_raw = adb.shell("getprop ro.build.display.id").unwrap_or_default();
+            r.firmware = trim_build_display(&fw_raw);
+            r.firmware_full = fw_raw.trim().to_string();
+            r.arb = arb_from_model(&r.model).to_string();
+            let hwboard = adb.shell("getprop ro.boot.hwboardid").unwrap_or_default();
+            if !hwboard.is_empty() {
+                let (ram, storage) = parse_hwboardid_ram_storage(&hwboard);
+                r.ram = ram;
+                r.storage = storage;
+            }
+            r.market_name = select_device_name(|prop| {
+                adb.shell(&format!("getprop {prop}")).unwrap_or_default()
+            });
+            let hw = adb.shell("getprop ro.boot.hardware").unwrap_or_default();
+            r.platform_supported = Some(hw.to_lowercase() == "qcom");
+            if let Some(sn) = adb.serial() {
+                r.serial = sn.to_string();
+            }
+            return;
+        }
+        _ => {
+            // Offline / noperm / detached fall through to Fastboot/EDL.
+        }
+    }
+    // Open once and reuse the handle for get_all_vars: an open+drop followed
+    // by an immediate re-open can fail transiently on Windows WinUSB and
+    // leave blank Fastboot fields until a later poll.
+    if let Ok(mut dev) = ltbox_device::fastboot::FastbootDevice::open() {
+        r.status = ConnectionStatus::Fastboot;
+        r.fastboot_userspace = dev.is_userspace();
+        let vars = dev.get_all_vars().unwrap_or_default();
+        r.model = vars.model.unwrap_or_default();
+        r.slot = vars.current_slot.unwrap_or_default();
+        let fw_raw = vars.build_display_id.unwrap_or_default();
+        r.firmware = trim_build_display(&fw_raw);
+        r.firmware_full = fw_raw.trim().to_string();
+        r.ram = vars.ram_gb.unwrap_or_default();
+        r.storage = vars.storage_gb.unwrap_or_default();
+        r.market_name = vars.product.unwrap_or_default();
+        r.serial = vars.serialno.unwrap_or_default();
+        // Bootloader mode reports committed floors, but the Dashboard cell stays
+        // a model-based yes/no like every other transport; the numbers are shown
+        // in the rollback popup.
+        r.arb = arb_from_model(&r.model).to_string();
+        r.rollback_floors =
+            ltbox_patch::rollback::classify_fastboot_rollback_floors(&vars.rollback_indices);
+        return;
+    }
+    if probe_edl && ltbox_device::edl::check_device() {
+        r.status = ConnectionStatus::Edl;
+    }
+}
+
 impl App {
     /// Close device-bound views when identity or transport changes. Completed
     /// serial-keyed caches remain available for their original device.
@@ -33,7 +140,141 @@ impl App {
         self.queries.invalidate_context();
     }
 
-    fn apply_device_snapshot(&mut self, poll: DevicePollResult) {
+    /// The device layer's session target. Demo scenes never read it.
+    fn session_target(&self) -> Option<ltbox_device::selection::TargetIdentity> {
+        #[cfg(feature = "demo")]
+        if self.demo_scene.is_some() {
+            return None;
+        }
+        read_session_target()
+    }
+
+    /// The only GUI writer of the device layer's session target (I7): on the
+    /// update loop, never while an operation runs or a poll is in flight.
+    /// Returns whether the target changed; every change forgets what was read
+    /// from the previous device.
+    pub(crate) fn apply_target_action(&mut self, action: device_choice::TargetAction) -> bool {
+        #[cfg(feature = "demo")]
+        if self.demo_scene.is_some() {
+            return false;
+        }
+        if action == device_choice::TargetAction::Keep {
+            return false;
+        }
+        if self.operation.is_running() || self.queries.poll_in_flight.is_some() {
+            tracing::warn!("session target left unchanged while the device is in use: {action:?}");
+            return false;
+        }
+        let current = self.session_target();
+        let changed = match action {
+            device_choice::TargetAction::Keep => false,
+            device_choice::TargetAction::Clear => {
+                if current.is_some() {
+                    tracing::debug!("clearing the session target");
+                    #[cfg(test)]
+                    device_choice::test_target::clear();
+                    #[cfg(not(test))]
+                    ltbox_device::selection::clear_target();
+                    true
+                } else {
+                    false
+                }
+            }
+            device_choice::TargetAction::Set(identity) => {
+                if current.as_ref() != Some(&identity) {
+                    tracing::debug!("session target set: {identity:?}");
+                    #[cfg(test)]
+                    device_choice::test_target::set(identity);
+                    #[cfg(not(test))]
+                    ltbox_device::selection::set_target(identity);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if changed {
+            self.forget_previous_target();
+        }
+        changed
+    }
+
+    /// The session target moved (A to B, none to B, or cleared). Nothing read
+    /// from the previous device may reach a Start: the snapshot reads as
+    /// disconnected, so `device_block_reason` blocks every Start until a poll
+    /// of the new target is applied. Runs under I7, so no worker owns these
+    /// inputs; execution results stay, as on a disconnect.
+    fn forget_previous_target(&mut self) {
+        self.device = device_snapshot::DeviceSnapshot::default();
+        self.invalidate_device_views();
+        // Dialogs that act on "the device" were opened for the previous one.
+        self.reboot_confirm_target = None;
+        self.flash_serial_prompt = None;
+        self.confirm_edit_field = None;
+        // Pre-execution scans and probes read the previous device.
+        if self.flash_parts.step < 3 {
+            self.flash_parts.reset();
+        }
+        if self.dump_parts.step < 2 {
+            self.dump_parts.reset();
+        }
+        // An automatic region came from the previous serial and the PRC-only
+        // shortcut from its model; neither is distinguishable from a pick now.
+        if !self.flash.is_in_exec() {
+            self.flash.reset();
+        }
+        // The inspection dumped the previous device. Its EDL cancel worker
+        // would now reach the new target, so only the local copy goes.
+        if self.konabess.prepared.is_some() {
+            self.konabess.cleanup_prepared();
+            self.konabess.step = 0;
+        }
+        if !self.root.kernel_version_manual {
+            self.root.kernel_version = None;
+        }
+        // A backup picked for the previous device names only its model, so on a
+        // same-model GBL tablet it would restore the previous device's images.
+        if !self.unroot.is_in_exec() {
+            self.unroot.reset();
+        }
+        // Queued device work (`defers_message`) was meant for the previous
+        // device and goes; choice input and host-only actions survive.
+        let queued = self.queries.poll_deferred.len();
+        self.queries.poll_deferred.retain(|message| {
+            matches!(
+                message,
+                Message::DeviceChoice(_)
+                    | Message::InstallSelfUpdate
+                    | Message::KillAdbServer
+                    | Message::InstallDrivers
+                    | Message::ConfirmCloseSoftwareFix
+                    | Message::ForceCloseSoftwareFix
+                    | Message::Settings(SettingsMsg::SetQcomDriverMode(_))
+            )
+        });
+        let dropped = queued - self.queries.poll_deferred.len();
+        if dropped > 0 {
+            tracing::debug!("dropped {dropped} device action(s) queued before the target changed");
+        }
+    }
+
+    fn apply_device_snapshot(&mut self, mut poll: DevicePollResult) {
+        let target_held = self.session_target().is_some();
+        let action = self
+            .device_choice
+            .apply(poll.inventory.clone(), target_held);
+        self.apply_target_action(action);
+        if self.device_choice.chosen_absent() {
+            // The chosen device is rebooting or unplugged: show it disconnected.
+            poll.status = ConnectionStatus::None;
+        }
+        self.apply_observed_connection(poll);
+    }
+
+    /// Fold a connection observation into the snapshot without touching the
+    /// choice state. For results that did not enumerate USB (a GPT scan
+    /// proving EDL): their empty inventory says nothing about attached devices.
+    pub(crate) fn apply_observed_connection(&mut self, poll: DevicePollResult) {
         let change = self.device.apply(poll);
         if change.reset_identity || change.context_changed {
             self.invalidate_device_views();
@@ -455,6 +696,18 @@ impl App {
                 self.log_push(tr_args!("log_operation_error", error = e.to_string()));
             }
             Message::DismissError => self.error_msg = None,
+            Message::DeviceChoice(message) => {
+                // Choice input waits for a running poll (`defers_message`) and is
+                // dropped while an operation runs, so the target never moves under
+                // a worker.
+                if !self.operation.is_running() && self.queries.poll_in_flight.is_none() {
+                    let action = self.device_choice.handle(message);
+                    if self.apply_target_action(action) {
+                        // Read the new target now rather than on the next tick.
+                        return Task::done(Message::PollDevice);
+                    }
+                }
+            }
             Message::KillAdbServer => {
                 if self.operation.is_running()
                     || self.installing_drivers
@@ -614,111 +867,22 @@ impl App {
                 if let Some(result) = demo::poll_result(self) {
                     return Task::done(Message::DevicePollFinished(poll_id, Some(result)));
                 }
+                // The worker predicts the state from the same inputs the update
+                // loop folds in afterwards; neither can change while it runs.
+                let prev = self.device_choice.clone();
+                let target = self.session_target();
                 return Task::perform(
-                    async {
-                        tokio::task::spawn_blocking(|| {
-                            let mut r = DevicePollResult::default();
-                            // ADB first: distinguish unauthorized /
-                            // authorizing from a ready device.
-                            let mut adb = ltbox_device::adb::AdbManager::new();
-                            match adb.check_device_state() {
-                                Ok(Some("adb_server_blocking")) => {
-                                    r.status = ConnectionStatus::AdbServerBlocking;
-                                    return r;
-                                }
-                                Ok(Some("unauthorized")) | Ok(Some("authorizing")) => {
-                                    r.status = ConnectionStatus::AdbUnauthorized;
-                                    return r;
-                                }
-                                Ok(Some("sideload")) => {
-                                    r.status = ConnectionStatus::AdbSideload;
-                                    return r;
-                                }
-                                Ok(Some("device")) | Ok(Some("recovery")) => {
-                                    let raw_model =
-                                        adb.get_model().ok().flatten().unwrap_or_default();
-                                    // Empty model = USB debugging off or auth pending (`adbd: error: closed`);
-                                    // report AdbUnauthorized so the dashboard doesn't call the platform
-                                    // unsupported.
-                                    if raw_model.is_empty() {
-                                        r.status = ConnectionStatus::AdbUnauthorized;
-                                        return r;
-                                    }
-                                    // TWRP: `twrp_<model>` via `ro.product.device`.
-                                    r.status = if is_twrp_product(&raw_model) {
-                                        ConnectionStatus::AdbRecovery
-                                    } else {
-                                        ConnectionStatus::Adb
-                                    };
-                                    r.model = strip_twrp_prefix(&raw_model);
-                                    r.android_version = adb
-                                        .shell("getprop ro.build.version.release")
-                                        .unwrap_or_default()
-                                        .trim()
-                                        .to_string();
-                                    r.slot =
-                                        adb.get_slot_suffix().ok().flatten().unwrap_or_default();
-                                    let fw_raw = adb
-                                        .shell("getprop ro.build.display.id")
-                                        .unwrap_or_default();
-                                    r.firmware = trim_build_display(&fw_raw);
-                                    r.firmware_full = fw_raw.trim().to_string();
-                                    r.arb = arb_from_model(&r.model).to_string();
-                                    let hwboard =
-                                        adb.shell("getprop ro.boot.hwboardid").unwrap_or_default();
-                                    if !hwboard.is_empty() {
-                                        let (ram, storage) = parse_hwboardid_ram_storage(&hwboard);
-                                        r.ram = ram;
-                                        r.storage = storage;
-                                    }
-                                    r.market_name = select_device_name(|prop| {
-                                        adb.shell(&format!("getprop {prop}")).unwrap_or_default()
-                                    });
-                                    let hw =
-                                        adb.shell("getprop ro.boot.hardware").unwrap_or_default();
-                                    r.platform_supported = Some(hw.to_lowercase() == "qcom");
-                                    if let Some(sn) = adb.serial() {
-                                        r.serial = sn.to_string();
-                                    }
-                                    return r;
-                                }
-                                _ => {
-                                    // Offline / noperm / detached fall through to Fastboot/EDL.
-                                }
-                            }
-                            // Open once and reuse the handle for get_all_vars: an open+drop followed
-                            // by an immediate re-open can fail transiently on Windows WinUSB and
-                            // leave blank Fastboot fields until a later poll.
-                            if let Ok(mut dev) = ltbox_device::fastboot::FastbootDevice::open() {
-                                r.status = ConnectionStatus::Fastboot;
-                                r.fastboot_userspace = dev.is_userspace();
-                                let vars = dev.get_all_vars().unwrap_or_default();
-                                r.model = vars.model.unwrap_or_default();
-                                r.slot = vars.current_slot.unwrap_or_default();
-                                let fw_raw = vars.build_display_id.unwrap_or_default();
-                                r.firmware = trim_build_display(&fw_raw);
-                                r.firmware_full = fw_raw.trim().to_string();
-                                r.ram = vars.ram_gb.unwrap_or_default();
-                                r.storage = vars.storage_gb.unwrap_or_default();
-                                r.market_name = vars.product.unwrap_or_default();
-                                r.serial = vars.serialno.unwrap_or_default();
-                                // Bootloader mode reports committed floors, but the Dashboard cell stays
-                                // a model-based yes/no like every other transport; the numbers are shown
-                                // in the rollback popup.
-                                r.arb = arb_from_model(&r.model).to_string();
-                                r.rollback_floors =
-                                    ltbox_patch::rollback::classify_fastboot_rollback_floors(
-                                        &vars.rollback_indices,
-                                    );
-                                return r;
-                            }
-                            if ltbox_device::edl::check_device() {
-                                r.status = ConnectionStatus::Edl;
-                            }
-                            r
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            device_poll_gate::run_device_poll(
+                                &prev,
+                                target.as_ref(),
+                                &mut device_poll_gate::UsbPoll,
+                            )
                         })
                         .await
                         .ok()
+                        .flatten()
                     },
                     move |result| Message::DevicePollFinished(poll_id, result),
                 );

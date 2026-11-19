@@ -84,7 +84,11 @@ impl App {
     /// Label key for the live connection: [`ConnectionStatus::label_key`],
     /// except a Fastboot endpoint reporting `is-userspace` reads as fastbootd.
     pub(crate) fn connection_label_key(&self) -> &'static str {
-        if self.device.connection == ConnectionStatus::Fastboot && self.device.fastboot_userspace {
+        if self.device_choice.is_multiple() {
+            "conn_multi_device"
+        } else if self.device.connection == ConnectionStatus::Fastboot
+            && self.device.fastboot_userspace
+        {
             "conn_fastbootd"
         } else {
             self.device.connection.label_key()
@@ -222,19 +226,25 @@ impl App {
     /// transition out of. Gates each wizard's "Start" button: no connection or
     /// `AdbUnauthorized` would only make the worker bail with "no device".
     pub(crate) fn device_reachable(&self) -> bool {
-        matches!(
-            self.device.connection,
-            ConnectionStatus::Adb
-                | ConnectionStatus::AdbRecovery
-                | ConnectionStatus::Fastboot
-                | ConnectionStatus::Edl
-        )
+        !self.device_choice.is_multiple()
+            && matches!(
+                self.device.connection,
+                ConnectionStatus::Adb
+                    | ConnectionStatus::AdbRecovery
+                    | ConnectionStatus::Fastboot
+                    | ConnectionStatus::Edl
+            )
     }
 
     /// Why [`Self::device_reachable`] fails, as a sentence for a disabled
     /// Start; `None` exactly when it holds. Exhaustive so a new connection
     /// state must be given a reason.
     pub(crate) fn device_block_reason(&self) -> Option<String> {
+        // Several devices attached: nothing was read, so no connection value
+        // below describes the situation.
+        if self.device_choice.is_multiple() {
+            return Some(self.t("start_blocked_multi_device").to_string());
+        }
         let key = match self.device.connection {
             ConnectionStatus::Adb
             | ConnectionStatus::AdbRecovery
@@ -249,10 +259,13 @@ impl App {
     }
 
     /// The muted line under a wizard's first step while no device is
-    /// reachable. "No tablet is connected" only when none is; a connected but
+    /// reachable. "No tablet is connected" only when none is; several attached
+    /// devices get their own reason; a connected but
     /// unusable tablet gets its own cause instead. Never blocks Next.
     pub(crate) fn wizard_device_note(&self) -> Option<String> {
-        if self.device.connection == ConnectionStatus::None {
+        if self.device_choice.is_multiple() {
+            self.device_block_reason()
+        } else if self.device.connection == ConnectionStatus::None {
             Some(self.t("wizard_device_note").to_string())
         } else {
             self.device_block_reason()
@@ -328,6 +341,31 @@ mod start_reason_tests {
                 expected_reason_key(conn).map(|key| app.t(key).to_string()),
                 "{conn:?}"
             );
+        }
+    }
+
+    #[test]
+    fn multiple_devices_block_every_start_and_name_the_cause() {
+        use crate::device_choice::{DeviceChoice, MultiDeviceState};
+        use ltbox_device::selection::DeviceMode;
+
+        let device = |serial: &str| DeviceChoice {
+            id: crate::device_choice::ChoiceId::Serial(serial.to_string()),
+            mode: DeviceMode::Adb,
+            serial: Some(serial.to_string()),
+            product: String::new(),
+        };
+        // Even a stale reachable connection cannot unblock Start.
+        for conn in ALL_CONNECTIONS {
+            let mut app = app_on(conn);
+            app.device_choice
+                .apply(vec![device("A"), device("B")], false);
+            assert_eq!(app.device_choice.state, MultiDeviceState::NeedsChoice);
+            let reason = app.t("start_blocked_multi_device").to_string();
+            assert!(!app.device_reachable(), "{conn:?}");
+            assert_eq!(app.device_block_reason(), Some(reason.clone()), "{conn:?}");
+            assert_eq!(app.wizard_device_note(), Some(reason), "{conn:?}");
+            assert_eq!(app.connection_label_key(), "conn_multi_device", "{conn:?}");
         }
     }
 

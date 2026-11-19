@@ -1,11 +1,94 @@
 //! Serialize background USB polling only with actions that can acquire the
 //! same device. Navigation, selection, and ordinary wizard transitions stay
 //! synchronous so a periodic poll never makes the GUI feel unresponsive.
+use crate::device_choice::{
+    MultiDeviceState, PollProbe, inventory_from_candidates, poll_probe, target_in_edl,
+};
 use crate::*;
 use iced::Task;
+use ltbox_device::selection::{TargetIdentity, UsbCandidate, UsbSelectionError};
+
+/// The USB calls one device poll makes, so tests can show which states open
+/// nothing.
+pub(super) trait PollUsb {
+    /// Enumeration only; claims nothing.
+    fn list_candidates(&mut self) -> Result<Vec<UsbCandidate>, UsbSelectionError>;
+    /// Enumeration only; never binds an EDL device.
+    fn target_visible(&mut self) -> Result<bool, UsbSelectionError>;
+    /// Opens transports: ADB, then Fastboot, then EDL when `probe_edl`.
+    fn probe_transports(&mut self, result: &mut DevicePollResult, probe_edl: bool);
+}
+
+/// The real USB stack.
+pub(super) struct UsbPoll;
+
+impl PollUsb for UsbPoll {
+    fn list_candidates(&mut self) -> Result<Vec<UsbCandidate>, UsbSelectionError> {
+        ltbox_device::selection::list_candidates()
+    }
+
+    fn target_visible(&mut self) -> Result<bool, UsbSelectionError> {
+        ltbox_device::selection::target_visible()
+    }
+
+    fn probe_transports(&mut self, result: &mut DevicePollResult, probe_edl: bool) {
+        super::probe_transports(result, probe_edl);
+    }
+}
+
+/// One device poll on the worker thread. `prev` and `target` are the update
+/// loop's state when the poll started; the update loop folds the inventory in
+/// with the same inputs, so the state predicted here is the one it computes.
+///
+/// Transports open only for the single device (no target, as before) or the
+/// chosen one. In `NeedsChoice`, `MultipleEdl` and `Unselectable` nothing opens.
+/// `None` keeps the last snapshot: enumeration failed while a choice matters.
+pub(super) fn run_device_poll(
+    prev: &device_choice::DeviceChoiceState,
+    target: Option<&TargetIdentity>,
+    usb: &mut impl PollUsb,
+) -> Option<DevicePollResult> {
+    let mut result = DevicePollResult::default();
+    match usb.list_candidates() {
+        Ok(candidates) => result.inventory = inventory_from_candidates(&candidates),
+        Err(error) => {
+            tracing::debug!("USB enumeration failed: {error}");
+            // Without a device list nothing can be told apart. A session that
+            // has only seen one device probes as before; any other keeps its state.
+            if target.is_some() || prev.state != MultiDeviceState::Single {
+                return None;
+            }
+            usb.probe_transports(&mut result, true);
+            return Some(result);
+        }
+    }
+    match poll_probe(prev, &result.inventory, target.is_some()) {
+        PollProbe::Nothing => {}
+        PollProbe::Untargeted => usb.probe_transports(&mut result, true),
+        PollProbe::Target => {
+            let Some(target) = target else {
+                return Some(result);
+            };
+            match usb.target_visible() {
+                // Never `edl::check_device()` here: with a target it resolves and
+                // can bind. EDL presence comes from the inventory instead.
+                Ok(true) if target_in_edl(target, &result.inventory) => {
+                    result.status = ConnectionStatus::Edl;
+                }
+                Ok(true) => usb.probe_transports(&mut result, false),
+                Ok(false) => {}
+                // A refused proof (`UnprovenSuccessor`, `AmbiguousTarget`) or a
+                // failed enumeration: the target is not visible, never present.
+                Err(error) => tracing::debug!("chosen device treated as not visible: {error}"),
+            }
+        }
+    }
+    Some(result)
+}
 
 pub(super) fn defers_message(app: &App, message: &Message) -> bool {
     match message {
+        Message::DeviceChoice(_) => true,
         Message::Flash(FlashMsg::FlashNext) => app.flash.current_step() == FlashStep::Confirm,
         Message::Root(RootMsg::RootNext) => app.root.step == 6,
         Message::Unroot(UnrootMsg::UnrootNext) => app.unroot.step == 3,

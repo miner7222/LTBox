@@ -190,6 +190,7 @@ pub(crate) enum Message {
     FlashPhys(FlashPhysMsg),
     SimpleFlash(SimpleFlashMsg),
     Reboot(RebootMsg),
+    DeviceChoice(DeviceChoiceMsg),
     Settings(SettingsMsg),
     /// Window resized — carries the new logical size from
     /// `iced::Event::Window(Resized)`. Persisted with throttling so the
@@ -495,6 +496,20 @@ pub(crate) enum SimpleFlashMsg {
     SimpleFlashFolderChosen(Option<String>),
     SimpleFlashExecStart,
     SimpleFlashExecDone(Vec<String>),
+}
+
+/// Dashboard device-choice dialog and list rows. No-ops while an operation runs.
+#[derive(Debug, Clone)]
+pub(crate) enum DeviceChoiceMsg {
+    /// Open the dialog with no row staged.
+    Open,
+    /// Stage a row in the dialog.
+    Pick(crate::device_choice::ChoiceId),
+    /// Commit the staged row.
+    Confirm,
+    Cancel,
+    /// Choose a device straight from a card-list row.
+    PickNow(crate::device_choice::ChoiceId),
 }
 
 #[derive(Debug, Clone)]
