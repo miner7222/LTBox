@@ -189,7 +189,6 @@
   "driver_update_title": "Доступно обновление драйвера",
   "dual_usb_help_body": "Подключите кабель к нижнему порту. Боковой порт нельзя использовать для прошивки.",
   "dual_usb_help_bottom_label": "Снизу · Можно",
-  "dual_usb_help_side_label": "Сбоку · Нельзя",
   "dual_usb_help_title": "Какой порт USB-C использовать",
   "dump_destination_hint": "После нажатия «Сохранить дамп» выберите папку для сохранения.",
   "dump_parts_col_size": "Размер",

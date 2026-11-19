@@ -189,7 +189,6 @@
   "driver_update_title": "驱动更新可用",
   "dual_usb_help_body": "请将线缆连接到设备底部的端口。侧边端口不能用于刷写。",
   "dual_usb_help_bottom_label": "底部端口 · 可用",
-  "dual_usb_help_side_label": "侧边端口 · 不可用",
   "dual_usb_help_title": "应使用哪个 USB-C 端口",
   "dump_destination_hint": "点击转储后，请选择保存位置的文件夹。",
   "dump_parts_col_size": "容量",

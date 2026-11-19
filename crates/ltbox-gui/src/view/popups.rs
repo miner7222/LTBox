@@ -226,14 +226,20 @@ impl App {
             })
         };
 
-        // Every dual-USB model shares one 500x300 portrait; a 300x180 box fits it
-        // exactly, so a side-pinned marker names the same port on all of them.
+        // The portrait stays centred; the side port's marker sits just past
+        // the device's right edge, which depends on the artwork.
         const PORTRAIT_W: f32 = 300.0;
         const PORTRAIT_H: f32 = 180.0;
         const MARKER_H: f32 = 48.0;
+        const DOT: f32 = 26.0;
+        const DOT_GAP: f32 = 4.0;
+        // Equal room on both sides keeps the portrait centred in the figure.
+        const SIDE_ROOM: f32 = DOT + DOT_GAP + 16.0;
         let figure_h = PORTRAIT_H + MARKER_H;
+        let artwork = device_portrait(&self.dual_usb_help_model);
+        let side_dot_x = SIDE_ROOM + artwork.right_edge_in_box(PORTRAIT_W, PORTRAIT_H) + DOT_GAP;
 
-        let portrait: Element<'_, Message> = match device_portrait(&self.dual_usb_help_model) {
+        let portrait: Element<'_, Message> = match artwork {
             DevicePortrait::Png(handle) => widget::image(handle)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -254,40 +260,33 @@ impl App {
         .height(Length::Fill)
         .align_x(iced::Alignment::Center)
         .align_y(iced::Alignment::Start);
-
-        let marker = |success: bool, label: String| {
-            column![marker_dot(success), marker_caption(label, !success)]
-                .spacing(4)
-                .align_x(iced::Alignment::Center)
-        };
-        // Hangs just past the portrait's lower edge, like the mockup's bottom-port marker.
-        let bottom_layer = container(marker(
-            true,
-            self.t("dual_usb_help_bottom_label").to_string(),
-        ))
+        // Hangs just past the portrait's lower edge.
+        let bottom_layer = container(
+            column![
+                marker_dot(true),
+                marker_caption(self.t("dual_usb_help_bottom_label").to_string(), false)
+            ]
+            .spacing(4)
+            .align_x(iced::Alignment::Center),
+        )
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(iced::Alignment::Center)
         .align_y(iced::Alignment::End);
-        // Centred on the portrait, not the taller stack, so it meets the side port.
-        let side_layer = container(
-            container(marker(
-                false,
-                self.t("dual_usb_help_side_label").to_string(),
-            ))
+        // Right beside the device's right edge, centred on the portrait.
+        let side_layer = container(marker_dot(false))
+            .padding(iced::Padding {
+                left: side_dot_x,
+                ..Default::default()
+            })
             .width(Length::Fill)
             .height(Length::Fixed(PORTRAIT_H))
-            .align_x(iced::Alignment::End)
-            .align_y(iced::Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_y(iced::Alignment::Start);
+            .align_x(iced::Alignment::Start)
+            .align_y(iced::Alignment::Center);
 
         let portrait_guide = container(
             widget::stack![portrait_layer, bottom_layer, side_layer]
-                // Overhangs the portrait by one marker width so the dot sits on the edge it names.
-                .width(Length::Fixed(PORTRAIT_W + 40.0))
+                .width(Length::Fixed(PORTRAIT_W + 2.0 * SIDE_ROOM))
                 .height(Length::Fixed(figure_h)),
         )
         .width(Length::Fill)

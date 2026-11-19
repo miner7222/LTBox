@@ -189,7 +189,6 @@
   "driver_update_title": "드라이버 업데이트 사용 가능",
   "dual_usb_help_body": "케이블은 아래쪽 포트에 연결하세요. 옆면 포트로는 플래싱할 수 없습니다.",
   "dual_usb_help_bottom_label": "아래쪽 포트 · 사용",
-  "dual_usb_help_side_label": "옆면 포트 · 사용 불가",
   "dual_usb_help_title": "사용할 USB-C 포트",
   "dump_destination_hint": "덤프를 누르면 저장할 폴더를 선택합니다.",
   "dump_parts_col_size": "용량",

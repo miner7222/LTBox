@@ -189,7 +189,6 @@
   "driver_update_title": "Driver update available",
   "dual_usb_help_body": "Connect the cable to the port on the bottom. The port on the side cannot be used for flashing.",
   "dual_usb_help_bottom_label": "Bottom port · Use",
-  "dual_usb_help_side_label": "Side port · Do not use",
   "dual_usb_help_title": "Which USB-C port to use",
   "dump_destination_hint": "You choose the folder to save to after pressing Dump.",
   "dump_parts_col_size": "Size",

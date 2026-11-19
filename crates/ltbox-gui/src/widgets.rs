@@ -936,6 +936,66 @@ pub(crate) enum DevicePortrait {
     Svg(iced::widget::svg::Handle),
 }
 
+impl DevicePortrait {
+    /// Artwork size and the x where the device body ends on the right, in the
+    /// artwork's own pixels. Every bundled PNG is 500x300 with the body at
+    /// x 25..475; the SVG body rect ends at 311 (x 10 + width 300 + stroke).
+    fn artwork_metrics(&self) -> (f32, f32, f32) {
+        match self {
+            Self::Png(_) => (500.0, 300.0, 475.0),
+            Self::Svg(_) => (320.0, 220.0, 311.0),
+        }
+    }
+
+    /// Where the device's right edge falls inside a `box_w` x `box_h` box when
+    /// the artwork is drawn with `ContentFit::Contain`, measured from the box's
+    /// left edge.
+    pub(crate) fn right_edge_in_box(&self, box_w: f32, box_h: f32) -> f32 {
+        let (img_w, img_h, body_right) = self.artwork_metrics();
+        let scale = (box_w / img_w).min(box_h / img_h);
+        (box_w - img_w * scale) / 2.0 + body_right * scale
+    }
+}
+
+#[cfg(test)]
+mod portrait_tests {
+    use super::*;
+
+    /// Width and height from a PNG's IHDR chunk.
+    fn png_size(bytes: &[u8]) -> (u32, u32) {
+        let be = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+        (be(16), be(20))
+    }
+
+    #[test]
+    fn bundled_pngs_match_the_assumed_artwork_size() {
+        let pngs: [&[u8]; 9] = [
+            include_bytes!("../assets/devices/9qhd1.png"),
+            include_bytes!("../assets/devices/tb320fc.png"),
+            include_bytes!("../assets/devices/tb321fu.png"),
+            include_bytes!("../assets/devices/tb322fc.png"),
+            include_bytes!("../assets/devices/tb323fu.png"),
+            include_bytes!("../assets/devices/tb324zc.png"),
+            include_bytes!("../assets/devices/tb376fc.png"),
+            include_bytes!("../assets/devices/tb520fu.png"),
+            include_bytes!("../assets/devices/tb710fu.png"),
+        ];
+        for png in pngs {
+            assert_eq!(png_size(png), (500, 300));
+        }
+    }
+
+    #[test]
+    fn right_edge_follows_the_artwork() {
+        let png = device_portrait("TB323FU");
+        let svg = device_portrait("UNKNOWN");
+        assert!((png.right_edge_in_box(300.0, 180.0) - 285.0).abs() < 0.01);
+        // The SVG is narrower than the box, so its body ends further left.
+        let svg_edge = svg.right_edge_in_box(300.0, 180.0);
+        assert!(svg_edge > 270.0 && svg_edge < 276.0, "{svg_edge}");
+    }
+}
+
 pub(crate) fn device_portrait(model: &str) -> DevicePortrait {
     match model.to_uppercase().as_str() {
         "LAVIETAB9QHD1" => DevicePortrait::Png(LAVIETAB9QHD1_HANDLE.clone()),

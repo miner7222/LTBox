@@ -189,7 +189,6 @@
   "driver_update_title": "Mise à jour du pilote disponible",
   "dual_usb_help_body": "Branchez le câble sur le port du bas. Le port latéral ne permet pas de flasher.",
   "dual_usb_help_bottom_label": "Port du bas · À utiliser",
-  "dual_usb_help_side_label": "Port latéral · Ne pas utiliser",
   "dual_usb_help_title": "Quel port USB-C utiliser",
   "dump_destination_hint": "Après avoir cliqué sur « Extraire », choisissez le dossier d’enregistrement.",
   "dump_parts_col_size": "Taille",

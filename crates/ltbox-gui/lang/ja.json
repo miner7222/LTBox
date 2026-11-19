@@ -189,7 +189,6 @@
   "driver_update_title": "ドライバーの更新が利用可能です",
   "dual_usb_help_body": "デバイスの下部にあるポートへケーブルを接続してください。側面のポートはフラッシュに使用できません。",
   "dual_usb_help_bottom_label": "下部ポート · 使用",
-  "dual_usb_help_side_label": "側面ポート · 使用不可",
   "dual_usb_help_title": "使用するUSB-Cポート",
   "dump_destination_hint": "ダンプを押すと、保存先のフォルダーを選択します。",
   "dump_parts_col_size": "サイズ",
