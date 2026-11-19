@@ -279,10 +279,13 @@ const WIZARD_STEP_BAR_HEIGHT: f32 = 52.0;
 /// Compact's condensed step indicator row height.
 const COMPACT_WIZARD_STEP_BAR_HEIGHT: f32 = 48.0;
 
+/// `total_known` is false while a choice still ahead can change `steps`; the
+/// compact counter then omits the total. The expanded bar prints no count.
 pub(crate) fn wizard_step_bar(
     steps: &[&str],
     current: usize,
     size_class: WindowSizeClass,
+    total_known: bool,
 ) -> Element<'static, Message> {
     let labels: Vec<String> = steps.iter().map(|label| (*label).to_string()).collect();
     let steps_len = labels.len();
@@ -319,9 +322,14 @@ pub(crate) fn wizard_step_bar(
             },
             ..Default::default()
         });
+        let counter = if total_known {
+            format!("{displayed_step} / {steps_len} ·")
+        } else {
+            format!("{displayed_step} ·")
+        };
         let condensed = row![
             track,
-            text(format!("{displayed_step} / {steps_len} ·"))
+            text(counter)
                 .size(12)
                 .font(theme::emphasis::medium())
                 .wrapping(iced::widget::text::Wrapping::None),

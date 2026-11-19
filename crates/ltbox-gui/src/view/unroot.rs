@@ -16,7 +16,12 @@ impl App {
         let step_bar = if is_exec {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.unroot.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.unroot.step,
+                self.window_size_class(),
+                true,
+            )
         };
         let body = match self.unroot.step {
             0 => self.unroot_type_step(),

@@ -171,7 +171,12 @@ impl App {
         let step_bar = if shared_exec {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.adv_wizard.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.adv_wizard.step,
+                self.window_size_class(),
+                true,
+            )
         };
 
         let needs_country = self.adv_wizard.needs_country();
@@ -611,6 +616,7 @@ impl App {
                 &step_labels,
                 self.simple_flash.step,
                 self.window_size_class(),
+                true,
             )
         };
         let body: Element<'_, Message> = match self.simple_flash.step {

@@ -19,7 +19,12 @@ impl App {
         let step_bar = if is_exec {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.konabess.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.konabess.step,
+                self.window_size_class(),
+                true,
+            )
         };
         let title_key = match self.konabess.step {
             0 => "edl_loader_title",

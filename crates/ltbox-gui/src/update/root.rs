@@ -404,13 +404,12 @@ impl App {
                     return Task::none();
                 };
                 self.root.kernel_version = Some(kv);
+                self.root.kernel_version_manual = true;
                 self.root.kernel_version_buffer.clear();
                 self.root.kernel_version_popup_open = false;
                 self.error_msg = None;
-                if self.root.step == 6 {
-                    self.root.next();
-                    return self.update(Message::Root(RootMsg::RootExecStart));
-                }
+                // Stay on Confirm so the summary shows the typed value; the next
+                // Start skips the probe because the version is now set.
                 Task::none()
             }
             RootMsg::RootKernelVersionCancel => {
@@ -436,6 +435,7 @@ impl App {
                 }
                 if let Some(kv) = detected {
                     self.root.kernel_version = Some(kv);
+                    self.root.kernel_version_manual = false;
                     self.root.next();
                     // Release before RootExecStart's begin_phased_op so busy
                     // ownership does not nest.

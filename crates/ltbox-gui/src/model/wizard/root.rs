@@ -36,6 +36,9 @@ pub(crate) struct RootWizard {
     pub(crate) kernel_version: Option<String>,
     pub(crate) kernel_version_popup_open: bool,
     pub(crate) kernel_version_buffer: String,
+    /// True when `kernel_version` came from the manual popup, not the ADB probe.
+    /// Display only; the worker receives `kernel_version` either way.
+    pub(crate) kernel_version_manual: bool,
     /// SKRoot key shown only after a successful run; never added to logs.
     pub(crate) skroot_root_key: Option<String>,
 }
@@ -198,6 +201,27 @@ impl RootWizard {
             (false, true) => ROOT_STEPS_NOMODE_NIGHTLY,
             (false, false) => ROOT_STEPS_NOMODE,
         }
+    }
+
+    /// True once no choice still ahead of the current step can change
+    /// `active_steps()`. Family (step 0), Mode (1), Provider (2) and Version
+    /// (3) pick the route; a Back to an earlier step re-opens that choice, so
+    /// the current position counts, not only which fields are set.
+    pub(crate) fn step_total_known(&self) -> bool {
+        if self.is_skroot() {
+            return true;
+        }
+        if self.family.is_none() {
+            return false;
+        }
+        if self.is_gki() {
+            return self.step >= 1;
+        }
+        if self.is_local() {
+            return self.step >= 2;
+        }
+        // Step 8 (KPM) and 4.. all sit after the Version choice.
+        self.step >= 3 && self.version.is_some()
     }
 
     pub(crate) fn display_step(&self) -> usize {

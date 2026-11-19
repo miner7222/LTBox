@@ -226,6 +226,7 @@ impl App {
                 &step_labels,
                 self.flash_parts.step,
                 self.window_size_class(),
+                true,
             )
         };
 
@@ -801,7 +802,12 @@ impl App {
         let step_bar = if is_exec {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.dump_parts.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.dump_parts.step,
+                self.window_size_class(),
+                true,
+            )
         };
 
         let body: Element<'_, Message> = match self.dump_parts.step {
@@ -1042,7 +1048,12 @@ impl App {
         let step_bar = if is_exec {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.dump_phys.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.dump_phys.step,
+                self.window_size_class(),
+                true,
+            )
         };
 
         let body: Element<'_, Message> = match self.dump_phys.step {
@@ -1171,7 +1182,12 @@ impl App {
         let step_bar = if is_exec {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.flash_phys.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.flash_phys.step,
+                self.window_size_class(),
+                true,
+            )
         };
 
         let body: Element<'_, Message> = match self.flash_phys.step {

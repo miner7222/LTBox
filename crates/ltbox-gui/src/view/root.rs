@@ -24,6 +24,7 @@ impl App {
                 &step_labels,
                 self.root.display_step(),
                 self.window_size_class(),
+                self.root.step_total_known(),
             )
         };
         let body = match self.root.step {
@@ -928,6 +929,19 @@ impl App {
             // `release_tag`, whatever the channel; show whichever the worker gets.
             if let Some(id) = self.root.run_id.as_deref() {
                 grid_rows.push(confirm_definition_row(self.t("nightly_run_id_label"), id));
+            }
+            if self.root.is_ksu_lkm()
+                && let Some(kv) = self.root.kernel_version.as_deref()
+            {
+                let value = if self.root.kernel_version_manual {
+                    tr_args!("root_confirm_kernel_manual", version = kv)
+                } else {
+                    kv.to_string()
+                };
+                grid_rows.push(confirm_definition_row(
+                    self.t("root_confirm_kernel"),
+                    &value,
+                ));
             }
         }
 

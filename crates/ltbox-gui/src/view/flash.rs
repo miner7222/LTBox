@@ -220,7 +220,12 @@ impl App {
         let step_bar = if current_step == FlashStep::Flash {
             empty_wizard_step_bar()
         } else {
-            wizard_step_bar(&step_labels, self.flash.step, self.window_size_class())
+            wizard_step_bar(
+                &step_labels,
+                self.flash.step,
+                self.window_size_class(),
+                true,
+            )
         };
         let body = match current_step {
             FlashStep::Region => self.flash_region_step(),
