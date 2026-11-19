@@ -907,7 +907,8 @@ const fn loader_flow(title: &'static str, writes_to_device: bool) -> AppBarFlow 
 
 // Each flow's title is the one its view passes to `wizard_action_bar*`; the
 // subtitles are the ticket-listed app-bar keys for that flow. Some adv_src_*
-// keys are listed though their step shows the loader subtitle instead.
+// keys are listed though their step shows the loader subtitle instead. Every
+// flow also lists its `AdvAction::desc_key()`, the Advanced confirm subtitle.
 const APP_BAR_FLOWS: &[AppBarFlow] = &[
     AppBarFlow {
         title: "nav_flash",
@@ -947,6 +948,7 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
         title: "adv_dump_partitions",
         writes_to_device: false,
         subtitles: &[
+            "adv_dump_partitions_desc",
             LOADER_SUBTITLES[0],
             LOADER_SUBTITLES[1],
             LOADER_SUBTITLES[2],
@@ -958,6 +960,7 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
         title: "adv_dump_physical",
         writes_to_device: false,
         subtitles: &[
+            "adv_dump_physical_desc",
             LOADER_SUBTITLES[0],
             LOADER_SUBTITLES[1],
             LOADER_SUBTITLES[2],
@@ -969,6 +972,7 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
         title: "adv_flash_partitions",
         writes_to_device: true,
         subtitles: &[
+            "adv_flash_partitions_desc",
             LOADER_SUBTITLES[0],
             LOADER_SUBTITLES[1],
             LOADER_SUBTITLES[2],
@@ -980,6 +984,7 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
         title: "adv_flash_physical",
         writes_to_device: true,
         subtitles: &[
+            "adv_flash_physical_desc",
             LOADER_SUBTITLES[0],
             LOADER_SUBTITLES[1],
             LOADER_SUBTITLES[2],
@@ -990,12 +995,13 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
     AppBarFlow {
         title: "adv_simple_flash",
         writes_to_device: true,
-        subtitles: &["flash_folder_desc", EXEC_SUBTITLE],
+        subtitles: &["adv_simple_flash_desc", "flash_folder_desc", EXEC_SUBTITLE],
     },
     AppBarFlow {
         title: "adv_region_convert",
         writes_to_device: false,
         subtitles: &[
+            "adv_region_convert_desc",
             "adv_src_region_convert",
             "adv_region_target_subtitle",
             EXEC_SUBTITLE,
@@ -1004,12 +1010,13 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
     AppBarFlow {
         title: "adv_image_info",
         writes_to_device: false,
-        subtitles: &["adv_src_image_info", EXEC_SUBTITLE],
+        subtitles: &["adv_image_info_desc", "adv_src_image_info", EXEC_SUBTITLE],
     },
     AppBarFlow {
         title: "adv_patch_devinfo",
         writes_to_device: true,
         subtitles: &[
+            "adv_patch_devinfo_desc",
             LOADER_SUBTITLES[0],
             LOADER_SUBTITLES[1],
             LOADER_SUBTITLES[2],
@@ -1021,6 +1028,7 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
         title: "adv_detect_arb",
         writes_to_device: false,
         subtitles: &[
+            "adv_detect_arb_desc",
             LOADER_SUBTITLES[0],
             LOADER_SUBTITLES[1],
             LOADER_SUBTITLES[2],
@@ -1031,17 +1039,25 @@ const APP_BAR_FLOWS: &[AppBarFlow] = &[
     AppBarFlow {
         title: "adv_patch_arb",
         writes_to_device: false,
-        subtitles: &["adv_src_patch_arb_folder", EXEC_SUBTITLE],
+        subtitles: &[
+            "adv_patch_arb_desc",
+            "adv_src_patch_arb_folder",
+            EXEC_SUBTITLE,
+        ],
     },
     AppBarFlow {
         title: "adv_convert_xml",
         writes_to_device: false,
-        subtitles: &["adv_src_convert_xml", EXEC_SUBTITLE],
+        subtitles: &["adv_convert_xml_desc", "adv_src_convert_xml", EXEC_SUBTITLE],
     },
     AppBarFlow {
         title: "adv_rebuild_vbmeta",
         writes_to_device: false,
-        subtitles: &["adv_src_rebuild_vbmeta", EXEC_SUBTITLE],
+        subtitles: &[
+            "adv_rebuild_vbmeta_desc",
+            "adv_src_rebuild_vbmeta",
+            EXEC_SUBTITLE,
+        ],
     },
 ];
 
