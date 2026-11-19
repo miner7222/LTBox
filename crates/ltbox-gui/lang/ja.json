@@ -1063,6 +1063,7 @@
   "region_prc_name": "中国本土で販売されたハードウェア",
   "region_row": "グローバル (ROW)",
   "region_row_name": "中国本土以外で販売されたハードウェア",
+  "rescue_region_detected_hint": "タブレットから検出: {region}",
   "rescue_region_label": "ハードウェアリージョン",
   "rescue_region_popup_subtitle": "タブレットが最初に販売されたリージョンを選択してください。パッチ可能な各スロットの vendor_boot を、そのリージョンに合わせてパッチします。",
   "rescue_region_popup_title": "ハードウェアリージョンを選択",

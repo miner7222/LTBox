@@ -43,6 +43,7 @@ pub(crate) enum Message {
     SkipCountryPatch,
     DismissCountryPopup,
     SelectRegionTarget(DeviceRegion),
+    ConfirmRegionTarget,
     DismissRegionTargetPopup,
     FileSelected(Option<String>),
     FolderSelected(Option<String>),
@@ -349,6 +350,7 @@ pub(crate) enum SysMsg {
     SysRescueSelectFolder,
     SysRescueFolderChosen(Option<String>),
     SysRescueRegion(RescueRegion),
+    SysRescueRegionConfirm,
     SysRescueRegionPopupDismiss,
 }
 

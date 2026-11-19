@@ -53,15 +53,16 @@ pub(crate) struct SysUpdateWizard {
     pub(crate) action: Option<SysUpdateAction>,
     /// Rescue: selected EDL loader file (`xbl_s_devprg_ns.melf`) or Sahara manifest.
     pub(crate) rescue_folder: Option<String>,
-    /// Rescue: target region, set by the popup between the loader and Confirm
-    /// steps. May be pre-seeded from `inferred_flash_region` (PTSTPD `SaleArea`);
-    /// `rescue_region_confirmed` tracks whether the user chose it.
+    /// Rescue: target region, set only when the user confirms the popup between
+    /// the loader and Confirm steps. This is the value the worker receives.
     pub(crate) rescue_region: Option<RescueRegion>,
+    /// Rescue: row selected in the popup but not yet confirmed. Starts empty on
+    /// every open; the detected hardware region is only shown as a hint.
+    pub(crate) rescue_region_pending: Option<RescueRegion>,
     /// Rescue: region popup. Opens on Next from the loader step until a region
     /// is confirmed.
     pub(crate) rescue_region_popup_open: bool,
-    /// Rescue: true once the user picks a region in the popup. A pre-seeded
-    /// `rescue_region` alone must not skip the popup.
+    /// Rescue: true once the user confirms a region in the popup.
     pub(crate) rescue_region_confirmed: bool,
 }
 

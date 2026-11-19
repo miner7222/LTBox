@@ -379,11 +379,18 @@ impl App {
                 }
             }
             Message::SelectRegionTarget(target) => {
-                self.region_target_popup_open = false;
-                self.adv_wizard.region_target = Some(target);
+                // A row only selects; `ConfirmRegionTarget` commits.
+                self.adv_wizard.region_target_pending = Some(target);
+            }
+            Message::ConfirmRegionTarget => {
+                if let Some(target) = self.adv_wizard.region_target_pending.take() {
+                    self.adv_wizard.region_target = Some(target);
+                    self.region_target_popup_open = false;
+                }
             }
             Message::DismissRegionTargetPopup => {
                 self.region_target_popup_open = false;
+                self.adv_wizard.region_target_pending = None;
             }
             Message::Sys(m) => return self.update_sys(m),
             Message::Root(m) => return self.update_root(m),

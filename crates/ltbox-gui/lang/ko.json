@@ -1063,6 +1063,7 @@
   "region_prc_name": "중국 본토에서 판매된 하드웨어",
   "region_row": "글로벌 (ROW)",
   "region_row_name": "중국 본토 외 지역에서 판매된 하드웨어",
+  "rescue_region_detected_hint": "태블릿에서 감지됨: {region}",
   "rescue_region_label": "하드웨어 지역",
   "rescue_region_popup_subtitle": "태블릿이 처음 판매된 지역을 선택하세요. 패치할 수 있는 슬롯마다 vendor_boot를 이 지역에 맞게 패치합니다.",
   "rescue_region_popup_title": "하드웨어 지역 선택",

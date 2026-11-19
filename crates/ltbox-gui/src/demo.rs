@@ -497,7 +497,7 @@ fn apply_advanced_region_target_scene(app: &mut App) {
         action: Some(AdvAction::RegionConvert),
         step: 1,
         file_path: Some(FIRMWARE_FOLDER.to_string()),
-        region_target: Some(DeviceRegion::Row),
+        region_target: None,
         ..AdvWizard::default()
     };
     app.region_target_popup_open = true;
@@ -512,7 +512,8 @@ fn apply_sysupdate_rescue_scene(app: &mut App, scene: SysUpdateRescueScene) {
         },
         action: Some(SysUpdateAction::Rescue),
         rescue_folder: (scene != SysUpdateRescueScene::Loader).then(|| FIRMWARE_FOLDER.to_string()),
-        rescue_region: (scene != SysUpdateRescueScene::Loader).then_some(RescueRegion::Prc),
+        rescue_region: (scene == SysUpdateRescueScene::Confirm).then_some(RescueRegion::Prc),
+        rescue_region_pending: None,
         rescue_region_popup_open: scene == SysUpdateRescueScene::RegionPopup,
         rescue_region_confirmed: scene == SysUpdateRescueScene::Confirm,
     };
@@ -950,7 +951,8 @@ mod tests {
                     assert_eq!(app.adv_wizard.action, Some(AdvAction::RegionConvert));
                     assert_eq!(app.adv_wizard.step, 1);
                     assert_eq!(app.adv_wizard.file_path.as_deref(), Some(FIRMWARE_FOLDER));
-                    assert_eq!(app.adv_wizard.region_target, Some(DeviceRegion::Row));
+                    assert_eq!(app.adv_wizard.region_target, None);
+                    assert_eq!(app.adv_wizard.region_target_pending, None);
                     assert!(app.region_target_popup_open);
                 }
                 Scene::SysUpdateRescue(rescue_scene) => {
@@ -968,7 +970,8 @@ mod tests {
                                 app.sysupdate.rescue_folder.as_deref(),
                                 Some(FIRMWARE_FOLDER)
                             );
-                            assert_eq!(app.sysupdate.rescue_region, Some(RescueRegion::Prc));
+                            assert!(app.sysupdate.rescue_region.is_none());
+                            assert!(app.sysupdate.rescue_region_pending.is_none());
                             assert!(app.sysupdate.rescue_region_popup_open);
                             assert!(!app.sysupdate.rescue_region_confirmed);
                         }

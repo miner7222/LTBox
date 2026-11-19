@@ -14,6 +14,9 @@ pub(crate) struct AdvWizard {
     /// User-picked target region for `RegionConvert`. Explicit target so
     /// confirm can echo it and exec can short-circuit on no-op.
     pub(crate) region_target: Option<DeviceRegion>,
+    /// Row selected in the Target Region popup but not yet confirmed. Only
+    /// `ConfirmRegionTarget` copies it to `region_target`.
+    pub(crate) region_target_pending: Option<DeviceRegion>,
     /// Output folder; set on Confirm → Exec.
     pub(crate) output_dir: Option<std::path::PathBuf>,
     pub(crate) arb_targets: Option<crate::ManualRollbackIndices>,

@@ -17,6 +17,7 @@ impl App {
                 self.sysupdate.action = Some(a);
                 self.sysupdate.rescue_folder = None;
                 self.sysupdate.rescue_region = None;
+                self.sysupdate.rescue_region_pending = None;
                 self.sysupdate.rescue_region_popup_open = false;
                 self.sysupdate.rescue_region_confirmed = false;
                 Task::none()
@@ -26,17 +27,9 @@ impl App {
                 // the region popup between Folder and Confirm.
                 if self.sysupdate.is_rescue() {
                     if self.sysupdate.step == 1 && !self.sysupdate.rescue_region_confirmed {
-                        // Pre-select the region from the polled device's PTSTPD
-                        // `SaleArea` (as Flash does via `inferred_flash_region`);
-                        // the popup still opens for confirmation.
-                        if self.sysupdate.rescue_region.is_none()
-                            && let Some(inferred) = self.inferred_flash_region()
-                        {
-                            self.sysupdate.rescue_region = Some(match inferred {
-                                DeviceRegion::Prc => RescueRegion::Prc,
-                                DeviceRegion::Row => RescueRegion::Row,
-                            });
-                        }
+                        // Nothing is preselected; the detected region (if any)
+                        // is shown as a hint by the popup view.
+                        self.sysupdate.rescue_region_pending = None;
                         self.sysupdate.rescue_region_popup_open = true;
                         return Task::none();
                     }
@@ -77,10 +70,18 @@ impl App {
                 Task::none()
             }
             SysMsg::SysRescueRegion(r) => {
+                // A row only selects; `SysRescueRegionConfirm` commits.
+                self.sysupdate.rescue_region_pending = Some(r);
+                Task::none()
+            }
+            SysMsg::SysRescueRegionConfirm => {
+                let Some(r) = self.sysupdate.rescue_region_pending.take() else {
+                    return Task::none();
+                };
                 self.sysupdate.rescue_region = Some(r);
                 self.sysupdate.rescue_region_confirmed = true;
                 self.sysupdate.rescue_region_popup_open = false;
-                // Picking the region is the popup's implicit "Next".
+                // Confirming the region is the popup's implicit "Next".
                 if self.sysupdate.step == 1 {
                     self.sysupdate.next();
                 }
@@ -88,6 +89,7 @@ impl App {
             }
             SysMsg::SysRescueRegionPopupDismiss => {
                 self.sysupdate.rescue_region_popup_open = false;
+                self.sysupdate.rescue_region_pending = None;
                 Task::none()
             }
             SysMsg::SysExecStart => {
@@ -162,6 +164,121 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rescue_app_at_region_popup() -> App {
+        let mut app = App::default();
+        app.sysupdate.action = Some(SysUpdateAction::Rescue);
+        app.sysupdate.step = 1;
+        app.sysupdate.rescue_folder = Some("loader.melf".into());
+        app.sysupdate.rescue_region_popup_open = true;
+        app
+    }
+
+    #[test]
+    fn region_popup_row_click_does_not_confirm_or_advance() {
+        let mut app = rescue_app_at_region_popup();
+        let _ = app.update_sys(SysMsg::SysRescueRegion(RescueRegion::Row));
+        assert_eq!(app.sysupdate.rescue_region_pending, Some(RescueRegion::Row));
+        assert_eq!(app.sysupdate.rescue_region, None);
+        assert!(!app.sysupdate.rescue_region_confirmed);
+        assert!(app.sysupdate.rescue_region_popup_open);
+        assert_eq!(app.sysupdate.step, 1);
+    }
+
+    #[test]
+    fn region_popup_confirm_commits_and_advances() {
+        let mut app = rescue_app_at_region_popup();
+        let _ = app.update_sys(SysMsg::SysRescueRegionConfirm);
+        assert_eq!(app.sysupdate.rescue_region, None, "nothing pending");
+        assert_eq!(app.sysupdate.step, 1);
+        let _ = app.update_sys(SysMsg::SysRescueRegion(RescueRegion::Prc));
+        let _ = app.update_sys(SysMsg::SysRescueRegion(RescueRegion::Row));
+        let _ = app.update_sys(SysMsg::SysRescueRegionConfirm);
+        assert_eq!(app.sysupdate.rescue_region, Some(RescueRegion::Row));
+        assert!(app.sysupdate.rescue_region_confirmed);
+        assert!(!app.sysupdate.rescue_region_popup_open);
+        assert_eq!(app.sysupdate.rescue_region_pending, None);
+        assert_eq!(app.sysupdate.step, 2);
+    }
+
+    #[test]
+    fn region_popup_dismiss_discards_pending_choice() {
+        let mut app = rescue_app_at_region_popup();
+        let _ = app.update_sys(SysMsg::SysRescueRegion(RescueRegion::Prc));
+        let _ = app.update_sys(SysMsg::SysRescueRegionPopupDismiss);
+        assert_eq!(app.sysupdate.rescue_region_pending, None);
+        assert_eq!(app.sysupdate.rescue_region, None);
+        assert!(!app.sysupdate.rescue_region_popup_open);
+        // Reopening via Next starts empty.
+        let _ = app.update_sys(SysMsg::SysNext);
+        assert!(app.sysupdate.rescue_region_popup_open);
+        assert_eq!(app.sysupdate.rescue_region_pending, None);
+        assert_eq!(app.sysupdate.step, 1);
+    }
+
+    #[test]
+    fn region_popup_open_never_preselects_detected_region() {
+        let mut app = rescue_app_at_region_popup();
+        app.sysupdate.rescue_region_popup_open = false;
+        // Seed a detectable region so a returning preselect would show up.
+        app.device.serial = "SER123".to_string();
+        app.queries.info_cache.insert(
+            "SER123".to_string(),
+            ltbox_core::lenovo_info::MachineInfo {
+                fields: vec![("SaleArea".to_string(), Some("CN".to_string()))],
+                data_pretty: String::new(),
+            },
+        );
+        assert_eq!(app.inferred_flash_region(), Some(DeviceRegion::Prc));
+        let _ = app.update_sys(SysMsg::SysNext);
+        assert!(app.sysupdate.rescue_region_popup_open);
+        assert_eq!(app.sysupdate.rescue_region, None);
+        assert_eq!(app.sysupdate.rescue_region_pending, None);
+    }
+
+    #[test]
+    fn region_popup_new_loader_clears_confirmed_region() {
+        let mut app = rescue_app_at_region_popup();
+        let _ = app.update_sys(SysMsg::SysRescueRegion(RescueRegion::Prc));
+        let _ = app.update_sys(SysMsg::SysRescueRegionConfirm);
+        assert!(app.sysupdate.rescue_region_confirmed);
+        let _ = app.update_sys(SysMsg::SysRescueFolderChosen(Some("other.melf".into())));
+        assert_eq!(app.sysupdate.rescue_region, None);
+        assert!(!app.sysupdate.rescue_region_confirmed);
+    }
+
+    #[test]
+    fn region_popup_advanced_target_selects_then_confirms() {
+        let mut app = App::default();
+        app.adv_wizard.region_target = Some(DeviceRegion::Prc);
+        let _ = app.update(Message::Adv(AdvMsg::AdvWizOpenRegionTarget));
+        assert!(app.region_target_popup_open);
+        assert_eq!(
+            app.adv_wizard.region_target_pending,
+            Some(DeviceRegion::Prc)
+        );
+        let _ = app.update(Message::SelectRegionTarget(DeviceRegion::Row));
+        assert_eq!(app.adv_wizard.region_target, Some(DeviceRegion::Prc));
+        assert!(app.region_target_popup_open);
+        let _ = app.update(Message::DismissRegionTargetPopup);
+        assert_eq!(app.adv_wizard.region_target, Some(DeviceRegion::Prc));
+        assert_eq!(app.adv_wizard.region_target_pending, None);
+        let _ = app.update(Message::Adv(AdvMsg::AdvWizOpenRegionTarget));
+        let _ = app.update(Message::SelectRegionTarget(DeviceRegion::Row));
+        let _ = app.update(Message::ConfirmRegionTarget);
+        assert_eq!(app.adv_wizard.region_target, Some(DeviceRegion::Row));
+        assert!(!app.region_target_popup_open);
+    }
+
+    #[test]
+    fn region_popup_advanced_opens_empty_without_committed_value() {
+        let mut app = App::default();
+        let _ = app.update(Message::Adv(AdvMsg::AdvWizOpenRegionTarget));
+        assert_eq!(app.adv_wizard.region_target_pending, None);
+        let _ = app.update(Message::ConfirmRegionTarget);
+        assert!(app.region_target_popup_open, "confirm needs a selection");
+        assert_eq!(app.adv_wizard.region_target, None);
+    }
 
     #[test]
     fn rescue_dispatch_obeys_model_capabilities() {

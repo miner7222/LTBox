@@ -904,6 +904,8 @@ impl App {
                 Task::none()
             }
             AdvMsg::AdvWizOpenRegionTarget => {
+                // Start from the committed value, or nothing.
+                self.adv_wizard.region_target_pending = self.adv_wizard.region_target;
                 self.region_target_popup_open = true;
                 Task::none()
             }

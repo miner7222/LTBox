@@ -1356,7 +1356,7 @@ impl App {
     /// PRC / ROW radio popup for the Advanced RegionConvert wizard: two choices,
     /// so a fixed-width card of M3 radio rows.
     pub(crate) fn region_target_popup_view(&self) -> Element<'_, Message> {
-        let selected = self.adv_wizard.region_target;
+        let selected = self.adv_wizard.region_target_pending;
         let mut list = column![].spacing(2);
         for target in [DeviceRegion::Prc, DeviceRegion::Row] {
             let is_selected = selected == Some(target);
@@ -1378,7 +1378,10 @@ impl App {
                 Space::new().width(Length::Fill),
                 m3_outlined_button(self.t("btn_cancel").to_string())
                     .on_press(Message::DismissRegionTargetPopup),
+                m3_filled_button(self.t("btn_select").to_string())
+                    .on_press_maybe(selected.map(|_| Message::ConfirmRegionTarget)),
             ]
+            .spacing(8)
             .align_y(iced::Alignment::Center),
             REGION_TARGET_POPUP_WIDTH,
             false,
@@ -1618,7 +1621,7 @@ impl App {
         let mk_option = |region: RescueRegion, desc_key: &'static str| {
             let label = self.t(region.label_key()).to_string();
             let desc = self.t(desc_key).to_string();
-            let selected = self.sysupdate.rescue_region == Some(region);
+            let selected = self.sysupdate.rescue_region_pending == Some(region);
             dialog_choice(
                 label,
                 Some(desc),
@@ -1626,10 +1629,29 @@ impl App {
                 Some(Message::Sys(SysMsg::SysRescueRegion(region))),
             )
         };
-        let popup_content = popup_sections(
+        let detected_hint = self.inferred_flash_region().map(|region| {
+            let region = match region {
+                DeviceRegion::Prc => RescueRegion::Prc,
+                DeviceRegion::Row => RescueRegion::Row,
+            };
+            text(tr_args!(
+                "rescue_region_detected_hint",
+                region = self.t(region.label_key())
+            ))
+            .size(theme::text_size::BODY_SMALL)
+            .style(muted_style)
+        });
+        let mut header = column![
             text(self.t("rescue_region_popup_title").to_string())
                 .size(theme::text_size::DIALOG_HEADLINE)
                 .line_height(32.0 / 24.0),
+        ]
+        .spacing(4);
+        if let Some(hint) = detected_hint {
+            header = header.push(hint);
+        }
+        let popup_content = popup_sections(
+            header,
             column![
                 text(self.t("rescue_region_popup_subtitle").to_string())
                     .size(12)
@@ -1645,7 +1667,13 @@ impl App {
                 Space::new().width(Length::Fill),
                 m3_outlined_button(self.t("btn_cancel").to_string())
                     .on_press(Message::Sys(SysMsg::SysRescueRegionPopupDismiss)),
+                m3_filled_button(self.t("btn_select").to_string()).on_press_maybe(
+                    self.sysupdate
+                        .rescue_region_pending
+                        .map(|_| Message::Sys(SysMsg::SysRescueRegionConfirm))
+                ),
             ]
+            .spacing(8)
             .align_y(iced::Alignment::Center),
             theme::DIALOG_WIDTH_MD,
             false,

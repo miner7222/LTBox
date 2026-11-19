@@ -1063,6 +1063,7 @@
   "region_prc_name": "Matériel vendu en Chine continentale",
   "region_row": "Global (ROW)",
   "region_row_name": "Matériel vendu hors de Chine continentale",
+  "rescue_region_detected_hint": "Détecté sur la tablette : {region}",
   "rescue_region_label": "Région matérielle",
   "rescue_region_popup_subtitle": "Choisissez la région où la tablette a été vendue à l’origine. vendor_boot est patché en conséquence dans chaque slot qui peut l’être.",
   "rescue_region_popup_title": "Sélectionner la région matérielle",

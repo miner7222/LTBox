@@ -1063,6 +1063,7 @@
   "region_prc_name": "Hardware sold in mainland China",
   "region_row": "Global (ROW)",
   "region_row_name": "Hardware sold outside mainland China",
+  "rescue_region_detected_hint": "Detected from the tablet: {region}",
   "rescue_region_label": "Hardware Region",
   "rescue_region_popup_subtitle": "Choose the region the tablet was originally sold in. vendor_boot is patched to match on each slot that can be patched.",
   "rescue_region_popup_title": "Select Hardware Region",

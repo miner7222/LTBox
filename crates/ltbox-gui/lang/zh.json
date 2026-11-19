@@ -1063,6 +1063,7 @@
   "region_prc_name": "在中国大陆销售的硬件",
   "region_row": "全球（ROW）",
   "region_row_name": "在中国大陆以外销售的硬件",
+  "rescue_region_detected_hint": "从平板检测到：{region}",
   "rescue_region_label": "硬件区域",
   "rescue_region_popup_subtitle": "请选择平板最初销售的区域。将按该区域修补每个可修补槽位的 vendor_boot。",
   "rescue_region_popup_title": "选择硬件区域",
