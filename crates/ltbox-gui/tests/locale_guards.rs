@@ -727,6 +727,20 @@ struct ActionRowSlot {
     actions: &'static [CopySource],
 }
 
+/// One wizard flow's app bar: the flow title, whether the bar also carries the
+/// "Writes to Device" chip, and every subtitle key the flow shows beside them.
+#[derive(Debug, Clone, Copy)]
+struct AppBarFlow {
+    title: &'static str,
+    writes_to_device: bool,
+    subtitles: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AppBarSubtitleSlot {
+    flows: &'static [AppBarFlow],
+}
+
 #[derive(Debug, Clone, Copy)]
 enum SlotKind {
     Card(CardSlot),
@@ -734,6 +748,7 @@ enum SlotKind {
     PickList(PickListSlot),
     Header(HeaderSlot),
     ActionRow(ActionRowSlot),
+    AppBarSubtitle(AppBarSubtitleSlot),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -869,6 +884,167 @@ const DRIVER_OPTIONS: &[CopySource] = &[
 const DIRECT_UPDATE_READY_ACTIONS: &[CopySource] =
     &[key("btn_close"), key("update_dialog_install")];
 
+/// `loader_picker_subtitle` picks one of these on every loader step.
+const LOADER_SUBTITLES: [&str; 3] = [
+    "loader_picker_subtitle_manifest",
+    "loader_picker_subtitle_standard",
+    "loader_picker_subtitle_unknown",
+];
+const EXEC_SUBTITLE: &str = "exec_executing_subtitle";
+
+const fn loader_flow(title: &'static str, writes_to_device: bool) -> AppBarFlow {
+    AppBarFlow {
+        title,
+        writes_to_device,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            EXEC_SUBTITLE,
+        ],
+    }
+}
+
+// Each flow's title is the one its view passes to `wizard_action_bar*`; the
+// subtitles are the ticket-listed app-bar keys for that flow. Some adv_src_*
+// keys are listed though their step shows the loader subtitle instead.
+const APP_BAR_FLOWS: &[AppBarFlow] = &[
+    AppBarFlow {
+        title: "nav_flash",
+        writes_to_device: false,
+        subtitles: &[
+            "flash_region_subtitle",
+            "flash_target_subtitle",
+            "flash_data_subtitle",
+            "flash_folder_desc",
+            "flash_bootloader_efisp_desc",
+            "flash_bootloader_pick_subtitle",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "nav_root",
+        writes_to_device: false,
+        subtitles: &[EXEC_SUBTITLE],
+    },
+    loader_flow("nav_sysupdate", false),
+    AppBarFlow {
+        title: "nav_unroot",
+        writes_to_device: false,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "unroot_folderdesc_boot",
+            "unroot_folderdesc_boot_vbmeta",
+            "unroot_folderdesc_init_boot",
+            "unroot_folderdesc_init_boot_vbmeta",
+            EXEC_SUBTITLE,
+        ],
+    },
+    loader_flow("nav_konabess", false),
+    AppBarFlow {
+        title: "adv_dump_partitions",
+        writes_to_device: false,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "adv_src_dump_partitions",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_dump_physical",
+        writes_to_device: false,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "adv_src_dump_physical",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_flash_partitions",
+        writes_to_device: true,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "adv_src_flash_partitions",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_flash_physical",
+        writes_to_device: true,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "adv_src_flash_physical",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_simple_flash",
+        writes_to_device: true,
+        subtitles: &["flash_folder_desc", EXEC_SUBTITLE],
+    },
+    AppBarFlow {
+        title: "adv_region_convert",
+        writes_to_device: false,
+        subtitles: &[
+            "adv_src_region_convert",
+            "adv_region_target_subtitle",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_image_info",
+        writes_to_device: false,
+        subtitles: &["adv_src_image_info", EXEC_SUBTITLE],
+    },
+    AppBarFlow {
+        title: "adv_patch_devinfo",
+        writes_to_device: true,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "adv_src_patch_devinfo",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_detect_arb",
+        writes_to_device: false,
+        subtitles: &[
+            LOADER_SUBTITLES[0],
+            LOADER_SUBTITLES[1],
+            LOADER_SUBTITLES[2],
+            "adv_src_detect_arb",
+            EXEC_SUBTITLE,
+        ],
+    },
+    AppBarFlow {
+        title: "adv_patch_arb",
+        writes_to_device: false,
+        subtitles: &["adv_src_patch_arb_folder", EXEC_SUBTITLE],
+    },
+    AppBarFlow {
+        title: "adv_convert_xml",
+        writes_to_device: false,
+        subtitles: &["adv_src_convert_xml", EXEC_SUBTITLE],
+    },
+    AppBarFlow {
+        title: "adv_rebuild_vbmeta",
+        writes_to_device: false,
+        subtitles: &["adv_src_rebuild_vbmeta", EXEC_SUBTITLE],
+    },
+];
+
 // Keep each constrained widget as one row. Adding the next guard is a single
 // row plus its copy-key list; the measurement and diagnostics stay shared.
 const CONSTRAINED_SLOTS: &[ConstrainedSlot] = &[
@@ -938,7 +1114,52 @@ const CONSTRAINED_SLOTS: &[ConstrainedSlot] = &[
             actions: DIRECT_UPDATE_READY_ACTIONS,
         }),
     },
+    ConstrainedSlot {
+        name: "wizard.app-bar-subtitle",
+        kind: SlotKind::AppBarSubtitle(AppBarSubtitleSlot {
+            flows: APP_BAR_FLOWS,
+        }),
+    },
 ];
+
+// Mirrors the Compact app bar (`large_top_app_bar_with_chip` and
+// `writes_to_device_chip` in src/view/components.rs) at the 820 px minimum
+// window, beside the 80 px rail (`SIDEBAR_RAIL_WIDTH`, src/widgets.rs).
+const APP_BAR_WINDOW_MIN_WIDTH: f32 = 820.0;
+const APP_BAR_RAIL_WIDTH: f32 = 80.0;
+const APP_BAR_HORIZONTAL_PADDING: f32 = 24.0;
+const APP_BAR_ITEM_SPACING: f32 = 14.0;
+const APP_BAR_TITLE_SIZE: f32 = 22.0;
+const APP_BAR_SUBTITLE_SIZE: f32 = 12.0;
+const APP_BAR_SUBTITLE_LINE_HEIGHT: f32 = 16.0;
+const APP_BAR_SUBTITLE_MAX_LINES: f32 = 2.0;
+const WRITES_CHIP_ICON_SIZE: f32 = 14.0;
+const WRITES_CHIP_ICON_GAP: f32 = 4.0;
+const WRITES_CHIP_TEXT_SIZE: f32 = 11.0;
+const WRITES_CHIP_HORIZONTAL_PADDING: f32 = 10.0;
+
+/// Word-wrapped paragraph size at a fixed line height, as the app bar
+/// subtitle lays itself out.
+fn measure_word_wrapped(
+    locale: &str,
+    value: &str,
+    size: f32,
+    line_height: f32,
+    width: f32,
+) -> Size {
+    let paragraph = GraphicsParagraph::with_text(Text {
+        content: value,
+        bounds: Size::new(width, 100_000.0),
+        size: Pixels(size),
+        line_height: LineHeight::Absolute(Pixels(line_height)),
+        font: locale_font(locale, Weight::Normal),
+        align_x: Alignment::Default,
+        align_y: alignment::Vertical::Top,
+        shaping: Shaping::Advanced,
+        wrapping: Wrapping::Word,
+    });
+    paragraph.min_bounds()
+}
 
 fn load_bundled_locale_fonts() {
     static LOAD: std::sync::Once = std::sync::Once::new();
@@ -1246,6 +1467,77 @@ fn bundled_locale_copy_fits_constrained_layout_slots() {
                     println!(
                         "HEADROOM slot={} locale={} measured={:.1}px budget={:.1}px",
                         slot.name, locale, measured, limit,
+                    );
+                }
+                SlotKind::AppBarSubtitle(app_bar) => {
+                    let height_limit = APP_BAR_SUBTITLE_MAX_LINES * APP_BAR_SUBTITLE_LINE_HEIGHT;
+                    let (chip_key, chip_label) = localized_copy(&table, key("adv_writes_chip"));
+                    let chip_width = WRITES_CHIP_ICON_SIZE
+                        + WRITES_CHIP_ICON_GAP
+                        + measure_text(
+                            locale,
+                            chip_label,
+                            WRITES_CHIP_TEXT_SIZE,
+                            Weight::Normal,
+                            None,
+                        )
+                        .width
+                        + 2.0 * WRITES_CHIP_HORIZONTAL_PADDING;
+                    let mut tightest = (String::new(), f32::MAX, Size::ZERO);
+                    for flow in app_bar.flows {
+                        let (title_key, title) = localized_copy(&table, key(flow.title));
+                        let title_width =
+                            measure_text(locale, title, APP_BAR_TITLE_SIZE, Weight::Medium, None)
+                                .width;
+                        let mut width_limit = APP_BAR_WINDOW_MIN_WIDTH
+                            - APP_BAR_RAIL_WIDTH
+                            - 2.0 * APP_BAR_HORIZONTAL_PADDING
+                            - title_width
+                            - APP_BAR_ITEM_SPACING;
+                        if flow.writes_to_device {
+                            width_limit -= APP_BAR_ITEM_SPACING + chip_width;
+                        }
+                        for subtitle_key in flow.subtitles {
+                            let (subtitle_key, subtitle) =
+                                localized_copy(&table, key(subtitle_key));
+                            let measured = measure_word_wrapped(
+                                locale,
+                                subtitle,
+                                APP_BAR_SUBTITLE_SIZE,
+                                APP_BAR_SUBTITLE_LINE_HEIGHT,
+                                width_limit.max(0.0),
+                            );
+                            if measured.width > width_limit + f32::EPSILON
+                                || measured.height > height_limit + f32::EPSILON
+                            {
+                                let chip = if flow.writes_to_device {
+                                    format!("+{chip_key}")
+                                } else {
+                                    String::new()
+                                };
+                                failures.push(overflow_message(
+                                    slot.name,
+                                    &format!("{title_key}{chip}+{subtitle_key}"),
+                                    locale,
+                                    format!("{:.1}x{:.1}px", measured.width, measured.height),
+                                    format!("{width_limit:.1}x{height_limit:.1}px"),
+                                ));
+                            }
+                            if width_limit < tightest.1 {
+                                tightest =
+                                    (format!("{title_key}+{subtitle_key}"), width_limit, measured);
+                            }
+                        }
+                    }
+                    println!(
+                        "HEADROOM slot={} locale={} tightest={} subtitle={:.1}x{:.1}/{:.1}x{:.1}px",
+                        slot.name,
+                        locale,
+                        tightest.0,
+                        tightest.2.width,
+                        tightest.2.height,
+                        tightest.1,
+                        height_limit,
                     );
                 }
                 SlotKind::ActionRow(action_row) => {

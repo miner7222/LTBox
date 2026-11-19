@@ -26,18 +26,32 @@ fn flash_review_entry<'a>(title: &str, detail: &str, path: Option<&str>) -> Elem
         .into()
 }
 
+/// One confirm group. `heading` is complete, count included; the erase group
+/// leads with the warning glyph drawn as an icon, not a text character.
 fn flash_review_group<'a>(
-    title: &str,
+    heading: String,
     entries: Vec<Element<'a, Message>>,
     erase: bool,
 ) -> Element<'a, Message> {
-    let mut content = column![
-        text(format!("{title} ({})", entries.len()))
-            .size(theme::text_size::BODY_MEDIUM)
-            .font(theme::emphasis::medium())
-    ]
-    .spacing(4)
-    .width(Length::Fill);
+    let heading_text = text(heading)
+        .size(theme::text_size::BODY_MEDIUM)
+        .font(theme::emphasis::medium())
+        .width(Length::Fill)
+        .wrapping(widget::text::Wrapping::WordOrGlyph);
+    let heading: Element<'a, Message> = if erase {
+        row![
+            view::components::lucide_icon(icon::banner_warning(), 18.0, |t: &Theme| {
+                pal_of(t).on_error_container
+            }),
+            heading_text,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        heading_text.into()
+    };
+    let mut content = column![heading].spacing(4).width(Length::Fill);
     for (index, entry) in entries.into_iter().enumerate() {
         if index > 0 {
             content = content.push(widget::rule::horizontal(1).style(move |t: &Theme| {
@@ -88,8 +102,13 @@ const FLASH_PARTS_LUN_COLUMN_WIDTH: f32 = 44.0;
 const FLASH_PARTS_LABEL_COLUMN_WIDTH: f32 = 104.0;
 const FLASH_PARTS_START_COLUMN_WIDTH: f32 = 116.0;
 const FLASH_PARTS_SIZE_COLUMN_WIDTH: f32 = 96.0;
+/// Fits the longest Write/Erase label at 12 px in every locale plus the
+/// erase icon.
+const FLASH_PARTS_ACTION_COLUMN_WIDTH: f32 = 88.0;
 const FLASH_PARTS_FILE_ACTION_SIZE: f32 = 28.0;
-const FLASH_PARTS_ROW_HEIGHT: f32 = 40.0;
+/// One row height for the Flash and Dump partition tables. It must hold the
+/// 28 px file button and the 16 px tri-state marker.
+const FLASH_PARTS_ROW_HEIGHT: f32 = 32.0;
 
 /// Numeric partition header with the same sort affordance as
 /// `parts_sort_header`, but aligned to the trailing edge of its cell.
@@ -290,10 +309,11 @@ impl App {
         };
 
         column![
-            wizard_action_bar(
+            wizard_action_bar_with_chip(
                 self.window_size_class(),
                 self.t(AdvAction::FlashPartitions.label_key()).to_string(),
                 app_bar_subtitle,
+                AdvAction::FlashPartitions.writes_to_device(),
             ),
             step_bar,
             body,
@@ -345,6 +365,13 @@ impl App {
         ),]
         .spacing(6)
         .width(Length::Fill);
+        content = content.push(
+            text(self.loader_picker_help())
+                .size(theme::text_size::BODY_SMALL)
+                .style(muted_style)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::Word),
+        );
         if let Some(error) = error {
             content = content.push(text(error.clone()).size(12).style(|t: &Theme| {
                 iced::widget::text::Style {
@@ -361,6 +388,22 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    /// Where the loader comes from and which file to take, under the loader
+    /// field. Chosen exactly like `loader_picker_subtitle`, so the app bar and
+    /// this line never name different files.
+    fn loader_picker_help(&self) -> String {
+        let key = if self.device.connection == ConnectionStatus::None {
+            "loader_help_unknown"
+        } else if self.requires_sahara_manifest() {
+            "loader_help_manifest"
+        } else if self.device.model.is_empty() {
+            "loader_help_unknown"
+        } else {
+            "loader_help_standard"
+        };
+        self.t(key).to_string()
     }
 
     pub(crate) fn flash_parts_loader_step(&self) -> Element<'_, Message> {
@@ -496,6 +539,12 @@ impl App {
                 Length::Fixed(FLASH_PARTS_SIZE_COLUMN_WIDTH),
                 mk_msg(PartsSortColumn::Size),
             ),
+            // Not sortable: the sort columns stay as they were.
+            text(self.t("flash_parts_col_action").to_string())
+                .size(11)
+                .style(muted_style)
+                .width(Length::Fixed(FLASH_PARTS_ACTION_COLUMN_WIDTH))
+                .wrapping(widget::text::Wrapping::None),
             parts_sort_header(
                 self.t("flash_parts_col_file").to_string(),
                 active == PartsSortColumn::File,
@@ -580,11 +629,37 @@ impl App {
                     .align_y(iced::Alignment::Center)
                     .into()
                 }
+                // Erase never owns a file; the Action column names the erase.
                 (FlashRowState::Erase, _) => row![
                     partition_file_button(icon::fab_open_folder(), None, false),
-                    text(self.t("flash_parts_state_erase").to_string()).size(12.0),
+                    text("—").size(12.0),
                 ]
                 .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into(),
+            };
+
+            // States the row's existing tri-state verbatim: a Write still
+            // waiting for its image is a Write, never an Erase.
+            let action_cell: Element<'_, Message> = match r.state {
+                FlashRowState::Skip => Space::new().into(),
+                FlashRowState::Write => text(self.t("flash_parts_action_write").to_string())
+                    .size(12.0)
+                    .wrapping(widget::text::Wrapping::None)
+                    .into(),
+                FlashRowState::Erase => row![
+                    view::components::lucide_icon(icon::banner_warning(), 14.0, |t: &Theme| {
+                        pal_of(t).error
+                    }),
+                    text(self.t("flash_parts_state_erase").to_string())
+                        .size(12.0)
+                        .font(theme::emphasis::medium())
+                        .wrapping(widget::text::Wrapping::None)
+                        .style(|t: &Theme| widget::text::Style {
+                            color: Some(pal_of(t).error),
+                        }),
+                ]
+                .spacing(4)
                 .align_y(iced::Alignment::Center)
                 .into(),
             };
@@ -606,6 +681,9 @@ impl App {
                     .size(12.0)
                     .width(Length::Fixed(FLASH_PARTS_SIZE_COLUMN_WIDTH))
                     .align_x(iced::alignment::Horizontal::Right),
+                container(action_cell)
+                    .width(Length::Fixed(FLASH_PARTS_ACTION_COLUMN_WIDTH))
+                    .clip(true),
                 container(file_cell).width(Length::Fill),
             ]
             .spacing(8.0)
@@ -683,16 +761,34 @@ impl App {
         let search = self.parts_search_field(&self.flash_parts.search, |query| {
             Message::FlashParts(FlashPartsMsg::FlashPartsSearchInput(query))
         });
+        let selected_only = self.flash_parts.selected_only;
+        let selected_only_toggle = focus_button::actionable(
+            iced::widget::checkbox(selected_only)
+                .label(self.t("parts_selected_only").to_string())
+                .on_toggle(|on| {
+                    Message::FlashParts(FlashPartsMsg::FlashPartsSelectedOnlyToggled(on))
+                })
+                .size(FLASH_PARTS_MARKER_SIZE)
+                .spacing(8.0)
+                .text_size(theme::text_size::BODY_MEDIUM)
+                .text_wrapping(widget::text::Wrapping::None)
+                .style(m3_checkbox_style),
+            Some(Message::FlashParts(
+                FlashPartsMsg::FlashPartsSelectedOnlyToggled(!selected_only),
+            )),
+        );
+        let search = row![search, selected_only_toggle]
+            .spacing(16)
+            .width(Length::Fill)
+            .align_y(iced::Alignment::Center)
+            .into();
         self.parts_table_frame(search, list, footer.into())
     }
 
     pub(crate) fn flash_parts_confirm_step(&self) -> Element<'_, Message> {
         let rows = self.flash_parts.active_rows();
         let mut groups = Vec::new();
-        for (state, key) in [
-            (FlashRowState::Erase, "flash_parts_confirm_erase_warn"),
-            (FlashRowState::Write, "flash_parts_confirm_flash_hdr"),
-        ] {
+        for state in [FlashRowState::Erase, FlashRowState::Write] {
             let entries: Vec<_> = rows
                 .iter()
                 .filter(|r| r.state == state)
@@ -709,11 +805,20 @@ impl App {
                 })
                 .collect();
             if !entries.is_empty() {
-                groups.push(flash_review_group(
-                    self.t(key),
-                    entries,
-                    state == FlashRowState::Erase,
-                ));
+                let erase = state == FlashRowState::Erase;
+                let heading = if erase {
+                    tr_args!(
+                        "flash_parts_confirm_erase_warn",
+                        count = entries.len().to_string()
+                    )
+                } else {
+                    format!(
+                        "{} ({})",
+                        self.t("flash_parts_confirm_flash_hdr"),
+                        entries.len()
+                    )
+                };
+                groups.push(flash_review_group(heading, entries, erase));
             }
         }
         let mut leading = if self.flash_parts_nav_can() {
@@ -721,6 +826,7 @@ impl App {
         } else {
             self.start_block_notices(self.flash_parts_nav_block_reason())
         };
+        leading.push(self.confirm_device_row());
         leading.extend(groups);
         self.confirm_step_frame(leading, vec![], vec![])
     }
@@ -982,7 +1088,8 @@ impl App {
                     .align_x(iced::alignment::Horizontal::Right),
             ]
             .spacing(8.0)
-            .padding([4.0, 10.0])
+            .padding([0.0, 10.0])
+            .height(Length::Fixed(FLASH_PARTS_ROW_HEIGHT))
             .align_y(iced::Alignment::Center);
             // Tint selected rows so the dump set is visible at a glance.
             let selected = row.selected;
@@ -1028,9 +1135,17 @@ impl App {
             .size(12.0),
         ]
         .spacing(12)
-        .padding([12.0, 4.0])
         .width(Length::Fill)
         .align_y(iced::Alignment::Center);
+        let footer = column![
+            footer,
+            text(self.t("dump_destination_hint").to_string())
+                .size(11.0)
+                .style(muted_style),
+        ]
+        .spacing(4)
+        .padding([12.0, 4.0])
+        .width(Length::Fill);
 
         let search = self.parts_search_field(&self.dump_parts.search, |query| {
             Message::DumpParts(DumpPartsMsg::DumpPartsSearchInput(query))
@@ -1168,6 +1283,14 @@ impl App {
             .align_y(iced::Alignment::Center);
             list = list.push(data_row);
         }
+        list = list.push(
+            container(
+                text(self.t("dump_destination_hint").to_string())
+                    .size(11.0)
+                    .style(muted_style),
+            )
+            .padding([8.0, 10.0]),
+        );
 
         self.select_step_frame(list)
     }
@@ -1240,10 +1363,11 @@ impl App {
         };
 
         column![
-            wizard_action_bar(
+            wizard_action_bar_with_chip(
                 self.window_size_class(),
                 self.t(AdvAction::FlashPhysical.label_key()).to_string(),
                 app_bar_subtitle,
+                AdvAction::FlashPhysical.writes_to_device(),
             ),
             step_bar,
             body,
@@ -1353,6 +1477,7 @@ impl App {
         } else {
             self.start_block_notices(self.flash_phys_nav_block_reason())
         };
+        leading.push(self.confirm_device_row());
 
         if !pairs.is_empty() {
             let mut list = column![
@@ -1396,5 +1521,14 @@ mod tests {
                 "marker {side} does not fit the {cell} cell at content width {content_width}"
             );
         }
+    }
+
+    #[test]
+    fn the_shared_row_height_holds_the_file_button() {
+        // Flash and Dump share one row height; the Flash row also carries
+        // the round file button, so the row may not be shorter than it.
+        let row_height = FLASH_PARTS_ROW_HEIGHT;
+        let file_button = FLASH_PARTS_FILE_ACTION_SIZE;
+        assert!(row_height >= file_button);
     }
 }

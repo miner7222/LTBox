@@ -477,6 +477,16 @@ pub(crate) fn large_top_app_bar<'a>(
     title: String,
     subtitle: Option<String>,
 ) -> Element<'a, Message> {
+    large_top_app_bar_with_chip(title, subtitle, false)
+}
+
+/// [`large_top_app_bar`] with the "Writes to Device" chip at the right end when
+/// `writes_to_device` is set.
+fn large_top_app_bar_with_chip<'a>(
+    title: String,
+    subtitle: Option<String>,
+    writes_to_device: bool,
+) -> Element<'a, Message> {
     let padding = iced::Padding {
         top: 5.0,
         right: 24.0,
@@ -499,6 +509,7 @@ pub(crate) fn large_top_app_bar<'a>(
     .width(Length::Fill)
     .align_y(iced::Alignment::Center);
 
+    let has_subtitle = subtitle.as_ref().is_some_and(|s| !s.trim().is_empty());
     if let Some(subtitle) = subtitle.filter(|s| !s.trim().is_empty()) {
         content = content.push(
             text(subtitle)
@@ -511,6 +522,7 @@ pub(crate) fn large_top_app_bar<'a>(
                 .wrapping(iced::widget::text::Wrapping::Word),
         );
     }
+    content = push_writes_chip(content, writes_to_device, has_subtitle);
 
     column![
         container(
@@ -534,6 +546,57 @@ pub(crate) fn large_top_app_bar<'a>(
     .into()
 }
 
+/// Pill that marks a tool as one that writes to the device: alert glyph and the
+/// words, on the error role, so the mark never rests on colour alone.
+pub(crate) fn writes_to_device_chip() -> Element<'static, Message> {
+    let color = |t: &Theme| iced::widget::text::Style {
+        color: Some(pal_of(t).error),
+    };
+    container(
+        row![
+            icon::banner_error().size(14).style(color),
+            text(ltbox_core::i18n::tr("adv_writes_chip").to_string())
+                .size(theme::text_size::LABEL_SMALL)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .style(color),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding([3, 10])
+    .style(|t: &Theme| {
+        let p = pal_of(t);
+        container::Style {
+            background: Some(p.surface_container_high.into()),
+            border: iced::Border {
+                color: p.error,
+                width: 1.0,
+                radius: theme::shape::FULL.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .into()
+}
+
+/// Append the app-bar chip to the bar's content row, pushed to the right edge
+/// when no subtitle already fills the row.
+fn push_writes_chip<'a>(
+    content: iced::widget::Row<'a, Message>,
+    writes_to_device: bool,
+    has_subtitle: bool,
+) -> iced::widget::Row<'a, Message> {
+    if !writes_to_device {
+        return content;
+    }
+    let content = if has_subtitle {
+        content
+    } else {
+        content.push(Space::new().width(Length::Fill))
+    };
+    content.push(writes_to_device_chip())
+}
+
 /// Wizard app bar for the flow title and optional step guidance. Expanded
 /// layouts put the title and up to two lines of guidance side by side;
 /// Compact retains the stacked 64 px bar.
@@ -542,8 +605,21 @@ pub(crate) fn wizard_action_bar<'a>(
     title: String,
     subtitle: Option<String>,
 ) -> Element<'a, Message> {
+    wizard_action_bar_with_chip(size_class, title, subtitle, false)
+}
+
+/// [`wizard_action_bar`] for a tool that writes to the device: the same
+/// "Writes to Device" chip as the Advanced grid sits at the right of the bar,
+/// so the mark stays visible inside the tool. Callers pass
+/// `AdvAction::writes_to_device()`.
+pub(crate) fn wizard_action_bar_with_chip<'a>(
+    size_class: WindowSizeClass,
+    title: String,
+    subtitle: Option<String>,
+    writes_to_device: bool,
+) -> Element<'a, Message> {
     if size_class == WindowSizeClass::Compact {
-        return large_top_app_bar(title, subtitle);
+        return large_top_app_bar_with_chip(title, subtitle, writes_to_device);
     }
 
     let title = text(title)
@@ -556,6 +632,7 @@ pub(crate) fn wizard_action_bar<'a>(
         .spacing(14)
         .width(Length::Fill)
         .align_y(iced::Alignment::Center);
+    let has_subtitle = subtitle.as_ref().is_some_and(|s| !s.trim().is_empty());
     if let Some(subtitle) = subtitle.filter(|s| !s.trim().is_empty()) {
         content = content.push(
             text(subtitle)
@@ -568,6 +645,7 @@ pub(crate) fn wizard_action_bar<'a>(
                 .wrapping(iced::widget::text::Wrapping::Word),
         );
     }
+    content = push_writes_chip(content, writes_to_device, has_subtitle);
 
     column![
         container(content)
@@ -793,34 +871,62 @@ pub(crate) fn info_key_value_table(fields: Vec<(String, String)>) -> Element<'st
     table.into()
 }
 
-pub(crate) fn adv_grid_btn<'a>(item: AdvAction, label: &str) -> Element<'a, Message> {
+/// Fixed card height for the grid, so every card stays level. A card holds a
+/// label and a description (writing tools mark themselves in red, not with a
+/// chip). With two or fewer columns (text about 314 px wide) every locale's
+/// label fits one line and its description two, or three in Japanese; narrower
+/// cards are sized for the worst measured copy at about 206 px: a two-line
+/// label and three description lines (French, Russian) or a one-line label and
+/// four description lines (Japanese).
+pub(crate) fn adv_grid_card_height(columns: usize) -> f32 {
+    if columns <= 2 { 96.0 } else { 112.0 }
+}
+
+pub(crate) fn adv_grid_btn<'a>(
+    item: AdvAction,
+    label: &str,
+    desc: &str,
+    height: f32,
+) -> Element<'a, Message> {
     // Inner container: border-only via `sel_card_style`. An opaque
     // background, as `theme::surface_card_style` paints, would sit on top
     // of the button's hover fill and swallow the highlight, making the
     // grid feel dead on hover.
-    let destructive = item.is_destructive();
+    let writes = item.writes_to_device();
     let foreground = move |t: &Theme| {
         let p = pal_of(t);
         iced::widget::text::Style {
-            color: Some(if destructive { p.error } else { p.on_surface }),
+            color: Some(if writes { p.error } else { p.on_surface }),
         }
     };
-    let content = container(
+    let body = column![
         text(label.to_string())
             .size(12.0)
             .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
             .style(foreground),
-    )
-    .padding([18.0, 14.0])
-    .width(Length::Fill)
-    .align_x(iced::alignment::Horizontal::Left)
-    .style(move |t: &Theme| sel_card_style_for(t, false, destructive));
+        text(desc.to_string())
+            .size(theme::text_size::LABEL_SMALL)
+            .line_height(15.0 / 11.0)
+            .width(Length::Fill)
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+            .style(muted_style),
+    ]
+    .spacing(5.0)
+    .width(Length::Fill);
+    let content = container(body)
+        .padding([14.0, 14.0])
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .clip(true)
+        .align_x(iced::alignment::Horizontal::Left)
+        .style(move |t: &Theme| sel_card_style_for(t, false, writes));
 
     button(content)
         .on_press(Message::Adv(AdvMsg::AdvConfirm(item)))
         .padding(0)
         .width(Length::Fill)
-        .style(move |t: &Theme, status| sel_card_btn_style_for(t, status, false, destructive))
+        .style(move |t: &Theme, status| sel_card_btn_style_for(t, status, false, writes))
         .into()
 }
 
@@ -1472,8 +1578,22 @@ impl App {
         if items.is_empty() {
             return column![].into();
         }
+        // The connected tablet's canonical model, when it is known. Without it
+        // no row can be called a match or a mismatch, so none is.
+        let device_model = (self.device.connection != ConnectionStatus::None)
+            .then(|| ltbox_core::model::known_model(&self.device.model))
+            .flatten();
+        let mut entries: Vec<RecentEntry<'_>> = self
+            .recent_paths
+            .visible(items)
+            .into_iter()
+            .map(|path| RecentEntry::new(path, device_model))
+            .collect();
+        // Stable: entries for the connected model first, recency order otherwise.
+        entries.sort_by_key(|entry| entry.model_match != Some(true));
         let mut rows = column![].spacing(0).width(Length::Fill);
-        for (index, path) in self.recent_paths.visible(items).into_iter().enumerate() {
+        for (index, entry) in entries.into_iter().enumerate() {
+            let path = entry.path;
             if index > 0 {
                 rows = rows.push(iced::widget::rule::horizontal(1).style(|t: &Theme| {
                     iced::widget::rule::Style {
@@ -1491,27 +1611,40 @@ impl App {
             };
             let foreground = |t: &Theme| pal_of(t).on_surface_variant;
             let message = exists.then(|| on_pick(path.clone()));
-            let recent_path = path.clone();
+            let (name, parent) = split_recent_path(path);
+            let (name, parent) = (name.to_string(), parent.to_string());
             let path_text = iced::widget::responsive(move |size| {
-                container(
-                    text(elide_path_middle(&recent_path, (size.width - 8.0).max(0.0)))
+                let width = (size.width - 8.0).max(0.0);
+                let mut lines = column![
+                    text(elide_path_middle(&name, width))
                         .font(theme::mono_font())
                         .size(theme::text_size::BODY_SMALL)
-                        .style(move |t: &Theme| iced::widget::text::Style {
-                            color: Some(foreground(t)),
-                        })
+                        .style(on_surface_style)
                         .width(Length::Fill)
                         .wrapping(iced::widget::text::Wrapping::None),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(iced::Padding {
-                    right: 8.0,
-                    ..Default::default()
-                })
-                .align_y(iced::Alignment::Center)
-                .clip(true)
-                .into()
+                ]
+                .spacing(2)
+                .width(Length::Fill);
+                if !parent.is_empty() {
+                    lines = lines.push(
+                        text(elide_path_middle(&parent, width))
+                            .font(theme::mono_font())
+                            .size(theme::text_size::LABEL_SMALL)
+                            .style(muted_style)
+                            .width(Length::Fill)
+                            .wrapping(iced::widget::text::Wrapping::None),
+                    );
+                }
+                container(lines)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding {
+                        right: 8.0,
+                        ..Default::default()
+                    })
+                    .align_y(iced::Alignment::Center)
+                    .clip(true)
+                    .into()
             });
             let mut content = row![
                 lucide_icon(icon::fab_open_folder(), 17.0, foreground),
@@ -1520,6 +1653,20 @@ impl App {
             .spacing(11)
             .align_y(iced::Alignment::Center)
             .width(Length::Fill);
+            if let Some(model) = entry.model {
+                let tone = if entry.model_match == Some(true) {
+                    RecentChipTone::Match
+                } else {
+                    RecentChipTone::Neutral
+                };
+                content = content.push(recent_row_chip(model.to_string(), tone));
+            }
+            if entry.model_match == Some(false) {
+                content = content.push(recent_row_chip(
+                    self.t("recent_model_mismatch").to_string(),
+                    RecentChipTone::Mismatch,
+                ));
+            }
             if !exists {
                 content = content.push(
                     text(
@@ -1545,7 +1692,7 @@ impl App {
                         .width(Length::Fill),
                 )
                 .on_press_maybe(message)
-                .height(44)
+                .height(RECENT_ROW_HEIGHT)
                 .width(Length::Fill)
                 .padding([0, 14])
                 .style(move |t: &Theme, status| button::Style {
@@ -1590,6 +1737,109 @@ impl App {
     }
 }
 const PICKER_PATH_HEIGHT: f32 = 36.0;
+
+/// Two text lines (the entry's name, then its parent folder) plus breathing room.
+const RECENT_ROW_HEIGHT: f32 = 52.0;
+
+/// One recent path with the model token found in its name, if any.
+struct RecentEntry<'a> {
+    path: &'a String,
+    /// First supported model named by the last path component.
+    model: Option<&'static str>,
+    /// `Some` only when both a token and the connected model are known; an
+    /// absent token or an unknown device is never a match.
+    model_match: Option<bool>,
+}
+
+impl<'a> RecentEntry<'a> {
+    fn new(path: &'a String, device_model: Option<&'static str>) -> Self {
+        let (name, _) = split_recent_path(path);
+        let model = ltbox_core::model::fingerprint_models(name).next();
+        let model_match = model
+            .zip(device_model)
+            .map(|(_, device)| ltbox_core::model::fingerprint_model_match(name, device));
+        Self {
+            path,
+            model,
+            model_match,
+        }
+    }
+}
+
+/// Split a path into its last component and the parent that holds it. A
+/// trailing separator stays with the last component; a bare root or a single
+/// component has an empty parent.
+fn split_recent_path(path: &str) -> (&str, &str) {
+    let is_sep = |c: char| c == '/' || c == '\\';
+    let body = path.trim_end_matches(is_sep);
+    match body.rfind(is_sep) {
+        Some(index) => {
+            let parent = &path[..index];
+            // Keep the root's own separator: `C:\`, `/`.
+            let parent = if parent.is_empty() || parent.ends_with(':') {
+                &path[..=index]
+            } else {
+                parent
+            };
+            (&path[index + 1..], parent)
+        }
+        None => (path, ""),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecentChipTone {
+    Neutral,
+    Match,
+    Mismatch,
+}
+
+/// Read-only pill on a recent row: the model token found in the entry's name,
+/// or the error-role "Different model" mark with its alert glyph, so the
+/// mismatch never rests on colour alone.
+fn recent_row_chip(label: String, tone: RecentChipTone) -> Element<'static, Message> {
+    let color = move |t: &Theme| match tone {
+        RecentChipTone::Neutral => pal_of(t).on_surface_variant,
+        RecentChipTone::Match => pal_of(t).success,
+        RecentChipTone::Mismatch => pal_of(t).error,
+    };
+    let mut content = row![].spacing(4).align_y(iced::Alignment::Center);
+    if tone == RecentChipTone::Mismatch {
+        content = content.push(icon::banner_error().size(12).style(move |t: &Theme| {
+            iced::widget::text::Style {
+                color: Some(color(t)),
+            }
+        }));
+    }
+    content = content.push(
+        text(label)
+            .size(theme::text_size::LABEL_SMALL)
+            .wrapping(iced::widget::text::Wrapping::None)
+            .style(move |t: &Theme| iced::widget::text::Style {
+                color: Some(color(t)),
+            }),
+    );
+    container(content)
+        .padding([2, 8])
+        .style(move |t: &Theme| {
+            let p = pal_of(t);
+            let mismatch = tone == RecentChipTone::Mismatch;
+            container::Style {
+                background: Some(p.surface_container_high.into()),
+                border: iced::Border {
+                    color: if mismatch {
+                        p.error
+                    } else {
+                        iced::Color::TRANSPARENT
+                    },
+                    width: if mismatch { 1.0 } else { 0.0 },
+                    radius: theme::shape::FULL.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
 
 /// Fewest units the last component keeps beside a root before the root is
 /// dropped in favour of a longer piece of the name itself.

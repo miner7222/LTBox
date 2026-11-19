@@ -424,6 +424,8 @@ pub(crate) enum FlashPartsMsg {
     FlashPartsSortBy(PartsSortColumn),
     /// Select-step search field edit; filters the table as the user types.
     FlashPartsSearchInput(String),
+    /// Select-step "Selected only" view filter; changes no row state.
+    FlashPartsSelectedOnlyToggled(bool),
 }
 
 #[derive(Debug, Clone)]

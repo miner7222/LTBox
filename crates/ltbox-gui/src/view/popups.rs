@@ -273,7 +273,7 @@ impl App {
 
         let dont_show = m3_outlined_button(self.t("driver_dont_show_again").to_string())
             .on_press(Message::DismissDualUsbAdvisory(model.clone()));
-        let close = m3_filled_button(self.t("btn_close").to_string())
+        let close = m3_outlined_button(self.t("btn_close").to_string())
             .on_press(Message::CloseDualUsbAdvisory(model));
         let actions = row![dont_show, Space::new().width(Length::Fill), close];
         let subtitle = if self.dual_usb_help_name.is_empty()

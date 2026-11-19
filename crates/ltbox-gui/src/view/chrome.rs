@@ -157,7 +157,8 @@ impl App {
                     .into(),
                 row![
                     Space::new().width(Length::Fill),
-                    m3_text_button(self.t("btn_close").to_string()).on_press(Message::HelpClose)
+                    m3_outlined_button(self.t("btn_close").to_string())
+                        .on_press(Message::HelpClose)
                 ]
                 .into(),
                 theme::DIALOG_WIDTH_MD,

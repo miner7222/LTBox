@@ -161,17 +161,9 @@ pub(crate) enum AdvAction {
 }
 impl AdvAction {
     /// Whether this action writes to the device rather than reading from it or
-    /// transforming a local file. The Advanced grid renders these on the
-    /// `error` role so a flash tile is not interchangeable with a dump tile.
-    pub(crate) fn is_destructive(&self) -> bool {
-        matches!(
-            self,
-            Self::FlashPartitions | Self::FlashPhysical | Self::SimpleFlash
-        )
-    }
-
-    /// Whether this action's Start writes to the device. Decides the
-    /// destructive role of its wizard Start.
+    /// transforming a local file. The single source of truth for the grid's
+    /// "Writes to Device" chip and error-role card, the same chip in the tool's
+    /// app bar, and the destructive role of its wizard Start.
     pub(crate) fn writes_to_device(&self) -> bool {
         matches!(
             self,
@@ -228,6 +220,26 @@ impl AdvAction {
             // SimpleFlash uses a dedicated wizard (folder picker on Next),
             // not the generic source tile — reuse the flash-folder caption.
             Self::SimpleFlash => "flash_folder_desc",
+        }
+    }
+    /// Step-1 heading: an instruction naming what to pick, not the tool name
+    /// (the app bar already names the tool). Loader-first tools reuse the
+    /// shared loader title. Check Rollback Indexes keeps its own name because
+    /// its first step picks nothing unless the model needs a loader, and that
+    /// case is handled before this key is read.
+    pub(crate) fn source_title_key(&self) -> &'static str {
+        match self {
+            Self::RegionConvert => "adv_src_title_region_convert",
+            Self::ImageInfo => "adv_src_title_image_info",
+            Self::RebuildVbmeta => "adv_src_title_rebuild_vbmeta",
+            Self::ConvertXml => "adv_src_title_convert_xml",
+            Self::PatchArb | Self::SimpleFlash => "flash_folder_title",
+            Self::PatchDevinfo
+            | Self::DumpPartitions
+            | Self::DumpPhysical
+            | Self::FlashPartitions
+            | Self::FlashPhysical => "edl_loader_title",
+            Self::DetectArb => "adv_detect_arb",
         }
     }
     /// snake_case slug naming the action's auto-output directory

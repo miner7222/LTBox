@@ -434,6 +434,7 @@ impl App {
                 self.flash_parts.scan_error = None;
                 self.flash_parts.rows.clear();
                 self.flash_parts.search.clear();
+                self.flash_parts.set_selected_only(false);
                 let conn = self.device.connection;
                 self.log_push(format!(
                     "[FlashParts] {}",
@@ -475,6 +476,10 @@ impl App {
             }
             FlashPartsMsg::FlashPartsSearchInput(query) => {
                 self.flash_parts.search = query;
+                Task::none()
+            }
+            FlashPartsMsg::FlashPartsSelectedOnlyToggled(on) => {
+                self.flash_parts.set_selected_only(on);
                 Task::none()
             }
             FlashPartsMsg::FlashPartsExecStart => {
@@ -1001,11 +1006,8 @@ impl App {
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            ltbox_core::runtime::run_heavy(move || {
-                                ltbox_patch::avb::image_info_report(&paths)
-                                    .map_err(|e| e.to_string())
-                            })
-                            .and_then(|r| r)
+                            ltbox_core::runtime::run_heavy(move || image_info_report(&paths))
+                                .and_then(|r| r)
                         })
                         .await
                         .unwrap_or_else(|e| Err(tr_args!("err_task_failed_with_error", error = e)))
@@ -1080,5 +1082,40 @@ impl App {
                 Task::none()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flash_parts_scan_start_clears_the_selected_only_filter_and_its_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        let loader = dir.path().join("prog_firehose.mbn");
+        std::fs::write(&loader, b"loader").unwrap();
+
+        let mut app = App::default();
+        app.flash_parts.loader_path = Some(loader.to_string_lossy().into_owned());
+        app.flash_parts.rows.push(FlashPartRow {
+            lun: 0,
+            label: "boot_a".to_string(),
+            start_sector: 0,
+            num_sectors: 1,
+            size_bytes: 512,
+            file_path: None,
+            state: FlashRowState::Erase,
+        });
+        drop(app.update(Message::FlashParts(
+            FlashPartsMsg::FlashPartsSelectedOnlyToggled(true),
+        )));
+        assert!(app.flash_parts.selected_only);
+        assert_eq!(app.flash_parts.selected_only_pinned.len(), 1);
+
+        // Dropping the returned task does not run the GPT scan worker.
+        drop(app.update(Message::FlashParts(FlashPartsMsg::FlashPartsScanStart)));
+        assert!(app.flash_parts.scanning, "scan start must have run");
+        assert!(!app.flash_parts.selected_only);
+        assert!(app.flash_parts.selected_only_pinned.is_empty());
     }
 }

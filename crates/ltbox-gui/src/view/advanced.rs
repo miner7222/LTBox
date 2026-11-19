@@ -44,8 +44,14 @@ impl App {
             let mut rows = column![].spacing(8.0);
             for chunk in section.items.chunks(columns) {
                 let mut r = row![].spacing(8.0).width(Length::Fill);
+                let height = adv_grid_card_height(columns);
                 for &item in chunk {
-                    r = r.push(adv_grid_btn(item, self.t(item.label_key())));
+                    r = r.push(adv_grid_btn(
+                        item,
+                        self.t(item.label_key()),
+                        self.t(item.desc_key()),
+                        height,
+                    ));
                 }
                 for _ in chunk.len()..columns {
                     r = r.push(Space::new().width(Length::Fill));
@@ -249,8 +255,15 @@ impl App {
             } else {
                 WizardPrimaryRole::Primary
             };
-            wizard_nav_generic_with_disabled_next_tooltip(
-                true,
+            // Back on the first step closes the wizard, so it is the only
+            // leading button there; later steps keep Cancel plus Back.
+            let leading_action = if self.adv_wizard.step == 0 {
+                WizardLeadingAction::Cancel
+            } else {
+                WizardLeadingAction::Back
+            };
+            wizard_nav_generic_with_leading_action(
+                leading_action,
                 &label,
                 primary_role,
                 can,
@@ -262,7 +275,14 @@ impl App {
         };
 
         column![
-            wizard_action_bar(self.window_size_class(), flow_title, app_bar_subtitle),
+            wizard_action_bar_with_chip(
+                self.window_size_class(),
+                flow_title,
+                app_bar_subtitle,
+                self.adv_wizard
+                    .action
+                    .is_some_and(|action| action.writes_to_device()),
+            ),
             step_bar,
             body,
             nav,
@@ -311,7 +331,7 @@ impl App {
             } else {
                 self.t(action.source_desc_key()).to_string()
             };
-            (self.t(action.label_key()).to_string(), subtitle)
+            (self.t(action.source_title_key()).to_string(), subtitle)
         };
 
         Some((title, Some(subtitle)))
@@ -376,22 +396,12 @@ impl App {
     /// Step 1 for Change Country Code: pick the EDL loader (the device is
     /// transitioned to EDL with it). Same loader-browse the DetectArb step uses.
     pub(crate) fn adv_wiz_loader_step(&self) -> Element<'_, Message> {
-        let mut content = column![self.wizard_picker_row(
-            self.adv_wizard.file_path.as_deref(),
-            PickerPathKind::File,
-            Some(Message::Adv(AdvMsg::AdvWizBrowse)),
-            None
-        ),]
-        .spacing(6)
-        .width(Length::Fill);
-        content = content.push(self.recent_file_chips(
-            self.loader_picker_exts(),
+        self.loader_picker_card(
+            &self.adv_wizard.file_path,
+            None,
+            Message::Adv(AdvMsg::AdvWizBrowse),
             |p| Message::Adv(AdvMsg::AdvWizBrowseDone(Some(p))),
-            "picker_recents",
-        ));
-        scrollable(content.padding(PICKER_BODY_PADDING))
-            .height(Length::Fill)
-            .into()
+        )
     }
 
     /// Step 1 for `RegionConvert`: selection card that opens the target picker
@@ -553,6 +563,7 @@ impl App {
         let editor = iced::widget::text_editor(&self.image_info_log_editor)
             .on_action(Message::ImageInfoLogEditorAction)
             .size(11.0)
+            .font(theme::mono_font())
             .height(Length::Fill)
             .padding(iced::Padding {
                 top: 0.0,
@@ -575,13 +586,21 @@ impl App {
             .height(Length::Fill);
 
         if !self.operation.is_running() {
-            actions = actions.push(wizard_primary_action(
-                icon::fab_start_over(),
-                self.t("btn_start_over").to_string(),
-                Some(Message::StartOver),
-                None,
-                false,
-            ));
+            // StartOver returns to the Advanced grid; Start Over reopens this
+            // tool at its image picker.
+            actions = actions
+                .push(wizard_secondary_action(
+                    icon::fab_back(),
+                    self.t("btn_back_to_advanced").to_string(),
+                    Some(Message::StartOver),
+                ))
+                .push(wizard_primary_action(
+                    icon::fab_start_over(),
+                    self.t("btn_start_over").to_string(),
+                    Some(Message::Adv(AdvMsg::AdvWizOpen(AdvAction::ImageInfo))),
+                    None,
+                    false,
+                ));
         }
 
         let body = column![m3_log_text_field(
@@ -643,8 +662,15 @@ impl App {
             } else {
                 WizardPrimaryRole::Primary
             };
-            wizard_nav_generic_with_disabled_next_tooltip(
-                true,
+            // Back on the intro step returns to the Advanced grid, so it is the
+            // only leading button there.
+            let leading_action = if self.simple_flash.step == 0 {
+                WizardLeadingAction::Cancel
+            } else {
+                WizardLeadingAction::Back
+            };
+            wizard_nav_generic_with_leading_action(
+                leading_action,
                 &label,
                 primary_role,
                 can,
@@ -662,10 +688,11 @@ impl App {
             empty_wizard_nav()
         };
         column![
-            wizard_action_bar(
+            wizard_action_bar_with_chip(
                 self.window_size_class(),
                 self.t("adv_simple_flash").to_string(),
                 app_bar_subtitle,
+                AdvAction::SimpleFlash.writes_to_device(),
             ),
             step_bar,
             body,
@@ -678,7 +705,7 @@ impl App {
 
     fn simple_flash_step_copy(&self) -> (String, Option<String>) {
         let title_key = match self.simple_flash.step {
-            0 => "adv_simple_flash",
+            0 => AdvAction::SimpleFlash.source_title_key(),
             1 => "flash_confirm_title",
             _ => {
                 let (title, _) = self.exec_status_copy();
@@ -711,6 +738,11 @@ impl App {
                     "picker_recents",
                     false
                 ),
+                text(self.t("adv_simple_flash_note").to_string())
+                    .size(theme::text_size::BODY_SMALL)
+                    .style(muted_style)
+                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::Word),
             ]
             .spacing(6)
             .padding(PICKER_BODY_PADDING)

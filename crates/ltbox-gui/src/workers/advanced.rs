@@ -5,6 +5,57 @@
 use crate::{AdvAction, DeviceRegion, PhaseReporter};
 use ltbox_core::tr_args;
 
+/// Section separator `ltbox_patch::avb::image_info_report` puts between images.
+const IMAGE_INFO_SEPARATOR: &str = "
+================================================================
+
+";
+
+/// Inspect local image files, read-only: the per-image `avbtool info_image`
+/// report, headed with how many images were inspected and how many carried AVB
+/// metadata. A 0-byte file is reported as an invalid image, not as "no
+/// metadata". Never touches a device.
+pub(crate) fn image_info_report(paths: &[std::path::PathBuf]) -> Result<String, String> {
+    if paths.is_empty() {
+        return ltbox_patch::avb::image_info_report(paths).map_err(|e| e.to_string());
+    }
+    let mut sections = Vec::with_capacity(paths.len());
+    let mut with_avb = 0usize;
+    for path in paths {
+        let empty = std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() == 0);
+        if empty {
+            // Same two header lines the multi-image report prints, then the verdict.
+            sections.push(format!(
+                "Image:                   {}
+File size:               0 bytes
+{}",
+                path.display(),
+                ltbox_core::i18n::tr("adv_image_info_empty_file")
+            ));
+            continue;
+        }
+        let section = ltbox_patch::avb::image_info_report(std::slice::from_ref(path))
+            .map_err(|e| e.to_string())?;
+        // Ok only when the image parses as AVB (footer or vbmeta); plain and
+        // malformed images already say so in their section.
+        if ltbox_patch::avb::extract_image_avb_info(path).is_ok() {
+            with_avb += 1;
+        }
+        sections.push(section);
+    }
+    let heading = tr_args!(
+        "adv_image_info_result",
+        count = paths.len().to_string(),
+        avb = with_avb.to_string()
+    );
+    Ok(format!(
+        "{heading}
+
+{}",
+        sections.join(IMAGE_INFO_SEPARATOR)
+    ))
+}
+
 /// Prepare both images before modifying firmware. Backups are never overwritten.
 pub(crate) fn patch_firmware_rollback(
     folder: &std::path::Path,

@@ -1,6 +1,7 @@
 //! Flash Partitions and Dump Partitions wizard state (Advanced).
 
 use super::*;
+use std::collections::HashSet;
 
 /// The only three actions a partition row can represent.
 ///
@@ -151,6 +152,20 @@ pub(crate) struct FlashPartsWizard {
     pub(crate) sort_desc: bool,
     /// Select-step table filter; hides rows without changing their state.
     pub(crate) search: String,
+    /// Select-step view filter: show only rows that are not `Skip`. Like
+    /// `search`, it hides rows without changing what is written or erased.
+    pub(crate) selected_only: bool,
+    /// Rows that were non-`Skip` when `selected_only` was switched on. They
+    /// stay visible even if cycled back to `Skip`, so the table does not
+    /// shift under the cursor mid-click. Cleared with the filter.
+    pub(crate) selected_only_pinned: HashSet<FlashRowKey>,
+}
+
+/// Stable row identity for the visible-set pin; survives re-sorting.
+pub(crate) type FlashRowKey = (u8, String, u64);
+
+fn flash_row_key(row: &FlashPartRow) -> FlashRowKey {
+    (row.lun, row.label.clone(), row.start_sector)
 }
 
 pub(crate) const FLASH_PARTS_STEPS: &[&str] = &[
@@ -161,13 +176,33 @@ pub(crate) const FLASH_PARTS_STEPS: &[&str] = &[
 ];
 
 impl FlashPartsWizard {
-    /// Rows the table shows under the current search, with their index in
-    /// `rows` so row messages keep addressing the right entry.
+    /// Rows the table shows under the current search and the Selected-only
+    /// filter, with their index in `rows` so row messages keep addressing the
+    /// right entry. A `Write` row still waiting for its image counts as
+    /// selected, so the row that blocks Next never hides. A row that was
+    /// selected when the filter went on stays until the filter is turned off.
     pub(crate) fn visible_rows(&self) -> impl Iterator<Item = (usize, &FlashPartRow)> {
-        self.rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| partition_label_matches(&row.label, &self.search))
+        self.rows.iter().enumerate().filter(|(_, row)| {
+            partition_label_matches(&row.label, &self.search)
+                && (!self.selected_only
+                    || row.state != FlashRowState::Skip
+                    || self.selected_only_pinned.contains(&flash_row_key(row)))
+        })
+    }
+
+    /// Switch the Selected-only filter. Turning it on pins the rows that are
+    /// selected right now; turning it off (or re-applying) drops the pins.
+    pub(crate) fn set_selected_only(&mut self, on: bool) {
+        self.selected_only_pinned.clear();
+        if on {
+            self.selected_only_pinned = self
+                .rows
+                .iter()
+                .filter(|row| row.state != FlashRowState::Skip)
+                .map(flash_row_key)
+                .collect();
+        }
+        self.selected_only = on;
     }
 
     pub(crate) fn active_rows(&self) -> Vec<FlashPartRow> {
@@ -437,6 +472,123 @@ mod search_tests {
         wizard.toggle_visible();
         let selected: Vec<_> = wizard.rows.iter().map(|row| row.selected).collect();
         assert_eq!(selected, [true, false, false]);
+    }
+
+    fn flash_row(label: &str, state: FlashRowState, file: Option<&str>) -> FlashPartRow {
+        FlashPartRow {
+            lun: 0,
+            label: label.to_string(),
+            start_sector: 0,
+            num_sectors: 1,
+            size_bytes: 512,
+            file_path: file.map(str::to_string),
+            state,
+        }
+    }
+
+    fn flash_wizard() -> FlashPartsWizard {
+        FlashPartsWizard {
+            step: 1,
+            rows: vec![
+                flash_row("abl_a", FlashRowState::Skip, None),
+                flash_row("boot_a", FlashRowState::Write, Some("boot.img")),
+                flash_row("boot_b", FlashRowState::Skip, None),
+                flash_row("vendor_boot_a", FlashRowState::Write, None),
+                flash_row("userdata", FlashRowState::Erase, None),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn selected_only_shows_every_non_skip_row_with_its_original_index() {
+        let mut wizard = flash_wizard();
+        wizard.selected_only = true;
+        let indices: Vec<_> = wizard.visible_rows().map(|(idx, _)| idx).collect();
+        // The pending Write (3) stays visible: it is the row blocking Next.
+        assert_eq!(indices, [1, 3, 4]);
+    }
+
+    #[test]
+    fn selected_only_combines_with_the_search() {
+        let mut wizard = flash_wizard();
+        wizard.selected_only = true;
+        wizard.search = "boot".to_string();
+        let indices: Vec<_> = wizard.visible_rows().map(|(idx, _)| idx).collect();
+        assert_eq!(indices, [1, 3]);
+
+        wizard.selected_only = false;
+        let indices: Vec<_> = wizard.visible_rows().map(|(idx, _)| idx).collect();
+        assert_eq!(indices, [1, 2, 3]);
+    }
+
+    #[test]
+    fn selected_only_never_changes_what_is_written_or_erased() {
+        let snapshot = |wizard: &FlashPartsWizard| {
+            let states: Vec<_> = wizard
+                .rows
+                .iter()
+                .map(|row| (row.label.clone(), row.state, row.file_path.clone()))
+                .collect();
+            let active: Vec<_> = wizard
+                .active_rows()
+                .into_iter()
+                .map(|row| (row.label, row.state, row.file_path))
+                .collect();
+            (states, active, wizard.can_next())
+        };
+        let mut wizard = flash_wizard();
+        let before = snapshot(&wizard);
+        wizard.selected_only = true;
+        wizard.search = "zzz".to_string();
+        assert_eq!(wizard.visible_rows().count(), 0);
+        assert_eq!(snapshot(&wizard), before);
+
+        // Clearing the pending Write makes the run startable either way.
+        wizard.rows[3].clear_file();
+        let with_filter = snapshot(&wizard);
+        wizard.selected_only = false;
+        wizard.search.clear();
+        assert_eq!(snapshot(&wizard), with_filter);
+        assert!(with_filter.2);
+    }
+
+    #[test]
+    fn selected_only_starts_off_and_reset_clears_it() {
+        let mut wizard = flash_wizard();
+        assert!(!wizard.selected_only);
+        wizard.set_selected_only(true);
+        assert!(!wizard.selected_only_pinned.is_empty());
+        wizard.reset();
+        assert!(!wizard.selected_only);
+        assert!(wizard.selected_only_pinned.is_empty());
+    }
+
+    #[test]
+    fn selected_only_keeps_a_row_visible_after_it_cycles_back_to_skip() {
+        let mut wizard = flash_wizard();
+        wizard.set_selected_only(true);
+        let labels = |wizard: &FlashPartsWizard| -> Vec<String> {
+            wizard
+                .visible_rows()
+                .map(|(_, r)| r.label.clone())
+                .collect()
+        };
+        assert_eq!(labels(&wizard), ["boot_a", "vendor_boot_a", "userdata"]);
+
+        // Erase -> Skip on the last row: it must not vanish or shift others.
+        wizard.rows[4].advance_action();
+        assert_eq!(wizard.rows[4].state, FlashRowState::Skip);
+        assert_eq!(labels(&wizard), ["boot_a", "vendor_boot_a", "userdata"]);
+
+        // Turning the filter off and on again re-pins from the current state.
+        wizard.set_selected_only(false);
+        assert!(wizard.selected_only_pinned.is_empty());
+        wizard.set_selected_only(true);
+        assert_eq!(labels(&wizard), ["boot_a", "vendor_boot_a"]);
+
+        // The visible set never changes what the worker receives.
+        assert_eq!(wizard.active_rows().len(), 1);
     }
 
     #[test]
