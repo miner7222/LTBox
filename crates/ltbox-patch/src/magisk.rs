@@ -36,8 +36,10 @@ pub fn derive_encrypt_type(
 /// Resolve Magisk's `PREINITDEVICE` partition name from `/proc/self/mountinfo`.
 /// Returns the bare partition name (e.g. `"metadata"`), not a block path.
 ///
-/// Priority: `/metadata` > `/persist` | `/mnt/vendor/persist` > `/klogdump` >
-/// `/cache` > `/data`. Within a tier, ext4 beats f2fs. Read-only, non-`/`-root,
+/// Ranking follows Magisk v31.1 `find_preinit_device` (`native/src/core/mount.rs`):
+/// ext4 beats f2fs (an f2fs kernel bug can panic), except that `/metadata` is
+/// compared by mount point only; then `/data` > `/cache` > `/klogdump` >
+/// `/metadata` > `/persist` | `/mnt/vendor/persist`. Read-only, non-`/`-root,
 /// pseudo-fs, and device-mapper mounts are filtered out.
 ///
 /// `encrypt_type` gates `/data` eligibility: `"none"` (plain) and `"file"`
@@ -48,30 +50,33 @@ pub fn derive_encrypt_type(
 /// carries `/by-name/` or contains `/vd`, so a super-partition lvm mapping that
 /// disappears at next boot is never picked.
 pub fn resolve_preinit_device(mountinfo: &str, encrypt_type: &str) -> Option<String> {
-    const PRIO_METADATA: u32 = 5;
-    const PRIO_PERSIST: u32 = 4;
-    const PRIO_KLOGDUMP: u32 = 3;
-    const PRIO_CACHE: u32 = 2;
-    const PRIO_DATA: u32 = 1;
-
     const DYN_MAJOR_MIN: u32 = 240;
     const DYN_MAJOR_MAX: u32 = 254;
 
     let data_ok = encrypt_type == "none" || encrypt_type == "file";
 
-    let priority_for_mount = |target: &str| -> Option<u32> {
+    // Upstream `PartId` order: smaller is preferred.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum PartId {
+        Data,
+        Cache,
+        Klogdump,
+        Metadata,
+        Persist,
+    }
+    let part_for_mount = |target: &str| -> Option<PartId> {
         match target {
-            "/metadata" => Some(PRIO_METADATA),
-            "/persist" | "/mnt/vendor/persist" => Some(PRIO_PERSIST),
-            "/klogdump" => Some(PRIO_KLOGDUMP),
-            "/cache" => Some(PRIO_CACHE),
-            "/data" if data_ok => Some(PRIO_DATA),
+            "/persist" | "/mnt/vendor/persist" => Some(PartId::Persist),
+            "/metadata" => Some(PartId::Metadata),
+            "/klogdump" => Some(PartId::Klogdump),
+            "/cache" => Some(PartId::Cache),
+            "/data" if data_ok => Some(PartId::Data),
             _ => None,
         }
     };
 
-    // (priority, fs_preference, partition_name); higher tuple wins under Ord (ext4=1, f2fs=0).
-    let mut candidates: Vec<(u32, u32, String)> = Vec::new();
+    // (mount point, is_ext4, partition_name) in mountinfo order.
+    let mut candidates: Vec<(PartId, bool, String)> = Vec::new();
 
     for line in mountinfo.lines() {
         // mountinfo: `mount_id parent major:minor root mount_point options - fs_type source super_options`
@@ -129,19 +134,33 @@ pub fn resolve_preinit_device(mountinfo: &str, encrypt_type: &str) -> Option<Str
             continue;
         }
 
-        let Some(prio) = priority_for_mount(target) else {
+        let Some(part) = part_for_mount(target) else {
             continue;
         };
-        let fs_pref = if fs_type == "ext4" { 1 } else { 0 };
         let name = source.rsplit('/').next().unwrap_or("").to_string();
         if name.is_empty() {
             continue;
         }
-        candidates.push((prio, fs_pref, name));
+        candidates.push((part, fs_type == "ext4", name));
     }
 
-    candidates.sort_by(|a, b| b.cmp(a));
-    candidates.into_iter().next().map(|(_, _, name)| name)
+    // Same comparator as upstream; `Less` means preferred.
+    use std::cmp::Ordering;
+    let compare = |(a, a_ext4, _): &&(PartId, bool, String),
+                   (b, b_ext4, _): &&(PartId, bool, String)|
+     -> Ordering {
+        match (a, b, a_ext4, b_ext4) {
+            // metadata is not affected by the f2fs kernel bug
+            (PartId::Metadata, _, _, true) | (_, PartId::Metadata, true, _) => a.cmp(b),
+            (_, _, true, false) => Ordering::Less,
+            (_, _, false, true) => Ordering::Greater,
+            _ => a.cmp(b),
+        }
+    };
+    candidates
+        .iter()
+        .min_by(compare)
+        .map(|(_, _, name)| name.clone())
 }
 
 /// Staged name of the stub APK. Present only for Magisk releases that still
@@ -445,6 +464,79 @@ mod tests {
         assert_eq!(
             resolve_preinit_device(&info, "file").as_deref(),
             Some("vendor_persist")
+        );
+    }
+
+    /// Magisk v31.1 `find_preinit_device` order: data > cache > klogdump >
+    /// metadata > persist, ext4 over f2fs except against metadata.
+    #[test]
+    fn ranking_matches_magisk_v31_1() {
+        let pick = |mounts: &[(&str, &str, &str)], crypto: &str| {
+            let info = mounts
+                .iter()
+                .map(|(target, fs, name)| {
+                    line(
+                        target,
+                        "rw,seclabel",
+                        fs,
+                        &format!("/dev/block/by-name/{name}"),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            resolve_preinit_device(&info, crypto)
+        };
+        let metadata = ("/metadata", "ext4", "metadata");
+        // Usable /data wins over metadata on the same fs type.
+        assert_eq!(
+            pick(&[metadata, ("/data", "ext4", "userdata")], "file").as_deref(),
+            Some("userdata")
+        );
+        // Metadata-encrypted /data is never eligible.
+        assert_eq!(
+            pick(&[metadata, ("/data", "ext4", "userdata")], "metadata").as_deref(),
+            Some("metadata")
+        );
+        // An ext4 metadata beats f2fs data; an f2fs metadata still loses to ext4 data.
+        assert_eq!(
+            pick(&[metadata, ("/data", "f2fs", "userdata")], "file").as_deref(),
+            Some("metadata")
+        );
+        assert_eq!(
+            pick(
+                &[
+                    ("/metadata", "f2fs", "metadata"),
+                    ("/data", "ext4", "userdata")
+                ],
+                "file"
+            )
+            .as_deref(),
+            Some("userdata")
+        );
+        // Cache beats metadata; metadata beats persist even as f2fs vs ext4.
+        assert_eq!(
+            pick(&[metadata, ("/cache", "ext4", "cache")], "metadata").as_deref(),
+            Some("cache")
+        );
+        assert_eq!(
+            pick(
+                &[
+                    ("/persist", "ext4", "persist"),
+                    ("/metadata", "f2fs", "metadata")
+                ],
+                "metadata"
+            )
+            .as_deref(),
+            Some("metadata")
+        );
+        // Outside metadata, ext4 wins across mount points.
+        assert_eq!(
+            pick(
+                &[("/cache", "f2fs", "cache"), ("/persist", "ext4", "persist")],
+                "metadata"
+            )
+            .as_deref(),
+            Some("persist")
         );
     }
 
