@@ -151,6 +151,42 @@ impl App {
         )
     }
 
+    /// The device card body while nothing is connected: a title and the three
+    /// steps that get a tablet detected.
+    fn dashboard_no_device_steps(&self) -> Element<'_, Message> {
+        let step = |number: &'static str, key: &'static str| -> Element<'_, Message> {
+            row![
+                container(
+                    text(number)
+                        .size(theme::text_size::BODY_MEDIUM)
+                        .font(theme::emphasis::medium())
+                        .style(muted_style),
+                )
+                .width(Length::Fixed(20.0)),
+                text(self.t(key).to_string())
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .line_height(iced::widget::text::LineHeight::Absolute(20.0.into()))
+                    .width(Length::Fill),
+            ]
+            .spacing(8.0)
+            .width(Length::Fill)
+            .into()
+        };
+        column![
+            text(self.t("dash_no_device_title").to_string())
+                .size(theme::text_size::BODY_MEDIUM)
+                .font(theme::emphasis::medium()),
+            step("1", "dash_no_device_step_debugging"),
+            step("2", "dash_no_device_step_cable"),
+            step("3", "dash_no_device_step_prompt"),
+            Space::new().height(2.0),
+        ]
+        .spacing(8.0)
+        .padding([6.0, 0.0])
+        .width(Length::Fill)
+        .into()
+    }
+
     pub(crate) fn view_dashboard(&self) -> Element<'_, Message> {
         iced::widget::responsive(move |size| self.dashboard_at_height(size.height)).into()
     }
@@ -174,10 +210,12 @@ impl App {
         // Shows only the rollback policy; committed floors are deliberately not
         // rendered here, even when fastboot supplied them.
         let arb_key = arb_from_model(&self.device.model);
-        let arb_display = if arb_key.is_empty() {
-            "—".to_string()
-        } else {
-            self.t(arb_key).to_string()
+        // Dedicated on/off keys: the shared yes/no wording reads as an answer
+        // to a question the row never asks.
+        let arb_display = match arb_key {
+            "" => "—".to_string(),
+            "arb_yes" => self.t("dash_rollback_on").to_string(),
+            _ => self.t("dash_rollback_off").to_string(),
         };
         let arb = arb_display.as_str();
         let ram = if self.device.ram.is_empty() {
@@ -216,7 +254,7 @@ impl App {
             banners.push(self.message_banner_with_trailing(
                 BannerSeverity::Warning,
                 icon::banner_warning(),
-                self.t("banner_warning_title").to_string(),
+                self.t("dash_adb_server_title").to_string(),
                 msg,
                 Some(kill_btn.into()),
             ));
@@ -370,24 +408,39 @@ impl App {
         ]
         .spacing(8.0)
         .align_y(iced::Alignment::Center);
+        // No tablet: the table would be four rows of dashes, so say what to do.
+        let details: Element<'_, Message> = if self.device.connection == ConnectionStatus::None {
+            self.dashboard_no_device_steps()
+        } else {
+            column![
+                dashboard_definition_row(
+                    text(format!(
+                        "{} · {}",
+                        self.t("device_ram"),
+                        self.t("device_storage")
+                    ))
+                    .size(theme::text_size::LABEL_SMALL)
+                    .style(muted_style)
+                    .into(),
+                    value(format!("{ram} · {storage}")),
+                    true,
+                ),
+                dashboard_definition_row(label("device_slot"), value(slot.to_string()), true,),
+                dashboard_definition_row(rollback_label, rollback_value, true),
+                dashboard_definition_row(
+                    label("device_firmware"),
+                    value(firmware.to_string()),
+                    false,
+                ),
+            ]
+            .spacing(0)
+            .width(Length::Fill)
+            .into()
+        };
         let device_card_inner = column![
             identity,
             Space::new().height(12.0),
-            dashboard_definition_row(
-                text(format!(
-                    "{} · {}",
-                    self.t("device_ram"),
-                    self.t("device_storage")
-                ))
-                .size(theme::text_size::LABEL_SMALL)
-                .style(muted_style)
-                .into(),
-                value(format!("{ram} · {storage}")),
-                true,
-            ),
-            dashboard_definition_row(label("device_slot"), value(slot.to_string()), true,),
-            dashboard_definition_row(rollback_label, rollback_value, true),
-            dashboard_definition_row(label("device_firmware"), value(firmware.to_string()), false,),
+            details,
             iced::widget::rule::horizontal(1).style(shell_rule_style),
             Space::new().height(14.0),
             quick_actions,
