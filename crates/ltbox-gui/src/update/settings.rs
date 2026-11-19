@@ -30,7 +30,24 @@ impl App {
                     self.t("settings_font_restart_required").to_string(),
                 ))
             }
+            SettingsMsg::RequestQcomDriverMode(mode) => {
+                if self.operation.is_running() {
+                    return Task::none();
+                }
+                // Clamp first so a mode the host cannot use never opens a
+                // dialog; choosing the current mode is a no-op.
+                let mode = effective_qcom_driver_mode(mode);
+                self.pending_qcom_driver_mode = (mode != self.qcom_driver_mode).then_some(mode);
+                Task::none()
+            }
+            SettingsMsg::CancelQcomDriverMode => {
+                self.pending_qcom_driver_mode = None;
+                Task::none()
+            }
             SettingsMsg::SetQcomDriverMode(mode) => {
+                // The confirm dialog is answered either way, even when the
+                // switch below is refused.
+                self.pending_qcom_driver_mode = None;
                 if self.operation.is_running() {
                     return Task::none();
                 }
@@ -140,5 +157,92 @@ impl App {
             },
             |bytes| Message::Settings(SettingsMsg::TempScanDone(bytes)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ltbox_device::driver::QcomDriverMode;
+
+    /// Kernel is the stored mode; Userspace is the target. Userspace is
+    /// supported on every host, so the tests need no platform branch.
+    fn app_in_kernel_mode() -> App {
+        App {
+            qcom_driver_mode: QcomDriverMode::Kernel,
+            ..App::default()
+        }
+    }
+
+    #[test]
+    fn requesting_a_different_driver_mode_only_opens_the_dialog() {
+        let mut app = app_in_kernel_mode();
+        let _ = app.update_settings(SettingsMsg::RequestQcomDriverMode(
+            QcomDriverMode::Userspace,
+        ));
+        assert_eq!(
+            app.pending_qcom_driver_mode,
+            Some(QcomDriverMode::Userspace)
+        );
+        assert_eq!(app.qcom_driver_mode, QcomDriverMode::Kernel);
+    }
+
+    #[test]
+    fn requesting_the_current_driver_mode_does_nothing() {
+        let mut app = app_in_kernel_mode();
+        let _ = app.update_settings(SettingsMsg::RequestQcomDriverMode(QcomDriverMode::Kernel));
+        // Kernel clamps to Userspace on a host without kernel support, so
+        // only assert the no-op where Kernel is the effective request.
+        if ltbox_device::driver::kernel_mode_supported() {
+            assert_eq!(app.pending_qcom_driver_mode, None);
+        }
+        assert_eq!(app.qcom_driver_mode, QcomDriverMode::Kernel);
+    }
+
+    #[test]
+    fn cancelling_leaves_the_stored_driver_mode_unchanged() {
+        let mut app = app_in_kernel_mode();
+        let _ = app.update_settings(SettingsMsg::RequestQcomDriverMode(
+            QcomDriverMode::Userspace,
+        ));
+        let _ = app.update_settings(SettingsMsg::CancelQcomDriverMode);
+        assert_eq!(app.pending_qcom_driver_mode, None);
+        assert_eq!(app.qcom_driver_mode, QcomDriverMode::Kernel);
+    }
+
+    #[test]
+    fn confirming_runs_the_switch_and_closes_the_dialog() {
+        let previous = ltbox_device::driver::qcom_driver_mode();
+        let mut app = app_in_kernel_mode();
+        let _ = app.update_settings(SettingsMsg::RequestQcomDriverMode(
+            QcomDriverMode::Userspace,
+        ));
+        let _ = app.update_settings(SettingsMsg::SetQcomDriverMode(QcomDriverMode::Userspace));
+        // The switch sets a process-wide mode; put it back for other tests.
+        ltbox_device::driver::set_qcom_driver_mode(previous);
+        assert_eq!(app.pending_qcom_driver_mode, None);
+        assert_eq!(app.qcom_driver_mode, QcomDriverMode::Userspace);
+    }
+
+    #[test]
+    fn a_refused_switch_still_closes_the_dialog() {
+        let mut app = app_in_kernel_mode();
+        let _ = app.update_settings(SettingsMsg::RequestQcomDriverMode(
+            QcomDriverMode::Userspace,
+        ));
+        app.operation.start(None, OperationKind::Cleanup, None);
+        let _ = app.update_settings(SettingsMsg::SetQcomDriverMode(QcomDriverMode::Userspace));
+        assert_eq!(app.pending_qcom_driver_mode, None);
+        assert_eq!(app.qcom_driver_mode, QcomDriverMode::Kernel);
+    }
+
+    #[test]
+    fn no_dialog_opens_while_an_operation_runs() {
+        let mut app = app_in_kernel_mode();
+        app.operation.start(None, OperationKind::Cleanup, None);
+        let _ = app.update_settings(SettingsMsg::RequestQcomDriverMode(
+            QcomDriverMode::Userspace,
+        ));
+        assert_eq!(app.pending_qcom_driver_mode, None);
     }
 }

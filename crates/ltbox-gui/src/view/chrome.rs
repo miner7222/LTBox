@@ -77,6 +77,9 @@ impl App {
         if self.software_fix.confirm_open {
             layers.push(self.software_fix_confirm_dialog());
         }
+        if let Some(mode) = self.pending_qcom_driver_mode {
+            layers.push(self.qcom_driver_confirm_dialog(mode));
+        }
         if self.country_popup_open {
             layers.push(self.country_popup_view());
         }

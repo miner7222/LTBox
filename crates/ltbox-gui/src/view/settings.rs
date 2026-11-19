@@ -289,55 +289,6 @@ fn settings_action_style(
     }
 }
 
-fn settings_icon_action(
-    glyph: iced::widget::Text<'static, Theme, iced::Renderer>,
-    tip: String,
-    message: Option<Message>,
-    error_role: bool,
-) -> Element<'static, Message> {
-    let enabled = message.is_some();
-    let side = Length::Fixed(SETTINGS_CONTROL_HEIGHT);
-    let icon = lucide_icon(glyph, 18.0, move |t: &Theme| {
-        let p = pal_of(t);
-        if !enabled {
-            with_alpha(p.on_surface, 0.38)
-        } else if error_role {
-            p.error
-        } else {
-            p.on_surface_variant
-        }
-    });
-    let mut action = button(
-        container(icon)
-            .width(side)
-            .height(side)
-            .align_x(iced::alignment::Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center),
-    )
-    .padding(0)
-    .width(side)
-    .height(side)
-    .style(move |t: &Theme, status| {
-        let mut style = settings_action_style(t, status, enabled, error_role);
-        // Compact supplementary actions use standard icon buttons, not outlines.
-        style.border.width = 0.0;
-        style.border.radius = theme::shape::FULL.into();
-        style
-    });
-    if let Some(message) = message {
-        action = action.on_press(message);
-    }
-    widget::tooltip(
-        action,
-        container(text(tip).size(11.0))
-            .padding([6, 10])
-            .style(|t: &Theme| theme::tooltip_style(t, theme::shape::XS)),
-        widget::tooltip::Position::Top,
-    )
-    .gap(6.0)
-    .into()
-}
-
 fn settings_text_action(label: String, message: Option<Message>) -> Element<'static, Message> {
     let enabled = message.is_some();
     let content = container(
@@ -483,7 +434,7 @@ impl App {
                 (
                     label,
                     self.qcom_driver_mode == mode,
-                    Message::Settings(SettingsMsg::SetQcomDriverMode(mode)),
+                    Message::Settings(SettingsMsg::RequestQcomDriverMode(mode)),
                 )
             })
             .collect(),
@@ -530,7 +481,7 @@ impl App {
         let cleanup_enabled = !self.operation.is_running()
             && !self.cleaning_temp
             && matches!(self.temp_files_bytes, Some(bytes) if bytes > 0);
-        let cleanup_tip = if self.cleaning_temp {
+        let cleanup_label = if self.cleaning_temp {
             self.t("settings_cleanup_busy").to_string()
         } else {
             self.t("settings_cleanup_button").to_string()
@@ -542,8 +493,7 @@ impl App {
         let cleanup_description = tr_args!("settings_cleanup_desc", size = cleanup_size);
         let cleanup_message =
             cleanup_enabled.then_some(Message::Settings(SettingsMsg::CleanupTempFiles));
-        let cleanup_control =
-            settings_icon_action(icon::settings_clear(), cleanup_tip, cleanup_message, true);
+        let cleanup_control = settings_text_action(cleanup_label, cleanup_message);
         let cleanup_row = settings_row_with_help(
             self.t("settings_cleanup").to_string(),
             cleanup_description,

@@ -209,6 +209,9 @@ pub(crate) struct App {
     /// the upload lands. Not persisted.
     pub(crate) loader_memory_model: Option<String>,
     pub(crate) qcom_driver_mode: ltbox_device::driver::QcomDriverMode,
+    /// Driver mode awaiting confirmation in the Settings switch dialog. The
+    /// stored mode above changes only when the user confirms.
+    pub(crate) pending_qcom_driver_mode: Option<ltbox_device::driver::QcomDriverMode>,
     /// `true` while a Settings "Clean temporary files" sweep is running.
     pub(crate) cleaning_temp: bool,
     /// Cached on-disk size of removable temp files (`work_*` + `output_*`),
@@ -408,6 +411,7 @@ impl Default for App {
             remembered_edl_loaders: persisted.remembered_edl_loaders.clone(),
             loader_memory_model: None,
             qcom_driver_mode,
+            pending_qcom_driver_mode: None,
             cleaning_temp: false,
             temp_files_bytes: None,
             log_lines: vec![ready_log.clone()],

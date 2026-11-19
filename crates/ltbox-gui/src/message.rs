@@ -514,6 +514,12 @@ pub(crate) enum SettingsMsg {
     SetLanguage(Language),
     SetThemeSeed(ThemeSeed),
     SetUseSystemFont(bool),
+    /// Ask to switch the driver mode: opens the confirm dialog when the mode
+    /// differs from the current one. Changes nothing else.
+    RequestQcomDriverMode(ltbox_device::driver::QcomDriverMode),
+    /// Dismiss the driver-switch confirm dialog; the stored mode is unchanged.
+    CancelQcomDriverMode,
+    /// The switch itself. Sent only by the confirm dialog's action.
     SetQcomDriverMode(ltbox_device::driver::QcomDriverMode),
     /// Toggle whether a model's successfully-uploaded EDL loader is
     /// remembered and reused on its next loader step.

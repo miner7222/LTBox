@@ -137,6 +137,42 @@ impl App {
         ))
     }
 
+    /// Confirm dialog for a Qualcomm USB driver switch. Confirming sends the
+    /// unchanged `SetQcomDriverMode`; Cancel leaves the stored mode alone.
+    pub(crate) fn qcom_driver_confirm_dialog(
+        &self,
+        mode: ltbox_device::driver::QcomDriverMode,
+    ) -> Element<'_, Message> {
+        let mode_label = self.t(if mode.is_kernel() {
+            "settings_qcom_driver_mode_kernel"
+        } else {
+            "settings_qcom_driver_mode_userspace"
+        });
+        let body = tr_args!("settings_qcom_driver_confirm_body", mode = mode_label);
+        m3_dialog(popup_sections(
+            text(self.t("settings_qcom_driver_confirm_title").to_string())
+                .size(theme::text_size::DIALOG_HEADLINE)
+                .line_height(32.0 / 24.0),
+            text(body)
+                .size(theme::text_size::BODY_MEDIUM)
+                .style(muted_style),
+            row![
+                Space::new().width(Length::Fill),
+                m3_outlined_button(self.t("btn_cancel").to_string())
+                    .on_press(Message::Settings(SettingsMsg::CancelQcomDriverMode)),
+                m3_filled_button(self.t("settings_qcom_driver_confirm_action").to_string())
+                    .on_press_maybe(
+                        (!self.operation.is_running())
+                            .then_some(Message::Settings(SettingsMsg::SetQcomDriverMode(mode)))
+                    ),
+            ]
+            .spacing(10.0)
+            .align_y(iced::Alignment::Center),
+            theme::DIALOG_WIDTH_SM,
+            false,
+        ))
+    }
+
     /// Illustrated guide for the data-capable port on dual-USB-C tablets.
     pub(crate) fn dual_usb_help_dialog(&self) -> Element<'_, Message> {
         let model = self.dual_usb_help_model.clone();
