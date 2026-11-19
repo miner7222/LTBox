@@ -115,6 +115,15 @@ fn poll_active_slot_with(
             Ok(None) => {
                 last_adb_err = tr("slot_err_adb_no_device");
             }
+            // Which device to talk to is not settled: retrying until the deadline
+            // cannot fix it, so stop at once.
+            Err(
+                e @ (crate::adb::AdbError::AmbiguousTarget
+                | crate::adb::AdbError::TargetMismatch { .. }
+                | crate::adb::AdbError::Selection(_)),
+            ) => {
+                return Err(ControllerError::SlotResolve(e.to_string()));
+            }
             Err(e) => {
                 last_adb_err = tr_args!("slot_err_adb_probe_failed", error = e);
             }
@@ -144,7 +153,12 @@ fn poll_active_slot_with(
                     }
                 }
             }
-            Err(e @ crate::fastboot::FastbootError::MultipleDevices) => {
+            Err(
+                e @ (crate::fastboot::FastbootError::MultipleDevices
+                | crate::fastboot::FastbootError::AmbiguousTarget
+                | crate::fastboot::FastbootError::TargetMismatch { .. }
+                | crate::fastboot::FastbootError::Selection(_)),
+            ) => {
                 return Err(ControllerError::SlotResolve(e.to_string()));
             }
             Err(e) => {
@@ -185,6 +199,8 @@ mod tests {
 
     enum Reply {
         State(Option<&'static str>),
+        StateErr(fn() -> crate::adb::AdbError),
+        OpenErr(fn() -> crate::fastboot::FastbootError),
         Adb(Option<&'static str>),
         AdbFailure,
         Open(bool),
@@ -193,10 +209,11 @@ mod tests {
     struct Script(VecDeque<Reply>);
     impl SlotProbe for Script {
         fn adb_state(&mut self) -> Result<Option<&'static str>, crate::adb::AdbError> {
-            let Some(Reply::State(state)) = self.0.pop_front() else {
-                panic!("unexpected ADB probe")
-            };
-            Ok(state)
+            match self.0.pop_front() {
+                Some(Reply::State(state)) => Ok(state),
+                Some(Reply::StateErr(error)) => Err(error()),
+                _ => panic!("unexpected ADB probe"),
+            }
         }
         fn adb_slot(&mut self) -> Result<Option<String>, crate::adb::AdbError> {
             match self.0.pop_front() {
@@ -206,13 +223,11 @@ mod tests {
             }
         }
         fn fastboot_open(&mut self) -> Result<(), crate::fastboot::FastbootError> {
-            let Some(Reply::Open(ambiguous)) = self.0.pop_front() else {
-                panic!("unexpected Fastboot open")
-            };
-            if ambiguous {
-                Err(crate::fastboot::FastbootError::MultipleDevices)
-            } else {
-                Ok(())
+            match self.0.pop_front() {
+                Some(Reply::Open(true)) => Err(crate::fastboot::FastbootError::MultipleDevices),
+                Some(Reply::Open(false)) => Ok(()),
+                Some(Reply::OpenErr(error)) => Err(error()),
+                _ => panic!("unexpected Fastboot open"),
             }
         }
         fn fastboot_slot(&mut self) -> Result<Option<String>, crate::fastboot::FastbootError> {
@@ -314,5 +329,42 @@ mod tests {
         let (result, waits) = resolve(vec![Reply::State(None), Reply::Open(true)], 5);
         assert!(result.is_err());
         assert_eq!(waits, 0);
+    }
+
+    #[test]
+    fn adb_selection_errors_stop_without_retrying_or_trying_fastboot() {
+        use crate::adb::AdbError;
+        let errors: [fn() -> AdbError; 3] = [
+            || AdbError::AmbiguousTarget,
+            || AdbError::TargetMismatch {
+                expected: "A".into(),
+                found: "B".into(),
+            },
+            || AdbError::Selection("no successor".into()),
+        ];
+        for error in errors {
+            let (result, waits) = resolve(vec![Reply::StateErr(error)], 5);
+            assert!(result.is_err());
+            assert_eq!(waits, 0);
+        }
+    }
+
+    #[test]
+    fn fastboot_selection_errors_stop_without_retrying() {
+        use crate::fastboot::FastbootError;
+        let errors: [fn() -> FastbootError; 4] = [
+            || FastbootError::MultipleDevices,
+            || FastbootError::AmbiguousTarget,
+            || FastbootError::TargetMismatch {
+                expected: "A".into(),
+                found: "B".into(),
+            },
+            || FastbootError::Selection("no successor".into()),
+        ];
+        for error in errors {
+            let (result, waits) = resolve(vec![Reply::State(None), Reply::OpenErr(error)], 5);
+            assert!(result.is_err());
+            assert_eq!(waits, 0);
+        }
     }
 }

@@ -15,6 +15,14 @@ pub enum FastbootError {
     DeviceNotFound,
     #[error("Multiple fastboot devices found; disconnect all other devices and try again")]
     MultipleDevices,
+    #[error(
+        "Two attached fastboot devices report the chosen device's serial number; disconnect one and try again"
+    )]
+    AmbiguousTarget,
+    #[error("Wrong device: expected serial {expected}, found {found}")]
+    TargetMismatch { expected: String, found: String },
+    #[error("Device selection failed: {0}")]
+    Selection(String),
     #[error("Command failed: {0}")]
     CommandFailed(String),
 }
@@ -62,52 +70,27 @@ struct FastbootCandidate {
 
 impl FastbootDevice {
     pub fn open() -> Result<Self> {
+        use crate::selection::TargetIdentity;
+
+        match crate::selection::current_target() {
+            None => Self::open_untargeted(),
+            Some(TargetIdentity::Serial { serial }) => Self::open_target(&serial),
+            // An EDL-only target resolves in EDL by location and never in fastboot, so no
+            // fastboot device may be opened for it.
+            Some(TargetIdentity::EdlOnly { .. }) => Err(FastbootError::DeviceNotFound),
+        }
+    }
+
+    /// No session target: any single fastboot device, several are a hard error.
+    fn open_untargeted() -> Result<Self> {
         use nusb::MaybeFuture;
 
-        crate::selection::ensure_single_usb_target().map_err(map_target_selection_error)?;
+        crate::selection::ensure_untargeted_single().map_err(map_target_selection_error)?;
 
         let devices = nusb::list_devices()
             .wait()
             .map_err(|e| FastbootError::Usb(e.to_string()))?;
-        let mut candidates = Vec::new();
-        for device_info in devices {
-            // Windows whole-device WinUSB bindings have no interface summary.
-            // Descriptor reads may open a handle, but no interface is claimed
-            // until every physical candidate has been identified.
-            let mut interface_numbers = device_info
-                .interfaces()
-                .filter(|iface| {
-                    is_fastboot_interface(iface.class(), iface.subclass(), iface.protocol())
-                })
-                .map(|iface| iface.interface_number())
-                .collect::<Vec<_>>();
-            if interface_numbers.is_empty() {
-                if let Ok(device) = device_info.open().wait() {
-                    for config in device.configurations() {
-                        for iface in config.interfaces() {
-                            if iface.alt_settings().any(|alt| {
-                                is_fastboot_interface(alt.class(), alt.subclass(), alt.protocol())
-                            }) {
-                                interface_numbers.push(iface.interface_number());
-                            }
-                        }
-                    }
-                } else if is_fastboot_interface(
-                    device_info.class(),
-                    device_info.subclass(),
-                    device_info.protocol(),
-                ) {
-                    // Known but inaccessible candidates must still count.
-                    interface_numbers.push(0);
-                }
-            }
-            if !interface_numbers.is_empty() {
-                candidates.push(FastbootCandidate {
-                    device_info,
-                    interface_numbers,
-                });
-            }
-        }
+        let candidates = devices.filter_map(fastboot_candidate).collect::<Vec<_>>();
 
         claim_unique_candidate(
             candidates,
@@ -115,6 +98,50 @@ impl FastbootDevice {
             Self::open_candidate,
         )
         .map(|device| device.ok_or(FastbootError::DeviceNotFound))?
+    }
+
+    /// A `Serial` target is set: open only the device `selection::resolve` names, then check
+    /// `getvar serialno` before any other command. Other devices are never opened or claimed.
+    fn open_target(target_serial: &str) -> Result<Self> {
+        use nusb::MaybeFuture;
+
+        let Some(resolved) = crate::selection::resolve(crate::selection::DeviceMode::Fastboot)
+            .map_err(map_target_selection_error)?
+        else {
+            return Err(FastbootError::DeviceNotFound);
+        };
+        let resolved_serial = resolved.serial.as_deref().unwrap_or_default();
+
+        let devices = nusb::list_devices()
+            .wait()
+            .map_err(|e| FastbootError::Usb(e.to_string()))?;
+        // Only devices on the resolved port are inspected at all (no descriptor reads, no
+        // claim elsewhere); the pure filter below still compares location and serial.
+        let candidates = devices
+            .filter(|device_info| usb_location_of(device_info) == resolved.location)
+            .filter_map(fastboot_candidate)
+            .collect::<Vec<_>>();
+        let pairs = candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    usb_location_of(&candidate.device_info),
+                    usb_serial_of(&candidate.device_info),
+                )
+            })
+            .collect::<Vec<_>>();
+        let index = select_target_index(&pairs, &resolved.location, resolved_serial)?
+            .ok_or(FastbootError::DeviceNotFound)?;
+        let candidate = candidates
+            .into_iter()
+            .nth(index)
+            .ok_or(FastbootError::DeviceNotFound)?;
+
+        let mut device = Self::open_candidate(candidate)?;
+        // Dropping `device` on mismatch releases the claim; getvar is the first command sent.
+        let reported = device.getvar("serialno")?;
+        verify_target_serial(target_serial, &reported)?;
+        Ok(device)
     }
 
     fn open_candidate(candidate: FastbootCandidate) -> Result<Self> {
@@ -421,10 +448,114 @@ fn is_fastboot_interface(class: u8, subclass: u8, protocol: u8) -> bool {
 }
 
 fn map_target_selection_error(error: crate::selection::UsbSelectionError) -> FastbootError {
+    use crate::selection::UsbSelectionError;
+
     match error {
-        crate::selection::UsbSelectionError::MultipleDevices => FastbootError::MultipleDevices,
-        crate::selection::UsbSelectionError::Enumeration(error) => FastbootError::Usb(error),
-        other => FastbootError::Usb(other.to_string()),
+        UsbSelectionError::MultipleDevices => FastbootError::MultipleDevices,
+        UsbSelectionError::AmbiguousTarget => FastbootError::AmbiguousTarget,
+        UsbSelectionError::TargetMismatch { expected, found } => {
+            FastbootError::TargetMismatch { expected, found }
+        }
+        UsbSelectionError::Enumeration(error) => FastbootError::Usb(error),
+        // UnprovenSuccessor, UnmappedEdlPort and StatePoisoned concern EDL binding and
+        // internal state; fastboot reports them as plain selection failures.
+        other => FastbootError::Selection(other.to_string()),
+    }
+}
+
+/// Fastboot interface discovery for one nusb device. `None` if it exposes none.
+fn fastboot_candidate(device_info: nusb::DeviceInfo) -> Option<FastbootCandidate> {
+    use nusb::MaybeFuture;
+
+    // Windows whole-device WinUSB bindings have no interface summary.
+    // Descriptor reads may open a handle, but no interface is claimed
+    // until every physical candidate has been identified.
+    let mut interface_numbers = device_info
+        .interfaces()
+        .filter(|iface| is_fastboot_interface(iface.class(), iface.subclass(), iface.protocol()))
+        .map(|iface| iface.interface_number())
+        .collect::<Vec<_>>();
+    if interface_numbers.is_empty() {
+        if let Ok(device) = device_info.open().wait() {
+            for config in device.configurations() {
+                for iface in config.interfaces() {
+                    if iface.alt_settings().any(|alt| {
+                        is_fastboot_interface(alt.class(), alt.subclass(), alt.protocol())
+                    }) {
+                        interface_numbers.push(iface.interface_number());
+                    }
+                }
+            }
+        } else if is_fastboot_interface(
+            device_info.class(),
+            device_info.subclass(),
+            device_info.protocol(),
+        ) {
+            // Known but inaccessible candidates must still count.
+            interface_numbers.push(0);
+        }
+    }
+    if interface_numbers.is_empty() {
+        None
+    } else {
+        Some(FastbootCandidate {
+            device_info,
+            interface_numbers,
+        })
+    }
+}
+
+fn usb_location_of(device_info: &nusb::DeviceInfo) -> crate::selection::UsbLocation {
+    crate::selection::UsbLocation {
+        bus_id: device_info.bus_id().to_owned(),
+        port_chain: device_info.port_chain().to_vec(),
+    }
+}
+
+/// Trimmed USB iSerial, `None` when absent, empty or unreadable; same rule as the census.
+fn usb_serial_of(device_info: &nusb::DeviceInfo) -> Option<String> {
+    use nusb::MaybeFuture;
+
+    device_info
+        .serial_number()
+        .map(str::to_owned)
+        .or_else(|| device_info.get_serial_number_string().wait().ok().flatten())
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+/// Index of the one `(location, serial)` pair equal to the resolved device. Zero matches is
+/// `None`; two or more is `AmbiguousTarget`. Never the first of several.
+fn select_target_index(
+    pairs: &[(crate::selection::UsbLocation, Option<String>)],
+    location: &crate::selection::UsbLocation,
+    serial: &str,
+) -> Result<Option<usize>> {
+    let mut matches = pairs
+        .iter()
+        .enumerate()
+        .filter(|(_, (pair_location, pair_serial))| {
+            pair_location == location && pair_serial.as_deref() == Some(serial)
+        })
+        .map(|(index, _)| index);
+    let first = matches.next();
+    if matches.next().is_some() {
+        return Err(FastbootError::AmbiguousTarget);
+    }
+    Ok(first)
+}
+
+/// The post-open `getvar serialno` answer must equal the target serial.
+fn verify_target_serial(expected: &str, reported: &str) -> Result<()> {
+    let expected = expected.trim();
+    let reported = reported.trim();
+    if expected == reported {
+        Ok(())
+    } else {
+        Err(FastbootError::TargetMismatch {
+            expected: expected.to_string(),
+            found: reported.to_string(),
+        })
     }
 }
 
@@ -755,6 +886,118 @@ mod tests {
         assert!(matches!(
             result,
             Err(FastbootError::Usb(message)) if message == "access denied"
+        ));
+    }
+
+    fn loc(bus: &str, ports: &[u8]) -> crate::selection::UsbLocation {
+        crate::selection::UsbLocation {
+            bus_id: bus.to_string(),
+            port_chain: ports.to_vec(),
+        }
+    }
+
+    fn pair(
+        bus: &str,
+        ports: &[u8],
+        serial: Option<&str>,
+    ) -> (crate::selection::UsbLocation, Option<String>) {
+        (loc(bus, ports), serial.map(str::to_string))
+    }
+
+    #[test]
+    fn target_filter_picks_only_the_resolved_device() {
+        let pairs = [
+            pair("1", &[1], Some("AAA")),
+            pair("1", &[2], Some("BBB")),
+            pair("1", &[3], None),
+        ];
+        assert_eq!(
+            select_target_index(&pairs, &loc("1", &[2]), "BBB").unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn target_filter_requires_location_and_serial_to_both_match() {
+        let pairs = [pair("1", &[1], Some("AAA")), pair("1", &[2], Some("BBB"))];
+        assert_eq!(
+            select_target_index(&pairs, &loc("1", &[1]), "BBB").unwrap(),
+            None
+        );
+        assert_eq!(
+            select_target_index(&pairs, &loc("2", &[2]), "BBB").unwrap(),
+            None
+        );
+        assert_eq!(
+            select_target_index(&pairs, &loc("1", &[1]), "ZZZ").unwrap(),
+            None
+        );
+        assert_eq!(
+            select_target_index(&[], &loc("1", &[1]), "AAA").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn target_filter_rejects_two_matches_instead_of_picking_one() {
+        let pairs = [pair("1", &[1], Some("AAA")), pair("1", &[1], Some("AAA"))];
+        assert!(matches!(
+            select_target_index(&pairs, &loc("1", &[1]), "AAA"),
+            Err(FastbootError::AmbiguousTarget)
+        ));
+    }
+
+    #[test]
+    fn target_filter_ignores_the_same_serial_at_another_port() {
+        // Duplicate serials are reported as AmbiguousTarget by selection::resolve before
+        // this filter runs; here only the resolved location may match.
+        let pairs = [pair("1", &[1], Some("AAA")), pair("1", &[2], Some("AAA"))];
+        assert_eq!(
+            select_target_index(&pairs, &loc("1", &[2]), "AAA").unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn serial_check_accepts_equal_and_rejects_different_serials() {
+        assert!(verify_target_serial("ABC123", "ABC123").is_ok());
+        assert!(verify_target_serial("ABC123", "ABC123\n").is_ok());
+        assert!(matches!(
+            verify_target_serial("ABC123", "XYZ"),
+            Err(FastbootError::TargetMismatch { expected, found })
+                if expected == "ABC123" && found == "XYZ"
+        ));
+        assert!(matches!(
+            verify_target_serial("ABC123", ""),
+            Err(FastbootError::TargetMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn selection_errors_map_explicitly() {
+        use crate::selection::UsbSelectionError as E;
+        assert!(matches!(
+            map_target_selection_error(E::MultipleDevices),
+            FastbootError::MultipleDevices
+        ));
+        assert!(matches!(
+            map_target_selection_error(E::AmbiguousTarget),
+            FastbootError::AmbiguousTarget
+        ));
+        assert!(matches!(
+            map_target_selection_error(E::TargetMismatch {
+                expected: "a".into(),
+                found: "b".into()
+            }),
+            FastbootError::TargetMismatch { expected, found } if expected == "a" && found == "b"
+        ));
+        assert!(matches!(
+            map_target_selection_error(E::Enumeration("x".into())),
+            FastbootError::Usb(m) if m == "x"
+        ));
+        assert!(matches!(
+            map_target_selection_error(E::StatePoisoned),
+            FastbootError::Selection(_)
         ));
     }
 

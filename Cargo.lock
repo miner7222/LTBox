@@ -3233,6 +3233,7 @@ dependencies = [
  "qdl",
  "roxmltree 0.21.2",
  "rsa",
+ "rusb",
  "serde",
  "serialport",
  "tempfile",

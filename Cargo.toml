@@ -91,6 +91,9 @@ adb_client = { version = "3", features = ["usb"] }
 # launch (avoids re-triggering the on-device "Allow USB debugging?"
 # prompt every run).
 rsa = "0.9"
+# Same libusb binding `adb_client` uses. Direct dependency so ADB can open the
+# `rusb::Device` whose iSerial equals the chosen target (MD-06).
+rusb = "0.9"
 
 # USB (for Fastboot).
 nusb = "0.2"

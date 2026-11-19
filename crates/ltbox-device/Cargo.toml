@@ -13,6 +13,7 @@ tracing = { workspace = true }
 qdl = { workspace = true }
 gptman = { workspace = true }
 adb_client = { workspace = true }
+rusb = { workspace = true }
 rsa = { workspace = true }
 nusb = { workspace = true }
 serialport = { workspace = true }
