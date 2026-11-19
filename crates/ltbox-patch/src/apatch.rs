@@ -325,7 +325,7 @@ mod tests {
     ///         cargo test -p ltbox-patch -- --ignored pristine_boot_not_flagged_as_patched
     ///
     /// (`set VAR=...` on Windows cmd, `$env:VAR="..."` in PowerShell.) See
-    /// `ObsidianVault/05_Agent_Onboarding.md` for the full env-var list.
+    /// `docs/vault/70_References.md` for the full env-var list.
     #[test]
     #[ignore = "needs LTBOX_TEST_PRISTINE_BOOT_IMG=/path/to/boot.img"]
     fn pristine_boot_not_flagged_as_patched() {
@@ -333,7 +333,7 @@ mod tests {
         let Some(boot_img) = std::env::var_os(env_key).map(std::path::PathBuf::from) else {
             panic!(
                 "{env_key} not set — point it at a known-pristine boot.img and re-run; \
-                 see ObsidianVault/05_Agent_Onboarding.md"
+                 see docs/vault/70_References.md"
             );
         };
         if !boot_img.exists() {
